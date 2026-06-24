@@ -23,7 +23,7 @@ FECHA (date) | PRODUCCION (order number) | SOLICITADO (who requested) | TIPO (pl
 RANGO (the plate, or a special word) | CIUDAD (city) | CANTIDAD (quantity).
 
 Return ONE object per ledger line with these fields:
-- order_number (integer, from PRODUCCION)
+- order_number (text, from PRODUCCION — copy as written, e.g. "598" or "NT 895")
 - order_date (YYYY-MM-DD, from FECHA)
 - requested_by (text, from SOLICITADO — keep the name exactly as written)
 - plate_type (text, from TIPO)
