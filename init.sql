@@ -27,7 +27,20 @@ CREATE TABLE plates (
 
 CREATE TABLE inventory_categories (
     category TEXT PRIMARY KEY,
-    initial_stock INTEGER DEFAULT 0,
-    prepared INTEGER DEFAULT 0,
-    consumed INTEGER DEFAULT 0
+    initial_stock INTEGER DEFAULT 0,  -- "alistado" baseline when the DB started (fixed)
+    prepared INTEGER DEFAULT 0,       -- sum of ongoing blank_preparations
+    consumed INTEGER DEFAULT 0        -- sum of plates made (excl. order-annulled)
+    -- available (initial_stock + prepared - consumed) is computed in the view.
+);
+
+-- Blank-preparation ("alistamiento") events: blanks cut/prepared in advance,
+-- and new material intake. Recorded in the ledger as ALISTAMIENTO rows. These
+-- are NOT plates; they feed inventory_categories.prepared.
+CREATE TABLE blank_preparations (
+    id SERIAL PRIMARY KEY,
+    prep_date DATE,
+    category TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    prepared_by TEXT,
+    created_at TIMESTAMP DEFAULT now()
 );

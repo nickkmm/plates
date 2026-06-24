@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Inventario</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    nav a { margin-right: 1rem; }
+    table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+    th, td { border: 1px solid #ddd; padding: .55rem .7rem; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    th { background: #f4f4f4; }
+    tfoot td { font-weight: 700; background: #fafafa; }
+    .avail { font-weight: 700; }
+    .neg { color: #c00; }
+    .muted { color: #777; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <nav><a href="{{ url_for('ingest') }}">Ingesta</a><a href="{{ url_for('review') }}">Revisión</a><a href="{{ url_for('inventory') }}">Inventario</a></nav>
+  <h1>Inventario por categoría</h1>
+  <p class="muted">Disponible = Inicial (alistado al crear la BD) + Alistado (entradas) − Consumido (placas hechas, incl. reposiciones).</p>
+
+  <table>
+    <thead>
+      <tr><th>Categoría</th><th>Inicial</th><th>Alistado</th><th>Consumido</th><th>Disponible</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.category }}</td>
+        <td>{{ r.initial_stock }}</td>
+        <td>{{ r.prepared }}</td>
+        <td>{{ r.consumed }}</td>
+        <td class="avail {{ 'neg' if r.available < 0 else '' }}">{{ r.available }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td>Total</td>
+        <td>{{ rows | sum(attribute='initial_stock') }}</td>
+        <td>{{ rows | sum(attribute='prepared') }}</td>
+        <td>{{ rows | sum(attribute='consumed') }}</td>
+        <td>{{ rows | sum(attribute='available') }}</td>
+      </tr>
+    </tfoot>
+  </table>
+</body>
+</html>
