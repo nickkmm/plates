@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Ingesta</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    fieldset { border: 1px solid #ccc; border-radius: 8px; margin-bottom: 1.5rem; padding: 1rem; }
+    legend { font-weight: 600; padding: 0 .4rem; }
+    textarea { width: 100%; min-height: 220px; font-family: ui-monospace, monospace; font-size: .85rem; }
+    button { background: #1a5; color: #fff; border: 0; border-radius: 6px; padding: .6rem 1.1rem; font-size: 1rem; cursor: pointer; }
+    .summary { background: #eefbf3; border: 1px solid #1a5; border-radius: 8px; padding: 1rem; }
+    .error { background: #fdecec; border: 1px solid #d33; border-radius: 8px; padding: 1rem; color: #900; }
+    .muted { color: #777; font-size: .9rem; }
+    nav a { margin-right: 1rem; }
+    ul { margin: .3rem 0; }
+  </style>
+</head>
+<body>
+  <nav><a href="{{ url_for('ingest') }}">Ingesta</a><a href="{{ url_for('review') }}">Revisión</a></nav>
+  <h1>Ingesta de producción de placas</h1>
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if summary %}
+  <div class="summary">
+    <strong>Resumen</strong>
+    <ul>
+      <li>Órdenes insertadas: {{ summary.orders_inserted }}</li>
+      <li>Placas insertadas: {{ summary.plates_inserted }}</li>
+      <li>Posibles duplicados marcados: {{ summary.possible_duplicates }}</li>
+      <li>Anuladas: {{ summary.voided }}</li>
+      <li>Reposiciones (lote): {{ summary.batch_replacements }}</li>
+    </ul>
+    {% if summary.review_notes %}
+      <strong>Notas para revisión:</strong>
+      <ul>{% for n in summary.review_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+    {% endif %}
+    <p class="muted">Revisá los marcados en <a href="{{ url_for('review') }}">Revisión</a>.</p>
+  </div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('ingest') }}" enctype="multipart/form-data">
+    <fieldset>
+      <legend>Puerta 1 — Pegar JSON (gratis)</legend>
+      <p class="muted">Subí la foto a tu Project en claude.ai, copiá el array JSON y pegalo acá.</p>
+      <textarea name="rows_json" placeholder='[{"order_number": 123, "order_date": "2026-06-24", "requested_by": "PTO.V", "plate_type": "carro particular", "plate_number": "HMF922", "city": "Cali", "quantity": 1}]'></textarea>
+    </fieldset>
+
+    {% if api_enabled %}
+    <fieldset>
+      <legend>Puerta 2 — Subir foto (API)</legend>
+      <p class="muted">La app llama a Claude para extraer las filas. (Si subís foto, tiene prioridad sobre el JSON pegado.)</p>
+      <input type="file" name="photo" accept="image/*">
+    </fieldset>
+    {% else %}
+    <p class="muted">Puerta 2 (subir foto → API) está apagada. Se activa al configurar <code>ANTHROPIC_API_KEY</code>.</p>
+    {% endif %}
+
+    <button type="submit">Procesar</button>
+  </form>
+</body>
+</html>
