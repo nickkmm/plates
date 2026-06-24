@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from app.core import db
 from app.core.models import ExtractedRow
-from app.core.normalize import normalize_row
+from app.core.normalize import is_real_plate, normalize_row
 
 
 class Summary(BaseModel):
@@ -44,9 +44,10 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
     plate_rows = [r for r in normalized if not _is_alistado(r)]
 
     # Plate numbers appearing more than once within this same batch are also
-    # suspicious, not just ones already in the DB.
+    # suspicious, not just ones already in the DB. Only real plate identifiers
+    # count — samples/serials/INGSE repeat legitimately and are not duplicates.
     batch_counts = Counter(
-        r.plate_number for r in plate_rows if r.plate_number and not r.is_voided
+        r.plate_number for r in plate_rows if is_real_plate(r.plate_number) and not r.is_voided
     )
 
     summary = Summary()
@@ -64,7 +65,7 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
             summary.blank_preparations += 1
 
         live_candidates = {
-            r.plate_number for r in plate_rows if r.plate_number and not r.is_voided
+            r.plate_number for r in plate_rows if is_real_plate(r.plate_number) and not r.is_voided
         }
         already_present = db.existing_plate_numbers(conn, live_candidates)
 
@@ -92,7 +93,7 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
 
             for r in group:
                 is_dup = bool(
-                    r.plate_number
+                    is_real_plate(r.plate_number)
                     and not r.is_voided
                     and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
                 )

@@ -5,41 +5,56 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Plates — Revisión</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 2rem auto; padding: 0 1rem; color: #222; }
     h1 { font-size: 1.4rem; }
     nav a { margin-right: 1rem; }
     table { border-collapse: collapse; width: 100%; font-size: .9rem; }
-    th, td { border: 1px solid #ddd; padding: .4rem .6rem; text-align: left; }
+    th, td { border: 1px solid #ddd; padding: .4rem .5rem; text-align: left; vertical-align: middle; }
     th { background: #f4f4f4; }
-    .flag { color: #b50; font-weight: 600; }
-    .muted { color: #777; }
+    input[type=text], input[type=number] { width: 100%; box-sizing: border-box; padding: .25rem; }
+    input[type=number] { width: 5.5rem; }
+    .actions { white-space: nowrap; }
+    button { border: 0; border-radius: 5px; padding: .35rem .6rem; font-size: .82rem; cursor: pointer; }
+    .save { background: #1a5; color: #fff; }
+    .ok { background: #06c; color: #fff; }
+    .del { background: #c33; color: #fff; }
+    .muted { color: #777; font-size: .9rem; }
   </style>
 </head>
 <body>
   <nav><a href="{{ url_for('ingest') }}">Ingesta</a><a href="{{ url_for('review') }}">Revisión</a><a href="{{ url_for('inventory') }}">Inventario</a></nav>
   <h1>Registros marcados para revisión</h1>
-  <p class="muted">Posibles duplicados, o cantidades inusuales (&gt; {{ threshold }}). Solo informativo — no bloquea nada.</p>
+  <p class="muted">Posibles placas duplicadas (la misma placa aparece 2+ veces). Editá y guardá, marcá como revisada (quitar de la lista), o eliminá si es un error.</p>
 
   {% if rows %}
   <table>
     <thead>
-      <tr>
-        <th>Orden</th><th>Fecha</th><th>Solicitado</th><th>Tipo</th>
-        <th>Placa</th><th>Cantidad</th><th>Motivo</th>
-      </tr>
+      <tr><th>Orden</th><th>Fecha</th><th>Solicitado</th><th>Tipo</th><th>Placa</th><th>Cant.</th><th>Anulada</th><th>Acciones</th></tr>
     </thead>
     <tbody>
       {% for r in rows %}
       <tr>
+        <form method="post" action="{{ url_for('review_update') }}">
+        <input type="hidden" name="plate_id" value="{{ r.id }}">
         <td>{{ r.order_number }}</td>
         <td>{{ r.order_date }}</td>
         <td>{{ r.requested_by }}</td>
-        <td>{{ r.plate_type }}</td>
-        <td>{{ r.plate_number or '—' }}</td>
-        <td>{{ r.quantity }}</td>
-        <td>
-          {% if r.is_possible_duplicate %}<span class="flag">posible duplicado</span>{% endif %}
-          {% if r.unusual_quantity %}<span class="flag">cantidad inusual</span>{% endif %}
+        <td><input type="text" name="plate_type" value="{{ r.plate_type }}"></td>
+        <td><input type="text" name="plate_number" value="{{ r.plate_number or '' }}"></td>
+        <td><input type="number" name="quantity" value="{{ r.quantity }}" min="0"></td>
+        <td style="text-align:center"><input type="checkbox" name="is_voided" {{ 'checked' if r.is_voided else '' }}></td>
+        <td class="actions">
+          <button class="save" type="submit">Guardar</button>
+        </form>
+          <form method="post" action="{{ url_for('review_resolve') }}" style="display:inline">
+            <input type="hidden" name="plate_id" value="{{ r.id }}">
+            <button class="ok" type="submit">Revisada</button>
+          </form>
+          <form method="post" action="{{ url_for('review_delete') }}" style="display:inline"
+                onsubmit="return confirm('¿Eliminar esta placa?');">
+            <input type="hidden" name="plate_id" value="{{ r.id }}">
+            <button class="del" type="submit">Eliminar</button>
+          </form>
         </td>
       </tr>
       {% endfor %}

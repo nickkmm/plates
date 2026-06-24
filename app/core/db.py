@@ -159,26 +159,48 @@ def inventory_view(conn: psycopg.Connection) -> list[dict]:
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def review_rows(conn: psycopg.Connection, quantity_threshold: int) -> list[dict]:
-    """Rows flagged for review: possible duplicates OR unusually large quantities.
-
-    The quantity flag is computed dynamically (no schema change): any non-voided
-    plate whose quantity exceeds `quantity_threshold`.
-    """
+def review_rows(conn: psycopg.Connection) -> list[dict]:
+    """Rows flagged for review: possible duplicates only (real repeated plates)."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT p.id, o.order_number, o.order_date, o.requested_by,
-                   p.plate_type, p.plate_number, p.quantity,
-                   p.is_possible_duplicate,
-                   (p.quantity > %s AND p.is_voided = false) AS unusual_quantity
+                   p.plate_type, p.plate_number, p.quantity, p.is_voided
             FROM plates p
             JOIN production_orders o ON o.id = p.order_id
             WHERE p.is_possible_duplicate = true
-               OR (p.quantity > %s AND p.is_voided = false)
-            ORDER BY o.order_date DESC, o.order_number
-            """,
-            (quantity_threshold, quantity_threshold),
+            ORDER BY p.plate_number, o.order_date
+            """
         )
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def update_plate(conn: psycopg.Connection, plate_id: int, *, plate_type: str,
+                 plate_number: str | None, quantity: int, is_voided: bool) -> None:
+    """Edit a plate row and clear its review flag (treated as reviewed)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE plates
+            SET plate_type = %s, plate_number = %s, quantity = %s,
+                is_voided = %s, is_possible_duplicate = false
+            WHERE id = %s
+            """,
+            (plate_type, plate_number, quantity, is_voided, plate_id),
+        )
+
+
+def resolve_plate(conn: psycopg.Connection, plate_id: int) -> None:
+    """Mark a flagged plate as reviewed (not a duplicate) without other changes."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE plates SET is_possible_duplicate = false WHERE id = %s",
+            (plate_id,),
+        )
+
+
+def delete_plate(conn: psycopg.Connection, plate_id: int) -> None:
+    """Delete a plate row (e.g. a clear misread)."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM plates WHERE id = %s", (plate_id,))
