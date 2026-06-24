@@ -149,16 +149,6 @@ def inventory_alistado():
     return redirect(url_for("inventory"))
 
 
-@app.post("/inventory/initial")
-def inventory_initial():
-    with db.get_conn() as conn:
-        db.seed_initial_stock(
-            conn, {request.form["category"].strip(): int(request.form.get("initial_stock") or 0)}
-        )
-        conn.commit()
-    return redirect(url_for("inventory"))
-
-
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}

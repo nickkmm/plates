@@ -5,17 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Plates — Inventario</title>
   <style>
-    :root { --green:#1a9c5b; --blue:#0b6bcb; --amber:#e08a00; --red:#d33; --ink:#222; }
-    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; color: var(--ink); }
+    :root { --green:#1a9c5b; --blue:#0b6bcb; --red:#d33; --ink:#222; }
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
     h1 { font-size: 1.4rem; } h2 { font-size: 1.05rem; margin-top: 2rem; }
-    nav a { margin-right: 1rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:var(--blue); border-bottom:3px solid var(--blue); margin-bottom:-2px; }
     .muted { color: #777; font-size: .9rem; }
     .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
     .card { border: 1px solid #e2e2e2; border-radius: 12px; padding: 1rem 1.1rem; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
     .card h3 { margin: 0 0 .5rem; font-size: 1rem; }
     .avail { font-size: 2rem; font-weight: 800; line-height: 1; }
-    .avail.neg { color: var(--red); }
-    .avail.pos { color: var(--green); }
+    .avail.neg { color: var(--red); } .avail.pos { color: var(--green); }
     .sub { font-size: .8rem; color: #666; margin: .15rem 0 .8rem; }
     .stats { display: flex; justify-content: space-between; font-size: .82rem; color: #444; margin-bottom: .5rem; }
     .stats span b { display: block; font-size: .95rem; color: var(--ink); }
@@ -28,24 +30,25 @@
     form.inline label { font-size: .78rem; color: #555; display: flex; flex-direction: column; gap: .2rem; }
     input, select { padding: .4rem; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; }
     button { background: var(--green); color: #fff; border: 0; border-radius: 7px; padding: .5rem .9rem; font-size: .9rem; cursor: pointer; }
-    button.alt { background: var(--blue); }
   </style>
 </head>
 <body>
-  <nav><a href="{{ url_for('ingest') }}">Ingesta</a><a href="{{ url_for('review') }}">Revisión</a><a href="{{ url_for('inventory') }}">Inventario</a></nav>
+  <nav class="tabs">
+    <a href="{{ url_for('ingest') }}" class="{{ 'on' if request.endpoint=='ingest' }}">Registrar</a>
+    <a href="{{ url_for('review') }}" class="{{ 'on' if request.endpoint=='review' }}">Revisión</a>
+    <a href="{{ url_for('inventory') }}" class="{{ 'on' if request.endpoint=='inventory' }}">Inventario</a>
+  </nav>
   <h1>Inventario por categoría</h1>
-  <p class="muted">Disponible = Inicial + Alistado − Consumido. La barra muestra cuánto del material (inicial + alistado) ya se consumió.</p>
+  <p class="muted">Disponible = Alistado − Consumido. La barra muestra cuánto del alistado ya se consumió.</p>
 
   <div class="cards">
     {% for r in rows %}
-      {% set base = r.initial_stock + r.prepared %}
-      {% set pct = (100 * r.consumed / base) if base > 0 else 0 %}
+      {% set pct = (100 * r.consumed / r.prepared) if r.prepared > 0 else 0 %}
       <div class="card">
         <h3>{{ r.category }}</h3>
         <div class="avail {{ 'neg' if r.available < 0 else 'pos' }}">{{ r.available }}</div>
         <div class="sub">disponible</div>
         <div class="stats">
-          <span>Inicial<b>{{ r.initial_stock }}</b></span>
           <span>Alistado<b>{{ r.prepared }}</b></span>
           <span>Consumido<b>{{ r.consumed }}</b></span>
         </div>
@@ -67,17 +70,6 @@
     <label>Fecha <input type="date" name="prep_date"></label>
     <label>Alistado por <input type="text" name="prepared_by" placeholder="opcional"></label>
     <button type="submit">Agregar alistamiento</button>
-  </form>
-
-  <h2>Ajustar inicial</h2>
-  <form class="inline" method="post" action="{{ url_for('inventory_initial') }}">
-    <label>Categoría
-      <select name="category" required>
-        {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
-      </select>
-    </label>
-    <label>Inicial <input type="number" name="initial_stock" min="0" required></label>
-    <button class="alt" type="submit">Guardar inicial</button>
   </form>
 </body>
 </html>
