@@ -28,8 +28,12 @@ class Summary(BaseModel):
 
 
 def _is_alistado(row: ExtractedRow) -> bool:
-    """ALISTAMIENTO rows record blanks prepared, not plates produced."""
-    return "ALISTAM" in row.requested_by.upper()
+    """ALISTAMIENTO rows record blanks prepared, not plates produced.
+
+    In the data the marker is in SOLICITADO POR (requested_by); a few rows also
+    carry it in ALISTADO POR (prepared_by). We check both so it's never missed.
+    """
+    return "ALISTAM" in row.requested_by.upper() or "ALISTAM" in (row.prepared_by or "").upper()
 
 
 def process_rows(rows: list[ExtractedRow]) -> Summary:
