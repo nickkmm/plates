@@ -59,9 +59,24 @@ def _is_reposicion(folded: str) -> bool:
     return "REPOSICION" in folded
 
 
-def _is_voided(folded: str) -> bool:
-    # "REPITE" (repeated by mistake) or an explicit annulment note.
-    return "REPITE" in folded or "ANULAD" in folded
+def annulment_kind(*folded_texts: str) -> str | None:
+    """Classify annulment from SOLICITADO/RANGO/CIUDAD (already folded).
+
+    Returns:
+      "order" -> order annulled (or REPITE): material NOT consumed -> is_voided.
+      "plate" -> plate annulled ("anulado placa"): the blank WAS lost -> consumed.
+      "bare"  -> the word ANULAD with no orden/placa qualifier (often a misread):
+                 treated conservatively as not consumed -> is_voided.
+      None    -> not annulled.
+    """
+    blob = " ".join(t for t in folded_texts if t)
+    if "ANULAD" not in blob and "REPITE" not in blob:
+        return None
+    if "ORDEN" in blob or "REPITE" in blob:
+        return "order"
+    if "PLACA" in blob:
+        return "plate"
+    return "bare"
 
 
 def normalize_row(row: ExtractedRow) -> ExtractedRow:
@@ -78,23 +93,20 @@ def normalize_row(row: ExtractedRow) -> ExtractedRow:
     plate_folded = _fold(row.plate_number) if row.plate_number else ""
     city_folded = _fold(row.city) if row.city else ""
 
-    # Annulment can be marked in any of these columns.
-    annulled = (
-        _is_voided(data["requested_by"])
-        or _is_voided(plate_folded)
-        or _is_voided(city_folded)
-    )
+    kind = annulment_kind(data["requested_by"], plate_folded, city_folded)
 
     if plate_folded and _is_reposicion(plate_folded):
         data["is_batch_replacement"] = True
         data["plate_number"] = None  # batch: no per-plate transcription
-    elif plate_folded and _is_voided(plate_folded):
+    elif plate_folded and ("ANULAD" in plate_folded or "REPITE" in plate_folded):
         data["plate_number"] = None  # the RANGO cell holds the token, not a plate
     else:
         # Real plate (or empty). Uppercase it for consistent dedup matching.
         data["plate_number"] = plate_folded or None
 
-    if annulled:
+    # order/bare annulment -> not consumed (is_voided). plate annulment -> the
+    # blank was lost, so it stays is_voided=False and counts as consumed.
+    if kind in ("order", "bare"):
         data["is_voided"] = True
 
     return ExtractedRow(**data)

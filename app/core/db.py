@@ -85,27 +85,78 @@ def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
         )
 
 
-def recalc_inventory(conn: psycopg.Connection) -> None:
-    """Recompute inventory_categories from the plates table.
+def seed_initial_stock(conn: psycopg.Connection, stock: dict[str, int]) -> None:
+    """Set initial_stock per category (the 'alistado' baseline at DB start).
 
-    DEFAULT semantics (to be confirmed with the user):
-      category = plate_type
-      prepared = SUM(quantity) of non-voided plates for that type
-    initial_stock and consumed are preserved (only `prepared` is updated;
-    new categories get prepared with the others left at their column defaults).
+    Fixed value — recalc_inventory never overwrites it.
+    """
+    with conn.cursor() as cur:
+        for category, qty in stock.items():
+            cur.execute(
+                """
+                INSERT INTO inventory_categories (category, initial_stock)
+                VALUES (%s, %s)
+                ON CONFLICT (category) DO UPDATE SET initial_stock = EXCLUDED.initial_stock
+                """,
+                (category, int(qty)),
+            )
+
+
+def insert_blank_preparation(conn: psycopg.Connection, *, prep_date, category: str,
+                             quantity: int, prepared_by: str | None) -> None:
+    """Record one ALISTAMIENTO event (blanks prepared / material intake)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO blank_preparations (prep_date, category, quantity, prepared_by)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (prep_date, category, quantity, prepared_by),
+        )
+
+
+def recalc_inventory(conn: psycopg.Connection) -> None:
+    """Recompute prepared and consumed; preserve initial_stock.
+
+      prepared = SUM(blank_preparations.quantity) per category
+      consumed = SUM(plates.quantity) per category, excluding order-annulled
+                 (is_voided = true). REPOSICION and plate-annulled count as consumed.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO inventory_categories (category, prepared)
+            SELECT category, COALESCE(SUM(quantity), 0)
+            FROM blank_preparations
+            GROUP BY category
+            ON CONFLICT (category) DO UPDATE SET prepared = EXCLUDED.prepared
+            """
+        )
+        cur.execute(
+            """
+            INSERT INTO inventory_categories (category, consumed)
             SELECT plate_type, COALESCE(SUM(quantity), 0)
             FROM plates
             WHERE is_voided = false
             GROUP BY plate_type
-            ON CONFLICT (category)
-            DO UPDATE SET prepared = EXCLUDED.prepared
+            ON CONFLICT (category) DO UPDATE SET consumed = EXCLUDED.consumed
             """
         )
+
+
+def inventory_view(conn: psycopg.Connection) -> list[dict]:
+    """Per-category inventory with computed available = initial + prepared - consumed."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT category, initial_stock, prepared, consumed,
+                   (initial_stock + prepared - consumed) AS available
+            FROM inventory_categories
+            ORDER BY category
+            """
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
 def review_rows(conn: psycopg.Connection, quantity_threshold: int) -> list[dict]:

@@ -19,8 +19,12 @@ import sys
 import pandas as pd
 from pydantic import ValidationError
 
+from app.core import db
 from app.core.models import ExtractedRow
 from app.core.process import process_rows
+
+# Categories tracked in inventory (must match TIPO values and Hoja2 headers).
+INVENTORY_CATEGORIES = ["MOTO PARTICULAR", "CARRO PARTICULAR", "CARRO PÚBLICO", "MOTO PÚBLICO"]
 
 # Excel header -> ExtractedRow field.
 COLUMN_MAP = {
@@ -51,16 +55,31 @@ def _to_row(record: dict) -> ExtractedRow:
     if hasattr(raw.get("order_date"), "date"):
         raw["order_date"] = raw["order_date"].date()
     # order_number stays text — the model coerces 598.0 -> "598" and keeps "NT 895".
+    # Quantity is in CANT for plates, but in MATERIAL for ALISTAMIENTO rows — fall back.
+    qty = raw.get("quantity")
+    if qty is None:
+        qty = raw.get("material")
     try:
-        raw["quantity"] = 1 if raw.get("quantity") is None else int(float(raw["quantity"]))
+        raw["quantity"] = int(float(qty)) if qty is not None else 1
     except (ValueError, TypeError):
-        raw["quantity"] = 1  # non-numeric CANT (e.g. "ANULADO") -> default 1
+        raw["quantity"] = 1  # non-numeric (e.g. "ANULADO", "ORNAMENTAL") -> default 1
 
     for f in ("requested_by", "plate_type", "plate_number", "city", "material", "prepared_by"):
         if raw.get(f) is not None:
             raw[f] = str(raw[f])
 
     return ExtractedRow(**raw)
+
+
+def read_initial_stock(path: str) -> dict[str, int]:
+    """Read the 'alistado' baseline per category from the Hoja2 inventory sheet."""
+    df = pd.read_excel(path, sheet_name="Hoja2", header=1)
+    first = df.iloc[0]
+    stock = {}
+    for cat in INVENTORY_CATEGORIES:
+        if cat in df.columns and pd.notna(first.get(cat)):
+            stock[cat] = int(first[cat])
+    return stock
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,10 +124,18 @@ def main(argv: list[str] | None = None) -> int:
         print("\nDry run — nothing inserted.")
         return 0
 
+    # Seed the fixed initial_stock baseline from Hoja2 before recalculating.
+    stock = read_initial_stock(args.excel_path)
+    print(f"Seeding initial_stock from Hoja2: {stock}")
+    with db.get_conn() as conn:
+        db.seed_initial_stock(conn, stock)
+        conn.commit()
+
     summary = process_rows(rows)
     print("\n=== Migration summary ===")
     print(f"Orders inserted:        {summary.orders_inserted}")
     print(f"Plates inserted:        {summary.plates_inserted}")
+    print(f"Blank preparations:     {summary.blank_preparations}")
     print(f"Possible duplicates:    {summary.possible_duplicates}")
     print(f"Voided:                 {summary.voided}")
     print(f"Batch replacements:     {summary.batch_replacements}")

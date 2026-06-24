@@ -20,10 +20,16 @@ from app.core.normalize import normalize_row
 class Summary(BaseModel):
     orders_inserted: int = 0
     plates_inserted: int = 0
+    blank_preparations: int = 0
     possible_duplicates: int = 0
     voided: int = 0
     batch_replacements: int = 0
     review_notes: list[str] = []
+
+
+def _is_alistado(row: ExtractedRow) -> bool:
+    """ALISTAMIENTO rows record blanks prepared, not plates produced."""
+    return "ALISTAM" in row.requested_by.upper()
 
 
 def process_rows(rows: list[ExtractedRow]) -> Summary:
@@ -33,23 +39,38 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
     """
     normalized = [normalize_row(r) for r in rows]
 
+    # Split ALISTAMIENTO (blanks prepared) from plate rows.
+    alistado_rows = [r for r in normalized if _is_alistado(r)]
+    plate_rows = [r for r in normalized if not _is_alistado(r)]
+
     # Plate numbers appearing more than once within this same batch are also
     # suspicious, not just ones already in the DB.
     batch_counts = Counter(
-        r.plate_number for r in normalized if r.plate_number and not r.is_voided
+        r.plate_number for r in plate_rows if r.plate_number and not r.is_voided
     )
 
     summary = Summary()
 
     with db.get_conn() as conn:
+        # ALISTAMIENTO -> blank_preparations (feed inventory.prepared)
+        for r in alistado_rows:
+            db.insert_blank_preparation(
+                conn,
+                prep_date=r.order_date,
+                category=r.plate_type,
+                quantity=r.quantity,
+                prepared_by=r.prepared_by,
+            )
+            summary.blank_preparations += 1
+
         live_candidates = {
-            r.plate_number for r in normalized if r.plate_number and not r.is_voided
+            r.plate_number for r in plate_rows if r.plate_number and not r.is_voided
         }
         already_present = db.existing_plate_numbers(conn, live_candidates)
 
-        # Group rows by order_number, preserving order.
-        groups: dict[int, list[ExtractedRow]] = defaultdict(list)
-        for r in normalized:
+        # Group plate rows by order_number, preserving order.
+        groups: dict[str, list[ExtractedRow]] = defaultdict(list)
+        for r in plate_rows:
             groups[r.order_number].append(r)
 
         for order_number, group in groups.items():

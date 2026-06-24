@@ -88,6 +88,13 @@ def review():
     return render_template("review.html", rows=rows, threshold=REVIEW_QTY_THRESHOLD)
 
 
+@app.get("/inventory")
+def inventory():
+    with db.get_conn() as conn:
+        rows = db.inventory_view(conn)
+    return render_template("inventory.html", rows=rows)
+
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}

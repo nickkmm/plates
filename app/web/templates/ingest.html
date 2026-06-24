@@ -19,7 +19,7 @@
   </style>
 </head>
 <body>
-  <nav><a href="{{ url_for('ingest') }}">Ingesta</a><a href="{{ url_for('review') }}">Revisión</a></nav>
+  <nav><a href="{{ url_for('ingest') }}">Ingesta</a><a href="{{ url_for('review') }}">Revisión</a><a href="{{ url_for('inventory') }}">Inventario</a></nav>
   <h1>Ingesta de producción de placas</h1>
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
