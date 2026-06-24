@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Revisión</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    nav a { margin-right: 1rem; }
+    table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+    th, td { border: 1px solid #ddd; padding: .4rem .6rem; text-align: left; }
+    th { background: #f4f4f4; }
+    .flag { color: #b50; font-weight: 600; }
+    .muted { color: #777; }
+  </style>
+</head>
+<body>
+  <nav><a href="{{ url_for('ingest') }}">Ingesta</a><a href="{{ url_for('review') }}">Revisión</a></nav>
+  <h1>Registros marcados para revisión</h1>
+  <p class="muted">Posibles duplicados, o cantidades inusuales (&gt; {{ threshold }}). Solo informativo — no bloquea nada.</p>
+
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Orden</th><th>Fecha</th><th>Solicitado</th><th>Tipo</th>
+        <th>Placa</th><th>Cantidad</th><th>Motivo</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.order_number }}</td>
+        <td>{{ r.order_date }}</td>
+        <td>{{ r.requested_by }}</td>
+        <td>{{ r.plate_type }}</td>
+        <td>{{ r.plate_number or '—' }}</td>
+        <td>{{ r.quantity }}</td>
+        <td>
+          {% if r.is_possible_duplicate %}<span class="flag">posible duplicado</span>{% endif %}
+          {% if r.unusual_quantity %}<span class="flag">cantidad inusual</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No hay registros marcados. 🎉</p>
+  {% endif %}
+</body>
+</html>

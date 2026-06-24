@@ -9,14 +9,47 @@ services:
     ports:
       # Bound to localhost only — not exposed to the internet.
       # Host port 5433 because 5432 is already taken by another
-      # project's Postgres on this VPS. The future Go app runs on
-      # the same VPS and connects via 127.0.0.1:5433.
+      # project's Postgres on this VPS.
       - "127.0.0.1:5433:5432"
+    networks:
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: web.Dockerfile
+    container_name: plates-web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+    ports:
+      # Localhost only — for local dev and on-VPS debugging. In production the
+      # shared nginx reaches the app over the `edge` network as plates_web:8000.
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      internal: {}
+      edge:
+        aliases:
+          - plates_web
+
+networks:
+  internal: {}
+  # Shared with the existing `informes` stack so its nginx can proxy to us by
+  # name. The network already exists on the VPS (created by informes). Locally,
+  # create it once with: docker network create informes_informes_net
+  edge:
+    external: true
+    name: informes_informes_net
 
 volumes:
   plates_db_data:
