@@ -65,26 +65,36 @@ def _is_voided(folded: str) -> bool:
 
 
 def normalize_row(row: ExtractedRow) -> ExtractedRow:
-    """Return a new row with requested_by cleaned and flags inferred from RANGO.
+    """Return a new row with requested_by cleaned and flags inferred.
 
+    Annulment is recorded inconsistently in the ledger — the word ANULAD(A/O)
+    shows up in SOLICITADO POR, RANGO, or CIUDAD — so we check all three.
     Respects flags already set upstream (the migration Excel may have them
     pre-applied) and only adds inferences; never clears a True flag.
     """
     data = row.model_dump()
     data["requested_by"] = normalize_requested_by(row.requested_by)
 
-    raw_plate = (row.plate_number or "").strip()
-    folded = _fold(raw_plate) if raw_plate else ""
+    plate_folded = _fold(row.plate_number) if row.plate_number else ""
+    city_folded = _fold(row.city) if row.city else ""
 
-    if folded and _is_reposicion(folded):
+    # Annulment can be marked in any of these columns.
+    annulled = (
+        _is_voided(data["requested_by"])
+        or _is_voided(plate_folded)
+        or _is_voided(city_folded)
+    )
+
+    if plate_folded and _is_reposicion(plate_folded):
         data["is_batch_replacement"] = True
         data["plate_number"] = None  # batch: no per-plate transcription
-    elif folded and _is_voided(folded):
-        data["is_voided"] = True
-        # The RANGO cell holds the token, not a real plate number.
-        data["plate_number"] = None
+    elif plate_folded and _is_voided(plate_folded):
+        data["plate_number"] = None  # the RANGO cell holds the token, not a plate
     else:
         # Real plate (or empty). Uppercase it for consistent dedup matching.
-        data["plate_number"] = folded or None
+        data["plate_number"] = plate_folded or None
+
+    if annulled:
+        data["is_voided"] = True
 
     return ExtractedRow(**data)

@@ -3,7 +3,8 @@
 
 CREATE TABLE production_orders (
     id SERIAL PRIMARY KEY,
-    order_number INTEGER NOT NULL,
+    -- TEXT, not INTEGER: real order numbers are sometimes non-numeric (e.g. "NT 895").
+    order_number TEXT NOT NULL,
     order_date DATE NOT NULL,
     requested_by TEXT NOT NULL,
     city TEXT,
