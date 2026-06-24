@@ -1,0 +1,21 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# SSH keys (never commit)
+*.pem
+id_ed25519
+id_ed25519.pub
+*_deploy
+*_deploy.pub
+
+# OS junk
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+*.log

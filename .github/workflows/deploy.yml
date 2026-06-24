@@ -1,0 +1,32 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to VPS over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: ENV_FILE_B64
+          script: |
+            set -e
+            cd /opt/plates
+            if [ ! -d .git ]; then
+              git init -q
+              git remote add origin git@github.com:nickkmm/plates.git
+            fi
+            git fetch --depth 1 origin main
+            git reset --hard origin/main
+            echo "$ENV_FILE_B64" | base64 -d > .env
+            docker compose up -d --build
+            docker compose ps
+        env:
+          ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
