@@ -34,6 +34,12 @@ words like "REPOSICION" or "REPITE")
 - is_batch_replacement (boolean; leave false — it is inferred downstream)
 - is_voided (boolean; leave false — it is inferred downstream)
 
+If a line is an ALISTAMIENTO (blank preparation / new material intake — usually \
+SOLICITADO POR says "ALISTAMIENTO"), output it with requested_by exactly \
+"ALISTAMIENTO", plate_type = the category (TIPO), plate_number = null, and \
+quantity = the number of blanks prepared. These are NOT plates; they feed the \
+prepared/alistado inventory.
+
 Transcribe faithfully. Do not invent rows. If a cell is illegible, use your best \
 reading. The data is in Spanish; keep it in Spanish."""
 

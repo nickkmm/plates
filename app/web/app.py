@@ -52,16 +52,20 @@ def ingest_post():
         upload = request.files.get("photo")
         pasted = (request.form.get("rows_json") or "").strip()
 
-        if api_on and upload and upload.filename:
-            # Door 2: image -> API -> rows
-            result = extraction.extract_from_image(upload.read(), upload.filename)
-            summary = process_rows(result.rows)
+        if upload and upload.filename:
+            # Door 2: image -> API -> rows (only when the API key is configured)
+            if api_on:
+                result = extraction.extract_from_image(upload.read(), upload.filename)
+                summary = process_rows(result.rows)
+            else:
+                error = ("La opción de subir foto (Puerta 2) requiere configurar "
+                         "ANTHROPIC_API_KEY. Por ahora pegá el JSON (Puerta 1).")
         elif pasted:
             # Door 1: pasted JSON -> rows
             result = _parse_pasted_json(pasted)
             summary = process_rows(result.rows)
         else:
-            error = "Pegá el JSON, o subí una foto si la Puerta 2 está activa."
+            error = "Pegá el JSON, o subí una foto (si la Puerta 2 está activa)."
     except json.JSONDecodeError as e:
         error = f"El JSON pegado no es válido: {e}"
     except ValidationError as e:
@@ -119,11 +123,40 @@ def review_delete():
     return redirect(url_for("review"))
 
 
+DEFAULT_CATEGORIES = ["MOTO PARTICULAR", "CARRO PARTICULAR", "CARRO PÚBLICO", "MOTO PÚBLICO"]
+
+
 @app.get("/inventory")
 def inventory():
     with db.get_conn() as conn:
         rows = db.inventory_view(conn)
-    return render_template("inventory.html", rows=rows)
+    categories = sorted({*DEFAULT_CATEGORIES, *(r["category"] for r in rows)})
+    return render_template("inventory.html", rows=rows, categories=categories)
+
+
+@app.post("/inventory/alistado")
+def inventory_alistado():
+    with db.get_conn() as conn:
+        db.insert_blank_preparation(
+            conn,
+            prep_date=request.form.get("prep_date") or None,
+            category=request.form["category"].strip(),
+            quantity=int(request.form.get("quantity") or 0),
+            prepared_by=(request.form.get("prepared_by") or "").strip() or None,
+        )
+        db.recalc_inventory(conn)
+        conn.commit()
+    return redirect(url_for("inventory"))
+
+
+@app.post("/inventory/initial")
+def inventory_initial():
+    with db.get_conn() as conn:
+        db.seed_initial_stock(
+            conn, {request.form["category"].strip(): int(request.form.get("initial_stock") or 0)}
+        )
+        conn.commit()
+    return redirect(url_for("inventory"))
 
 
 @app.get("/healthz")
