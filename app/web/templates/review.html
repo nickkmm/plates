@@ -7,7 +7,10 @@
   <style>
     body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 2rem auto; padding: 0 1rem; color: #222; }
     h1 { font-size: 1.4rem; }
-    nav a { margin-right: 1rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
     table { border-collapse: collapse; width: 100%; font-size: .9rem; }
     th, td { border: 1px solid #ddd; padding: .4rem .5rem; text-align: left; vertical-align: middle; }
     th { background: #f4f4f4; }
@@ -22,7 +25,11 @@
   </style>
 </head>
 <body>
-  <nav><a href="{{ url_for('ingest') }}">Ingesta</a><a href="{{ url_for('review') }}">Revisión</a><a href="{{ url_for('inventory') }}">Inventario</a></nav>
+  <nav class="tabs">
+    <a href="{{ url_for('ingest') }}" class="{{ 'on' if request.endpoint=='ingest' }}">Registrar</a>
+    <a href="{{ url_for('review') }}" class="{{ 'on' if request.endpoint=='review' }}">Revisión</a>
+    <a href="{{ url_for('inventory') }}" class="{{ 'on' if request.endpoint=='inventory' }}">Inventario</a>
+  </nav>
   <h1>Registros marcados para revisión</h1>
   <p class="muted">Posibles placas duplicadas (la misma placa aparece 2+ veces). Editá y guardá, marcá como revisada (quitar de la lista), o eliminá si es un error.</p>
 

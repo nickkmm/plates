@@ -71,15 +71,20 @@ def _to_row(record: dict) -> ExtractedRow:
     return ExtractedRow(**raw)
 
 
-def read_initial_stock(path: str) -> dict[str, int]:
-    """Read the 'alistado' baseline per category from the Hoja2 inventory sheet."""
+def read_initial_stock(path: str):
+    """Read the 'alistado' baseline per category + its date from the Hoja2 sheet.
+
+    Returns (stock: dict[category, qty], base_date or None).
+    """
     df = pd.read_excel(path, sheet_name="Hoja2", header=1)
     first = df.iloc[0]
     stock = {}
     for cat in INVENTORY_CATEGORIES:
         if cat in df.columns and pd.notna(first.get(cat)):
             stock[cat] = int(first[cat])
-    return stock
+    base_date = first.get("FECHA")
+    base_date = base_date.date() if hasattr(base_date, "date") else None
+    return stock, base_date
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -124,11 +129,16 @@ def main(argv: list[str] | None = None) -> int:
         print("\nDry run — nothing inserted.")
         return 0
 
-    # Seed the fixed initial_stock baseline from Hoja2 before recalculating.
-    stock = read_initial_stock(args.excel_path)
-    print(f"Seeding initial_stock from Hoja2: {stock}")
+    # The Feb baseline (Hoja2) is loaded as the first ALISTAMIENTO events, so
+    # "alistado" includes it and available = prepared - consumed.
+    stock, base_date = read_initial_stock(args.excel_path)
+    print(f"Loading baseline alistado from Hoja2 ({base_date}): {stock}")
     with db.get_conn() as conn:
-        db.seed_initial_stock(conn, stock)
+        for category, qty in stock.items():
+            db.insert_blank_preparation(
+                conn, prep_date=base_date, category=category,
+                quantity=qty, prepared_by="INICIAL (Hoja2)",
+            )
         conn.commit()
 
     summary = process_rows(rows)

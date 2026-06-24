@@ -85,23 +85,6 @@ def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
         )
 
 
-def seed_initial_stock(conn: psycopg.Connection, stock: dict[str, int]) -> None:
-    """Set initial_stock per category (the 'alistado' baseline at DB start).
-
-    Fixed value — recalc_inventory never overwrites it.
-    """
-    with conn.cursor() as cur:
-        for category, qty in stock.items():
-            cur.execute(
-                """
-                INSERT INTO inventory_categories (category, initial_stock)
-                VALUES (%s, %s)
-                ON CONFLICT (category) DO UPDATE SET initial_stock = EXCLUDED.initial_stock
-                """,
-                (category, int(qty)),
-            )
-
-
 def insert_blank_preparation(conn: psycopg.Connection, *, prep_date, category: str,
                              quantity: int, prepared_by: str | None) -> None:
     """Record one ALISTAMIENTO event (blanks prepared / material intake)."""
@@ -116,11 +99,13 @@ def insert_blank_preparation(conn: psycopg.Connection, *, prep_date, category: s
 
 
 def recalc_inventory(conn: psycopg.Connection) -> None:
-    """Recompute prepared and consumed; preserve initial_stock.
+    """Recompute prepared and consumed per category.
 
-      prepared = SUM(blank_preparations.quantity) per category
-      consumed = SUM(plates.quantity) per category, excluding order-annulled
-                 (is_voided = true). REPOSICION and plate-annulled count as consumed.
+      prepared = SUM(blank_preparations.quantity)  (includes the Feb baseline,
+                 which is stored as the first ALISTAMIENTO events)
+      consumed = SUM(plates.quantity) excluding order-annulled (is_voided = true).
+                 REPOSICION and plate-annulled count as consumed.
+      available (in the view) = prepared - consumed.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -145,12 +130,12 @@ def recalc_inventory(conn: psycopg.Connection) -> None:
 
 
 def inventory_view(conn: psycopg.Connection) -> list[dict]:
-    """Per-category inventory with computed available = initial + prepared - consumed."""
+    """Per-category inventory with computed available = prepared - consumed."""
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT category, initial_stock, prepared, consumed,
-                   (initial_stock + prepared - consumed) AS available
+            SELECT category, prepared, consumed,
+                   (prepared - consumed) AS available
             FROM inventory_categories
             ORDER BY category
             """
