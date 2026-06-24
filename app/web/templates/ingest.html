@@ -49,15 +49,15 @@
       <textarea name="rows_json" placeholder='[{"order_number": 123, "order_date": "2026-06-24", "requested_by": "PTO.V", "plate_type": "carro particular", "plate_number": "HMF922", "city": "Cali", "quantity": 1}]'></textarea>
     </fieldset>
 
-    {% if api_enabled %}
     <fieldset>
-      <legend>Puerta 2 — Subir foto (API)</legend>
-      <p class="muted">La app llama a Claude para extraer las filas. (Si subís foto, tiene prioridad sobre el JSON pegado.)</p>
+      <legend>Puerta 2 — Subir foto {% if not api_enabled %}<span class="muted">(inactiva)</span>{% endif %}</legend>
+      {% if api_enabled %}
+        <p class="muted">La app llama a Claude para extraer las filas. (Si subís foto, tiene prioridad sobre el JSON pegado.)</p>
+      {% else %}
+        <p class="muted">Para activarla hay que configurar <code>ANTHROPIC_API_KEY</code>. Por ahora podés seleccionar la foto pero al procesar te pedirá usar la Puerta 1.</p>
+      {% endif %}
       <input type="file" name="photo" accept="image/*">
     </fieldset>
-    {% else %}
-    <p class="muted">Puerta 2 (subir foto → API) está apagada. Se activa al configurar <code>ANTHROPIC_API_KEY</code>.</p>
-    {% endif %}
 
     <button type="submit">Procesar</button>
   </form>
