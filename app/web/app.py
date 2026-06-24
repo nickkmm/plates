@@ -23,10 +23,6 @@ from app.web import extraction
 
 app = Flask(__name__)
 
-# Quantity above which a plate row is surfaced for review (computed dynamically;
-# no schema change). Tune via REVIEW_QTY_THRESHOLD.
-REVIEW_QTY_THRESHOLD = int(os.environ.get("REVIEW_QTY_THRESHOLD", "500"))
-
 
 def _parse_pasted_json(text: str) -> Extraction:
     """Accept either a bare JSON array of rows or an object with a 'rows' key."""
@@ -84,8 +80,43 @@ def ingest_post():
 @app.get("/review")
 def review():
     with db.get_conn() as conn:
-        rows = db.review_rows(conn, REVIEW_QTY_THRESHOLD)
-    return render_template("review.html", rows=rows, threshold=REVIEW_QTY_THRESHOLD)
+        rows = db.review_rows(conn)
+    return render_template("review.html", rows=rows)
+
+
+@app.post("/review/update")
+def review_update():
+    plate_id = int(request.form["plate_id"])
+    plate_number = (request.form.get("plate_number") or "").strip() or None
+    with db.get_conn() as conn:
+        db.update_plate(
+            conn,
+            plate_id,
+            plate_type=(request.form.get("plate_type") or "").strip(),
+            plate_number=plate_number,
+            quantity=int(request.form.get("quantity") or 0),
+            is_voided=request.form.get("is_voided") == "on",
+        )
+        db.recalc_inventory(conn)  # quantity/void changes affect consumed
+        conn.commit()
+    return redirect(url_for("review"))
+
+
+@app.post("/review/resolve")
+def review_resolve():
+    with db.get_conn() as conn:
+        db.resolve_plate(conn, int(request.form["plate_id"]))
+        conn.commit()
+    return redirect(url_for("review"))
+
+
+@app.post("/review/delete")
+def review_delete():
+    with db.get_conn() as conn:
+        db.delete_plate(conn, int(request.form["plate_id"]))
+        db.recalc_inventory(conn)
+        conn.commit()
+    return redirect(url_for("review"))
 
 
 @app.get("/inventory")

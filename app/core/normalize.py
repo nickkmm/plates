@@ -59,6 +59,24 @@ def _is_reposicion(folded: str) -> bool:
     return "REPOSICION" in folded
 
 
+# Values that are NOT unique plate identifiers, so they must not be treated as
+# duplicates even when they repeat (samples, internal markers, serial notes).
+_NON_PLATE_EXACT = {"MUESTRA", "MUESTRAS", "INGSE", "KWP"}
+
+
+def is_real_plate(plate_number: str | None) -> bool:
+    """True only for values that identify a unique plate (eligible for dedup).
+
+    Excludes None, sample/internal markers, and serial notes like 'S/43050'.
+    """
+    if not plate_number:
+        return False
+    f = plate_number.strip().upper()
+    if f in _NON_PLATE_EXACT or f.startswith("S/"):
+        return False
+    return True
+
+
 def annulment_kind(*folded_texts: str) -> str | None:
     """Classify annulment from SOLICITADO/RANGO/CIUDAD (already folded).
 
