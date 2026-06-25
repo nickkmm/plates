@@ -55,6 +55,43 @@ def normalize_requested_by(value: str) -> str:
     return folded
 
 
+# Plate format per category (Colombian plates). Públicos assumed same as
+# particulares until confirmed otherwise.
+PLATE_PATTERNS = {
+    "MOTO PARTICULAR": re.compile(r"[A-Z]{3}\d{2}[A-Z]"),   # e.g. KWD91G
+    "MOTO PÚBLICO":    re.compile(r"[A-Z]{3}\d{2}[A-Z]"),
+    "CARRO PARTICULAR": re.compile(r"[A-Z]{3}\d{3}"),        # e.g. HMF922
+    "CARRO PÚBLICO":    re.compile(r"[A-Z]{3}\d{3}"),
+}
+
+_PLATE_DESC = {
+    "MOTO PARTICULAR": "3 letras, 2 números y 1 letra (ej. KWD91G)",
+    "MOTO PÚBLICO": "3 letras, 2 números y 1 letra (ej. KWD91G)",
+    "CARRO PARTICULAR": "3 letras y 3 números (ej. HMF922)",
+    "CARRO PÚBLICO": "3 letras y 3 números (ej. HMF922)",
+}
+
+
+def clean_plate(value: str) -> str:
+    """Uppercase and remove spaces so 'arn 911' -> 'ARN911'."""
+    return _WHITESPACE.sub("", value.strip().upper())
+
+
+def validate_plate(value: str, plate_type: str) -> str:
+    """Return the cleaned plate if it matches its category format, else raise.
+
+    Used at creation time (the form); historical migration is not validated.
+    """
+    cleaned = clean_plate(value)
+    pattern = PLATE_PATTERNS.get(plate_type)
+    if pattern and not pattern.fullmatch(cleaned):
+        raise ValueError(
+            f"La placa '{value}' no tiene el formato de {plate_type}: "
+            f"{_PLATE_DESC.get(plate_type, '')}."
+        )
+    return cleaned
+
+
 def normalize_city(value: str | None) -> str | None:
     """Uppercase + single-space the city so 'Cali' and 'CALI' collapse into one.
 
