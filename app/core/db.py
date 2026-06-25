@@ -144,6 +144,34 @@ def inventory_view(conn: psycopg.Connection) -> list[dict]:
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+def distinct_requested_by(conn: psycopg.Connection) -> list[str]:
+    """Existing 'solicitado por' values, most frequent first (for the dropdown)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT requested_by FROM production_orders
+            WHERE requested_by IS NOT NULL AND requested_by <> ''
+            GROUP BY requested_by ORDER BY count(*) DESC, requested_by
+            """
+        )
+        return [r[0] for r in cur.fetchall()]
+
+
+def distinct_cities(conn: psycopg.Connection) -> list[str]:
+    """Existing cities, most frequent first; drops obvious junk/annulment markers."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT city FROM production_orders
+            WHERE city IS NOT NULL AND city <> ''
+            GROUP BY city ORDER BY count(*) DESC, city
+            """
+        )
+        junk = {"-", "—"}
+        return [c for c in (r[0] for r in cur.fetchall())
+                if c not in junk and "ANULAD" not in c.upper()]
+
+
 def review_rows(conn: psycopg.Connection) -> list[dict]:
     """Rows flagged for review: possible duplicates only (real repeated plates)."""
     with conn.cursor() as cur:

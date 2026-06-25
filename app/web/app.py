@@ -1,35 +1,69 @@
-"""Flask app — pluggable ingestion for plate production.
+"""Flask app — plate production: form-based registration, review, inventory.
 
 Routes:
   GET  /            -> redirect to /ingest
-  GET  /ingest      -> form (door 1 paste-JSON always; door 2 image only if API key)
-  POST /ingest      -> run the chosen door, then the shared backend process_rows
-  GET  /review      -> table of rows flagged for review (possible dup or big quantity)
+  GET  /ingest      -> the "Registrar" form (order header + plate lines)
+  POST /ingest      -> build rows from the form, then the shared backend process_rows
+  GET  /review      -> table of rows flagged for review (real duplicate plates)
+  GET  /inventory   -> per-category inventory cards
   GET  /healthz     -> liveness probe
 """
 
 from __future__ import annotations
 
-import json
-import os
+from datetime import date
 
 from flask import Flask, redirect, render_template, request, url_for
-from pydantic import ValidationError
 
 from app.core import db
-from app.core.models import Extraction
+from app.core.models import ExtractedRow
 from app.core.process import process_rows
-from app.web import extraction
 
 app = Flask(__name__)
 
+DEFAULT_CATEGORIES = ["MOTO PARTICULAR", "CARRO PARTICULAR", "CARRO PÚBLICO", "MOTO PÚBLICO"]
 
-def _parse_pasted_json(text: str) -> Extraction:
-    """Accept either a bare JSON array of rows or an object with a 'rows' key."""
-    data = json.loads(text)
-    if isinstance(data, list):
-        data = {"rows": data}
-    return Extraction.model_validate(data)
+
+def _options(conn):
+    return db.distinct_requested_by(conn), db.distinct_cities(conn)
+
+
+def _rows_from_form(form) -> list[ExtractedRow]:
+    """Build ExtractedRow(s) from the order header + repeated plate lines.
+
+    line_type drives the flags so the user never types special words:
+      placa          -> normal plate
+      reposicion     -> batch lot (no plate number)
+      anulada_orden  -> voided order (NOT counted in inventory)
+      muestra        -> sample (plate_number = MUESTRA)
+    (A single annulled plate whose blank was lost = register it as 'placa'.)
+    """
+    order_number = form["order_number"].strip()
+    order_date = form["order_date"]
+    requested_by = form["requested_by"].strip()
+    city = (form.get("city") or "").strip() or None
+
+    rows: list[ExtractedRow] = []
+    for lt, pt, pn, qty in zip(
+        form.getlist("line_type"), form.getlist("plate_type"),
+        form.getlist("plate_number"), form.getlist("quantity"),
+    ):
+        if not (pt or "").strip():
+            continue  # skip empty line
+        plate_number = (pn or "").strip() or None
+        is_batch = is_voided = False
+        if lt == "reposicion":
+            is_batch, plate_number = True, None
+        elif lt == "anulada_orden":
+            is_voided = True
+        elif lt == "muestra":
+            plate_number = plate_number or "MUESTRA"
+        rows.append(ExtractedRow(
+            order_number=order_number, order_date=order_date, requested_by=requested_by,
+            city=city, plate_type=pt.strip(), plate_number=plate_number,
+            quantity=int(qty or 1), is_batch_replacement=is_batch, is_voided=is_voided,
+        ))
+    return rows
 
 
 @app.get("/")
@@ -39,45 +73,31 @@ def index():
 
 @app.get("/ingest")
 def ingest():
-    return render_template("ingest.html", api_enabled=extraction.api_enabled())
+    with db.get_conn() as conn:
+        requesters, cities = _options(conn)
+    return render_template("ingest.html", requesters=requesters, cities=cities,
+                           categories=DEFAULT_CATEGORIES, today=date.today().isoformat())
 
 
 @app.post("/ingest")
 def ingest_post():
     summary = None
     error = None
-    api_on = extraction.api_enabled()
-
     try:
-        upload = request.files.get("photo")
-        pasted = (request.form.get("rows_json") or "").strip()
-
-        if upload and upload.filename:
-            # Door 2: image -> API -> rows (only when the API key is configured)
-            if api_on:
-                result = extraction.extract_from_image(upload.read(), upload.filename)
-                summary = process_rows(result.rows)
-            else:
-                error = ("La opción de subir foto (Puerta 2) requiere configurar "
-                         "ANTHROPIC_API_KEY. Por ahora pegá el JSON (Puerta 1).")
-        elif pasted:
-            # Door 1: pasted JSON -> rows
-            result = _parse_pasted_json(pasted)
-            summary = process_rows(result.rows)
+        rows = _rows_from_form(request.form)
+        if not rows:
+            error = "Agregá al menos una placa."
         else:
-            error = "Pegá el JSON, o subí una foto (si la Puerta 2 está activa)."
-    except json.JSONDecodeError as e:
-        error = f"El JSON pegado no es válido: {e}"
-    except ValidationError as e:
-        error = f"El JSON no coincide con el formato esperado: {e}"
-    except Exception as e:  # surface DB/API errors to the user without crashing
-        error = f"Error procesando: {e}"
+            summary = process_rows(rows)
+    except Exception as e:  # surface validation/DB errors without crashing
+        error = f"Error: {e}"
 
+    with db.get_conn() as conn:
+        requesters, cities = _options(conn)
     return render_template(
-        "ingest.html",
-        api_enabled=api_on,
-        summary=summary.model_dump() if summary else None,
-        error=error,
+        "ingest.html", requesters=requesters, cities=cities,
+        categories=DEFAULT_CATEGORIES, today=date.today().isoformat(),
+        summary=summary.model_dump() if summary else None, error=error,
     )
 
 
@@ -121,9 +141,6 @@ def review_delete():
         db.recalc_inventory(conn)
         conn.commit()
     return redirect(url_for("review"))
-
-
-DEFAULT_CATEGORIES = ["MOTO PARTICULAR", "CARRO PARTICULAR", "CARRO PÚBLICO", "MOTO PÚBLICO"]
 
 
 @app.get("/inventory")

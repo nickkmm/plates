@@ -3,22 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Plates — Ingesta</title>
+  <title>Plates — Registrar</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    :root { --green:#1a9c5b; --blue:#0b6bcb; --red:#d33; --ink:#222; }
+    body { font-family: system-ui, sans-serif; max-width: 920px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
     h1 { font-size: 1.4rem; }
-    fieldset { border: 1px solid #ccc; border-radius: 8px; margin-bottom: 1.5rem; padding: 1rem; }
-    legend { font-weight: 600; padding: 0 .4rem; }
-    textarea { width: 100%; min-height: 220px; font-family: ui-monospace, monospace; font-size: .85rem; }
-    button { background: #1a5; color: #fff; border: 0; border-radius: 6px; padding: .6rem 1.1rem; font-size: 1rem; cursor: pointer; }
-    .summary { background: #eefbf3; border: 1px solid #1a5; border-radius: 8px; padding: 1rem; }
-    .error { background: #fdecec; border: 1px solid #d33; border-radius: 8px; padding: 1rem; color: #900; }
-    .muted { color: #777; font-size: .9rem; }
     .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
     .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
     .tabs a:hover { background:#f3f6fb; }
-    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
-    ul { margin: .3rem 0; }
+    .tabs a.on { color:var(--blue); border-bottom:3px solid var(--blue); margin-bottom:-2px; }
+    .muted { color:#777; font-size:.9rem; }
+    fieldset { border:1px solid #ddd; border-radius:10px; margin-bottom:1.2rem; padding:1rem; }
+    legend { font-weight:600; padding:0 .4rem; }
+    .header { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.8rem; }
+    label { font-size:.8rem; color:#555; display:flex; flex-direction:column; gap:.25rem; }
+    input, select { padding:.45rem; border:1px solid #ccc; border-radius:6px; font-size:.95rem; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { border:1px solid #e3e3e3; padding:.35rem .4rem; }
+    th { background:#f6f6f6; font-size:.78rem; }
+    td input, td select { width:100%; box-sizing:border-box; }
+    .plate-num { text-transform:uppercase; }
+    button { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; }
+    .add { background:var(--blue); color:#fff; margin-top:.6rem; }
+    .submit { background:var(--green); color:#fff; font-size:1.05rem; padding:.65rem 1.4rem; }
+    .rm { background:#eee; color:#900; padding:.3rem .55rem; }
+    .summary { background:#eefbf3; border:1px solid var(--green); border-radius:8px; padding:1rem; margin-bottom:1rem; }
+    .error { background:#fdecec; border:1px solid var(--red); border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
+    ul { margin:.3rem 0; }
   </style>
 </head>
 <body>
@@ -30,43 +41,85 @@
   <h1>Registrar producción de placas</h1>
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
-
   {% if summary %}
   <div class="summary">
-    <strong>Resumen</strong>
+    <strong>Registrado ✓</strong>
     <ul>
-      <li>Órdenes insertadas: {{ summary.orders_inserted }}</li>
-      <li>Placas insertadas: {{ summary.plates_inserted }}</li>
-      <li>Posibles duplicados marcados: {{ summary.possible_duplicates }}</li>
-      <li>Anuladas: {{ summary.voided }}</li>
-      <li>Reposiciones (lote): {{ summary.batch_replacements }}</li>
+      <li>Órdenes: {{ summary.orders_inserted }} · Placas: {{ summary.plates_inserted }}</li>
+      <li>Reposiciones: {{ summary.batch_replacements }} · Anuladas: {{ summary.voided }} · Posibles duplicados: {{ summary.possible_duplicates }}</li>
     </ul>
-    {% if summary.review_notes %}
-      <strong>Notas para revisión:</strong>
-      <ul>{% for n in summary.review_notes %}<li>{{ n }}</li>{% endfor %}</ul>
-    {% endif %}
-    <p class="muted">Revisá los marcados en <a href="{{ url_for('review') }}">Revisión</a>.</p>
+    {% if summary.possible_duplicates %}<p class="muted">Revisá los duplicados en <a href="{{ url_for('review') }}">Revisión</a>.</p>{% endif %}
   </div>
   {% endif %}
 
-  <form method="post" action="{{ url_for('ingest') }}" enctype="multipart/form-data">
+  <!-- datalists: permiten elegir de lo existente O escribir uno nuevo -->
+  <datalist id="requesters">{% for r in requesters %}<option value="{{ r }}">{% endfor %}</datalist>
+  <datalist id="cities">{% for c in cities %}<option value="{{ c }}">{% endfor %}</datalist>
+
+  <form method="post" action="{{ url_for('ingest') }}">
     <fieldset>
-      <legend>Puerta 1 — Pegar JSON (gratis)</legend>
-      <p class="muted">Subí la foto a tu Project en claude.ai, copiá el array JSON y pegalo acá.</p>
-      <textarea name="rows_json" placeholder='[{"order_number": 123, "order_date": "2026-06-24", "requested_by": "PTO.V", "plate_type": "carro particular", "plate_number": "HMF922", "city": "Cali", "quantity": 1}]'></textarea>
+      <legend>Datos de la orden</legend>
+      <div class="header">
+        <label>Fecha<input type="date" name="order_date" value="{{ today }}" required></label>
+        <label>N° de orden<input type="text" name="order_number" required placeholder="ej. 598"></label>
+        <label>Solicitado por<input type="text" name="requested_by" list="requesters" required placeholder="elegí o escribí"></label>
+        <label>Ciudad<input type="text" name="city" list="cities" placeholder="elegí o escribí"></label>
+      </div>
     </fieldset>
 
     <fieldset>
-      <legend>Puerta 2 — Subir foto {% if not api_enabled %}<span class="muted">(inactiva)</span>{% endif %}</legend>
-      {% if api_enabled %}
-        <p class="muted">La app llama a Claude para extraer las filas. (Si subís foto, tiene prioridad sobre el JSON pegado.)</p>
-      {% else %}
-        <p class="muted">Para activarla hay que configurar <code>ANTHROPIC_API_KEY</code>. Por ahora podés seleccionar la foto pero al procesar te pedirá usar la Puerta 1.</p>
-      {% endif %}
-      <input type="file" name="photo" accept="image/*">
+      <legend>Placas</legend>
+      <table>
+        <thead>
+          <tr><th style="width:22%">Tipo de registro</th><th style="width:26%">Tipo de placa</th><th>Placa</th><th style="width:14%">Cantidad</th><th style="width:6%"></th></tr>
+        </thead>
+        <tbody id="lines">
+          <tr class="line">
+            <td>
+              <select name="line_type" onchange="togglePlate(this)">
+                <option value="placa">Placa</option>
+                <option value="reposicion">Reposición (lote)</option>
+                <option value="anulada_orden">Orden anulada</option>
+                <option value="muestra">Muestra</option>
+              </select>
+            </td>
+            <td>
+              <select name="plate_type" required>
+                {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+              </select>
+            </td>
+            <td><input type="text" name="plate_number" class="plate-num" placeholder="ej. HMF922"></td>
+            <td><input type="number" name="quantity" value="1" min="0" required></td>
+            <td><button type="button" class="rm" onclick="rmLine(this)">✕</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <button type="button" class="add" onclick="addLine()">+ Agregar placa</button>
     </fieldset>
 
-    <button type="submit">Procesar</button>
+    <button type="submit" class="submit">Guardar orden</button>
   </form>
+
+  <script>
+    // "Reposición" y "Orden anulada" no llevan número de placa.
+    // readonly (no disabled) para que el campo igual se envíe y no desalinee las columnas.
+    function togglePlate(sel) {
+      const inp = sel.closest('tr').querySelector('input[name="plate_number"]');
+      const noPlate = (sel.value === 'reposicion' || sel.value === 'anulada_orden');
+      inp.readOnly = noPlate; if (noPlate) inp.value = '';
+      inp.style.background = noPlate ? '#f0f0f0' : '';
+    }
+    function addLine() {
+      const tbody = document.getElementById('lines');
+      const row = tbody.querySelector('.line').cloneNode(true);
+      row.querySelectorAll('input').forEach(i => { i.value = (i.type==='number') ? 1 : ''; i.readOnly=false; i.style.background=''; });
+      row.querySelector('select[name="line_type"]').value = 'placa';
+      tbody.appendChild(row);
+    }
+    function rmLine(btn) {
+      const tbody = document.getElementById('lines');
+      if (tbody.querySelectorAll('.line').length > 1) btn.closest('tr').remove();
+    }
+  </script>
 </body>
 </html>
