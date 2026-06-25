@@ -55,6 +55,19 @@ def normalize_requested_by(value: str) -> str:
     return folded
 
 
+def normalize_city(value: str | None) -> str | None:
+    """Uppercase + single-space the city so 'Cali' and 'CALI' collapse into one.
+
+    Keeps accents (BOGOTÁ). Returns None for blanks or punctuation-only junk ('-', '//').
+    """
+    if not value:
+        return None
+    v = _WHITESPACE.sub(" ", value.strip().upper())
+    if not any(ch.isalnum() for ch in v):
+        return None
+    return v or None
+
+
 def _is_reposicion(folded: str) -> bool:
     return "REPOSICION" in folded
 
@@ -107,6 +120,7 @@ def normalize_row(row: ExtractedRow) -> ExtractedRow:
     """
     data = row.model_dump()
     data["requested_by"] = normalize_requested_by(row.requested_by)
+    data["city"] = normalize_city(row.city)
 
     plate_folded = _fold(row.plate_number) if row.plate_number else ""
     city_folded = _fold(row.city) if row.city else ""
@@ -126,5 +140,9 @@ def normalize_row(row: ExtractedRow) -> ExtractedRow:
     # blank was lost, so it stays is_voided=False and counts as consumed.
     if kind in ("order", "bare"):
         data["is_voided"] = True
+
+    # If the annulment was written in the CIUDAD cell, that's not a real city.
+    if city_folded and "ANULAD" in city_folded:
+        data["city"] = None
 
     return ExtractedRow(**data)
