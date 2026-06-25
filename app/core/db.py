@@ -154,7 +154,8 @@ def distinct_requested_by(conn: psycopg.Connection) -> list[str]:
             GROUP BY requested_by ORDER BY count(*) DESC, requested_by
             """
         )
-        return [r[0] for r in cur.fetchall()]
+        # Drop punctuation-only junk like '//'.
+        return [r[0] for r in cur.fetchall() if any(ch.isalnum() for ch in r[0])]
 
 
 def distinct_cities(conn: psycopg.Connection) -> list[str]:
@@ -167,9 +168,8 @@ def distinct_cities(conn: psycopg.Connection) -> list[str]:
             GROUP BY city ORDER BY count(*) DESC, city
             """
         )
-        junk = {"-", "—"}
         return [c for c in (r[0] for r in cur.fetchall())
-                if c not in junk and "ANULAD" not in c.upper()]
+                if any(ch.isalnum() for ch in c) and "ANULAD" not in c.upper()]
 
 
 def review_rows(conn: psycopg.Connection) -> list[dict]:
