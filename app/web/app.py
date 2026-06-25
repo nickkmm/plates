@@ -17,6 +17,7 @@ from flask import Flask, redirect, render_template, request, url_for
 
 from app.core import db
 from app.core.models import ExtractedRow
+from app.core.normalize import validate_plate
 from app.core.process import process_rows
 
 app = Flask(__name__)
@@ -59,6 +60,7 @@ def _rows_from_form(form) -> list[ExtractedRow]:
         plate_number = (pn or "").strip() or None
         plate_to = (pto or "").strip() or None
         is_batch = is_voided = False
+        ptype = pt.strip()
         if lt == "reposicion":
             is_batch, plate_number, plate_to = True, None, None
         elif lt == "anulada_orden":
@@ -68,8 +70,12 @@ def _rows_from_form(form) -> list[ExtractedRow]:
         elif lt == "rango":
             if not (plate_number and plate_to):
                 raise ValueError("En 'Rango' tenés que indicar desde y hasta.")
+            plate_number = validate_plate(plate_number, ptype)  # desde
+            plate_to = validate_plate(plate_to, ptype)          # hasta
         else:  # placa (single)
             plate_to = None
+            if plate_number:
+                plate_number = validate_plate(plate_number, ptype)
         rows.append(ExtractedRow(
             order_number=order_number, order_date=order_date, requested_by=requested_by,
             city=city, plate_type=pt.strip(), plate_number=plate_number, plate_to=plate_to,
