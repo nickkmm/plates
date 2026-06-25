@@ -66,15 +66,16 @@ def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
         cur.execute(
             """
             INSERT INTO plates (
-                order_id, plate_type, plate_number, is_batch_replacement,
+                order_id, plate_type, plate_number, plate_to, is_batch_replacement,
                 is_voided, quantity, material, prepared_by, is_possible_duplicate
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 order_id,
                 row.plate_type,
                 row.plate_number,
+                row.plate_to,
                 row.is_batch_replacement,
                 row.is_voided,
                 row.quantity,

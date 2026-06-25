@@ -32,35 +32,47 @@ def _rows_from_form(form) -> list[ExtractedRow]:
     """Build ExtractedRow(s) from the order header + repeated plate lines.
 
     line_type drives the flags so the user never types special words:
-      placa          -> normal plate
-      reposicion     -> batch lot (no plate number)
+      placa          -> single plate
+      rango          -> consecutive plates: requires 'desde' (plate_number) and 'hasta' (plate_to)
+      reposicion     -> big non-consecutive lot (no plate, no range)
       anulada_orden  -> voided order (NOT counted in inventory)
       muestra        -> sample (plate_number = MUESTRA)
-    (A single annulled plate whose blank was lost = register it as 'placa'.)
     """
     order_number = form["order_number"].strip()
     order_date = form["order_date"]
     requested_by = form["requested_by"].strip()
     city = (form.get("city") or "").strip() or None
 
+    # Order-level validations.
+    if any(ch.isdigit() for ch in requested_by):
+        raise ValueError("'Solicitado por' no debería contener números (parece una placa). Revisá ese campo.")
+    if order_date and order_date > date.today().isoformat():
+        raise ValueError(f"La fecha {order_date} es futura. Corregí la fecha.")
+
     rows: list[ExtractedRow] = []
-    for lt, pt, pn, qty in zip(
+    for lt, pt, pn, pto, qty in zip(
         form.getlist("line_type"), form.getlist("plate_type"),
-        form.getlist("plate_number"), form.getlist("quantity"),
+        form.getlist("plate_number"), form.getlist("plate_to"), form.getlist("quantity"),
     ):
         if not (pt or "").strip():
             continue  # skip empty line
         plate_number = (pn or "").strip() or None
+        plate_to = (pto or "").strip() or None
         is_batch = is_voided = False
         if lt == "reposicion":
-            is_batch, plate_number = True, None
+            is_batch, plate_number, plate_to = True, None, None
         elif lt == "anulada_orden":
-            is_voided = True
+            is_voided, plate_number, plate_to = True, None, None
         elif lt == "muestra":
-            plate_number = plate_number or "MUESTRA"
+            plate_number, plate_to = plate_number or "MUESTRA", None
+        elif lt == "rango":
+            if not (plate_number and plate_to):
+                raise ValueError("En 'Rango' tenés que indicar desde y hasta.")
+        else:  # placa (single)
+            plate_to = None
         rows.append(ExtractedRow(
             order_number=order_number, order_date=order_date, requested_by=requested_by,
-            city=city, plate_type=pt.strip(), plate_number=plate_number,
+            city=city, plate_type=pt.strip(), plate_number=plate_number, plate_to=plate_to,
             quantity=int(qty or 1), is_batch_replacement=is_batch, is_voided=is_voided,
         ))
     return rows
