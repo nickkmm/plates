@@ -60,7 +60,7 @@
     <fieldset>
       <legend>Datos de la orden</legend>
       <div class="header">
-        <label>Fecha<input type="date" name="order_date" value="{{ today }}" required></label>
+        <label>Fecha<input type="date" name="order_date" value="{{ today }}" max="{{ today }}" required></label>
         <label>N° de orden<input type="text" name="order_number" required placeholder="ej. 598"></label>
         <label>Solicitado por<input type="text" name="requested_by" list="requesters" required placeholder="elegí o escribí"></label>
         <label>Ciudad<input type="text" name="city" list="cities" placeholder="elegí o escribí"></label>
@@ -71,14 +71,15 @@
       <legend>Placas</legend>
       <table>
         <thead>
-          <tr><th style="width:22%">Tipo de registro</th><th style="width:26%">Tipo de placa</th><th>Placa</th><th style="width:14%">Cantidad</th><th style="width:6%"></th></tr>
+          <tr><th style="width:20%">Tipo de registro</th><th style="width:22%">Tipo de placa</th><th>Placa / Desde</th><th>Hasta</th><th style="width:12%">Cantidad</th><th style="width:5%"></th></tr>
         </thead>
         <tbody id="lines">
           <tr class="line">
             <td>
               <select name="line_type" onchange="togglePlate(this)">
                 <option value="placa">Placa</option>
-                <option value="reposicion">Reposición (lote)</option>
+                <option value="rango">Rango (desde–hasta)</option>
+                <option value="reposicion">Reposición</option>
                 <option value="anulada_orden">Orden anulada</option>
                 <option value="muestra">Muestra</option>
               </select>
@@ -89,6 +90,7 @@
               </select>
             </td>
             <td><input type="text" name="plate_number" class="plate-num" placeholder="ej. HMF922"></td>
+            <td><input type="text" name="plate_to" class="plate-num" placeholder="solo rango" readonly style="background:#f0f0f0"></td>
             <td><input type="number" name="quantity" value="1" min="0" required></td>
             <td><button type="button" class="rm" onclick="rmLine(this)">✕</button></td>
           </tr>
@@ -101,19 +103,24 @@
   </form>
 
   <script>
-    // "Reposición" y "Orden anulada" no llevan número de placa.
-    // readonly (no disabled) para que el campo igual se envíe y no desalinee las columnas.
+    // Habilita "Desde" (placa) y "Hasta" según el tipo. readonly (no disabled)
+    // para que el campo igual se envíe y no desalinee las columnas.
+    function setRO(inp, ro) { inp.readOnly = ro; if (ro) inp.value=''; inp.style.background = ro ? '#f0f0f0' : ''; }
     function togglePlate(sel) {
-      const inp = sel.closest('tr').querySelector('input[name="plate_number"]');
-      const noPlate = (sel.value === 'reposicion' || sel.value === 'anulada_orden');
-      inp.readOnly = noPlate; if (noPlate) inp.value = '';
-      inp.style.background = noPlate ? '#f0f0f0' : '';
+      const tr = sel.closest('tr');
+      const desde = tr.querySelector('input[name="plate_number"]');
+      const hasta = tr.querySelector('input[name="plate_to"]');
+      const v = sel.value;
+      // desde: editable salvo reposición/orden anulada. hasta: solo en rango.
+      setRO(desde, v === 'reposicion' || v === 'anulada_orden');
+      setRO(hasta, v !== 'rango');
     }
     function addLine() {
       const tbody = document.getElementById('lines');
       const row = tbody.querySelector('.line').cloneNode(true);
-      row.querySelectorAll('input').forEach(i => { i.value = (i.type==='number') ? 1 : ''; i.readOnly=false; i.style.background=''; });
       row.querySelector('select[name="line_type"]').value = 'placa';
+      row.querySelector('input[name="quantity"]').value = 1;
+      togglePlate(row.querySelector('select[name="line_type"]'));
       tbody.appendChild(row);
     }
     function rmLine(btn) {

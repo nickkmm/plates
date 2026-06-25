@@ -29,7 +29,8 @@ class ExtractedRow(BaseModel):
     city: str | None = Field(default=None, description="CIUDAD")
     # RANGO: a real plate (e.g. 'HMF922'), or a special token (REPOSICION / REPITE).
     # Kept raw here; core.normalize interprets tokens into flags and may null it out.
-    plate_number: str | None = Field(default=None, description="RANGO — plate or special token")
+    plate_number: str | None = Field(default=None, description="RANGO — plate, or START of a range")
+    plate_to: str | None = Field(default=None, description="END of a range (consecutive plates)")
     quantity: int = Field(default=1, ge=0, description="CANTIDAD")
     material: str | None = Field(default=None, description="MATERIAL (rarely filled)")
     prepared_by: str | None = Field(default=None, description="ALISTADO POR (rarely filled)")
@@ -50,7 +51,7 @@ class ExtractedRow(BaseModel):
         # Trim surrounding whitespace early; deeper normalization happens in core.normalize.
         return v.strip() if isinstance(v, str) else v
 
-    @field_validator("city", "plate_number", "material", "prepared_by", mode="before")
+    @field_validator("city", "plate_number", "plate_to", "material", "prepared_by", mode="before")
     @classmethod
     def _blank_to_none(cls, v: object) -> object:
         if isinstance(v, str):

@@ -121,6 +121,7 @@ def normalize_row(row: ExtractedRow) -> ExtractedRow:
     data = row.model_dump()
     data["requested_by"] = normalize_requested_by(row.requested_by)
     data["city"] = normalize_city(row.city)
+    data["plate_to"] = _fold(row.plate_to) if row.plate_to else None  # range end, uppercased
 
     plate_folded = _fold(row.plate_number) if row.plate_number else ""
     city_folded = _fold(row.city) if row.city else ""

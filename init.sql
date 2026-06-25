@@ -15,7 +15,8 @@ CREATE TABLE plates (
     id SERIAL PRIMARY KEY,
     order_id INTEGER REFERENCES production_orders(id),
     plate_type TEXT NOT NULL,
-    plate_number TEXT,
+    plate_number TEXT,              -- single plate, or the START of a range
+    plate_to TEXT,                  -- END of a range (NULL for single plates / reposición)
     is_batch_replacement BOOLEAN DEFAULT false,
     is_voided BOOLEAN DEFAULT false,
     quantity INTEGER NOT NULL DEFAULT 1,
