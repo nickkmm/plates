@@ -85,7 +85,7 @@
               </select>
             </td>
             <td>
-              <select name="plate_type" required>
+              <select name="plate_type" required onchange="updateHint(this)">
                 {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
               </select>
             </td>
@@ -103,30 +103,43 @@
   </form>
 
   <script>
+    // Formato esperado por tipo de placa (se muestra como pista en cada celda).
+    const HINTS = {
+      'MOTO PARTICULAR': 'AAA00A (ej. KWD91G)', 'MOTO PÚBLICO': 'AAA00A (ej. KWD91G)',
+      'CARRO PARTICULAR': 'AAA000 (ej. HMF922)', 'CARRO PÚBLICO': 'AAA000 (ej. HMF922)',
+    };
+    function updateHint(typeSel) {
+      const tr = typeSel.closest('tr');
+      const h = HINTS[typeSel.value] || '';
+      tr.querySelector('input[name="plate_number"]').placeholder = h;
+      tr.querySelector('input[name="plate_to"]').placeholder = h;
+    }
     // Habilita "Desde" (placa) y "Hasta" según el tipo. readonly (no disabled)
     // para que el campo igual se envíe y no desalinee las columnas.
     function setRO(inp, ro) { inp.readOnly = ro; if (ro) inp.value=''; inp.style.background = ro ? '#f0f0f0' : ''; }
     function togglePlate(sel) {
       const tr = sel.closest('tr');
-      const desde = tr.querySelector('input[name="plate_number"]');
-      const hasta = tr.querySelector('input[name="plate_to"]');
       const v = sel.value;
-      // desde: editable salvo reposición/orden anulada. hasta: solo en rango.
-      setRO(desde, v === 'reposicion' || v === 'anulada_orden');
-      setRO(hasta, v !== 'rango');
+      setRO(tr.querySelector('input[name="plate_number"]'), v === 'reposicion' || v === 'anulada_orden');
+      setRO(tr.querySelector('input[name="plate_to"]'), v !== 'rango');
     }
     function addLine() {
       const tbody = document.getElementById('lines');
       const row = tbody.querySelector('.line').cloneNode(true);
       row.querySelector('select[name="line_type"]').value = 'placa';
       row.querySelector('input[name="quantity"]').value = 1;
-      togglePlate(row.querySelector('select[name="line_type"]'));
       tbody.appendChild(row);
+      togglePlate(row.querySelector('select[name="line_type"]'));
+      updateHint(row.querySelector('select[name="plate_type"]'));
     }
     function rmLine(btn) {
       const tbody = document.getElementById('lines');
-      if (tbody.querySelectorAll('.line').length > 1) btn.closest('tr').remove();
+      btn.closest('tr').remove();                    // siempre borra la fila
+      if (!tbody.querySelector('.line')) addLine();  // pero deja al menos una
     }
+    // Pistas iniciales al cargar.
+    document.addEventListener('DOMContentLoaded', () =>
+      document.querySelectorAll('select[name="plate_type"]').forEach(updateHint));
   </script>
 </body>
 </html>
