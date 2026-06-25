@@ -73,40 +73,43 @@
         <thead>
           <tr><th style="width:20%">Tipo de registro</th><th style="width:22%">Tipo de placa</th><th>Placa / Desde</th><th>Hasta</th><th style="width:12%">Cantidad</th><th style="width:5%"></th></tr>
         </thead>
-        <tbody id="lines">
-          <tr class="line">
-            <td>
-              <select name="line_type" onchange="togglePlate(this)">
-                <option value="placa">Placa</option>
-                <option value="rango">Rango</option>
-                <option value="reposicion">Reposición</option>
-                <option value="anulada_orden">Orden anulada</option>
-                <option value="muestra">Muestra</option>
-              </select>
-            </td>
-            <td>
-              <select name="plate_type" required onchange="updateHint(this)">
-                {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
-              </select>
-            </td>
-            <td><input type="text" name="plate_number" class="plate-num" placeholder="ej. HMF922"></td>
-            <td><input type="text" name="plate_to" class="plate-num" placeholder="solo rango" readonly style="background:#f0f0f0"></td>
-            <td><input type="number" name="quantity" value="1" min="0" required></td>
-            <td><button type="button" class="rm" onclick="rmLine(this)">✕</button></td>
-          </tr>
-        </tbody>
+        <tbody id="lines"></tbody>
       </table>
       <button type="button" class="add" onclick="addLine()">+ Agregar placa</button>
+
+      <!-- Plantilla de fila: se clona desde acá, así nunca depende de filas existentes. -->
+      <template id="lineTpl">
+        <tr class="line">
+          <td>
+            <select name="line_type" onchange="togglePlate(this)">
+              <option value="placa">Placa</option>
+              <option value="rango">Rango</option>
+              <option value="reposicion">Reposición</option>
+              <option value="anulada_orden">Orden anulada</option>
+              <option value="muestra">Muestra</option>
+            </select>
+          </td>
+          <td>
+            <select name="plate_type" required onchange="updateHint(this)">
+              {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            </select>
+          </td>
+          <td><input type="text" name="plate_number" class="plate-num"></td>
+          <td><input type="text" name="plate_to" class="plate-num" readonly style="background:#f0f0f0"></td>
+          <td><input type="number" name="quantity" value="1" min="0" required></td>
+          <td><button type="button" class="rm" onclick="rmLine(this)">✕</button></td>
+        </tr>
+      </template>
     </fieldset>
 
     <button type="submit" class="submit">Guardar orden</button>
   </form>
 
   <script>
-    // Formato esperado por tipo de placa (se muestra como pista en cada celda).
+    // Muestra de placa por tipo (placeholder).
     const HINTS = {
-      'MOTO PARTICULAR': 'AAA00A (ej. KWD91G)', 'MOTO PÚBLICO': 'AAA00A (ej. KWD91G)',
-      'CARRO PARTICULAR': 'AAA000 (ej. HMF922)', 'CARRO PÚBLICO': 'AAA000 (ej. HMF922)',
+      'MOTO PARTICULAR': 'KWD91G', 'MOTO PÚBLICO': 'KWD91G',
+      'CARRO PARTICULAR': 'HMF922', 'CARRO PÚBLICO': 'HMF922',
     };
     function updateHint(typeSel) {
       const tr = typeSel.closest('tr');
@@ -125,9 +128,8 @@
     }
     function addLine() {
       const tbody = document.getElementById('lines');
-      const row = tbody.querySelector('.line').cloneNode(true);
-      row.querySelector('select[name="line_type"]').value = 'placa';
-      row.querySelector('input[name="quantity"]').value = 1;
+      const frag = document.getElementById('lineTpl').content.cloneNode(true);
+      const row = frag.querySelector('.line');
       tbody.appendChild(row);
       togglePlate(row.querySelector('select[name="line_type"]'));
       updateHint(row.querySelector('select[name="plate_type"]'));
@@ -137,9 +139,8 @@
       btn.closest('tr').remove();                    // siempre borra la fila
       if (!tbody.querySelector('.line')) addLine();  // pero deja al menos una
     }
-    // Pistas iniciales al cargar.
-    document.addEventListener('DOMContentLoaded', () =>
-      document.querySelectorAll('select[name="plate_type"]').forEach(updateHint));
+    // Una fila al cargar.
+    document.addEventListener('DOMContentLoaded', addLine);
   </script>
 </body>
 </html>
