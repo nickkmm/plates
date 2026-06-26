@@ -32,7 +32,7 @@
   {% if rows %}
   <table>
     <thead>
-      <tr><th>Fecha</th><th>Orden</th><th>Solicitado</th><th>Ciudad</th><th>Placas</th><th>Cant.</th><th></th></tr>
+      <tr><th>Fecha</th><th>Orden</th><th>Solicitado</th><th>Ciudad</th><th title="cantidad de placas en la orden">N°</th><th>Placas</th><th title="suma de cantidades">Cant.</th><th></th></tr>
     </thead>
     <tbody>
       {% for r in rows %}
@@ -41,7 +41,8 @@
         <td>{{ r.order_number }}</td>
         <td>{{ r.requested_by }}</td>
         <td>{{ r.city or '—' }}</td>
-        <td><span class="muted">{{ r.n_plates }} —</span> <span class="plates">{{ r.plates or '—' }}</span></td>
+        <td>{{ r.n_plates }}</td>
+        <td class="plates">{{ r.plates or '—' }}</td>
         <td>{{ r.total_qty }}</td>
         <td>
           <form method="post" action="{{ url_for('records_delete') }}"
