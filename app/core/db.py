@@ -136,10 +136,16 @@ def inventory_view(conn: psycopg.Connection) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT category, prepared, consumed,
-                   (prepared - consumed) AS available
-            FROM inventory_categories
-            ORDER BY category
+            SELECT ic.category, ic.prepared, ic.consumed,
+                   (ic.prepared - ic.consumed) AS available,
+                   COALESCE(w.wasted, 0) AS wasted
+            FROM inventory_categories ic
+            LEFT JOIN (
+                SELECT plate_type, SUM(quantity) AS wasted
+                FROM plates WHERE is_plate_annulled = true
+                GROUP BY plate_type
+            ) w ON w.plate_type = ic.category
+            ORDER BY ic.category
             """
         )
         cols = [d[0] for d in cur.description]

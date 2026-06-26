@@ -51,6 +51,7 @@
         <div class="stats">
           <span>Alistado<b>{{ r.prepared }}</b></span>
           <span>Consumido<b>{{ r.consumed }}</b></span>
+          <span title="Placas anuladas (incluidas en el consumido)">Desperdicio<b>{{ r.wasted }}</b></span>
         </div>
         <div class="bar"><i class="{{ 'over' if pct > 100 else '' }}" style="width: {{ [pct, 100] | min }}%"></i></div>
         <div class="pct">{{ pct | round(0) | int }}% consumido</div>
