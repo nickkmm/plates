@@ -32,7 +32,7 @@
   {% if rows %}
   <table>
     <thead>
-      <tr><th>Fecha</th><th>Orden</th><th>Solicitado</th><th>Ciudad</th><th title="cantidad de placas en la orden">N°</th><th>Placas</th><th title="suma de cantidades">Cant.</th><th></th></tr>
+      <tr><th>Fecha</th><th>Orden</th><th>Solicitado</th><th>Ciudad</th><th title="total de placas (suma de cantidades)">Placas</th><th>Acciones</th></tr>
     </thead>
     <tbody>
       {% for r in rows %}
@@ -41,12 +41,11 @@
         <td>{{ r.order_number }}</td>
         <td>{{ r.requested_by }}</td>
         <td>{{ r.city or '—' }}</td>
-        <td>{{ r.n_plates }}</td>
-        <td class="plates">{{ r.plates or '—' }}</td>
         <td>{{ r.total_qty }}</td>
-        <td>
-          <form method="post" action="{{ url_for('records_delete') }}"
-                onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} y sus {{ r.n_plates }} placa(s)?');">
+        <td class="actions">
+          <a href="{{ url_for('record_detail', order_id=r.id) }}">ver</a>
+          <form method="post" action="{{ url_for('records_delete') }}" style="display:inline"
+                onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} ({{ r.total_qty }} placa(s))?');">
             <input type="hidden" name="order_id" value="{{ r.id }}">
             <button class="del" type="submit">Eliminar</button>
           </form>

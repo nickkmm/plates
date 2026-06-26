@@ -207,6 +207,31 @@ def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+def order_detail(conn: psycopg.Connection, order_id: int):
+    """Return (order dict, list of its plate dicts) for the detail view."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, order_number, order_date, requested_by, city "
+            "FROM production_orders WHERE id = %s",
+            (order_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None, []
+        order = dict(zip([d[0] for d in cur.description], row))
+        cur.execute(
+            """
+            SELECT plate_type, plate_number, plate_to, quantity,
+                   is_batch_replacement, is_voided, is_plate_annulled
+            FROM plates WHERE order_id = %s ORDER BY id
+            """,
+            (order_id,),
+        )
+        pcols = [d[0] for d in cur.description]
+        plates = [dict(zip(pcols, r)) for r in cur.fetchall()]
+    return order, plates
+
+
 def delete_order(conn: psycopg.Connection, order_id: int) -> None:
     """Delete an order and all its plates (plates first, for the FK)."""
     with conn.cursor() as cur:

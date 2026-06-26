@@ -206,6 +206,15 @@ def records():
     return render_template("records.html", rows=rows)
 
 
+@app.get("/records/<int:order_id>")
+def record_detail(order_id):
+    with db.get_conn() as conn:
+        order, plates = db.order_detail(conn, order_id)
+    if not order:
+        return redirect(url_for("records"))
+    return render_template("record_detail.html", order=order, plates=plates)
+
+
 @app.post("/records/delete")
 def records_delete():
     with db.get_conn() as conn:
