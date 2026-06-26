@@ -11,7 +11,8 @@ Routes:
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from flask import Flask, redirect, render_template, request, url_for
 
@@ -23,6 +24,14 @@ from app.core.process import process_rows
 app = Flask(__name__)
 
 DEFAULT_CATEGORIES = ["MOTO PARTICULAR", "CARRO PARTICULAR", "CARRO PÚBLICO", "MOTO PÚBLICO"]
+
+# The container runs in UTC; compute "today" in Colombia so the date default
+# and the future-date validation use local time, not UTC.
+BOGOTA = ZoneInfo("America/Bogota")
+
+
+def _today_iso() -> str:
+    return datetime.now(BOGOTA).date().isoformat()
 
 
 def _options(conn):
@@ -47,7 +56,7 @@ def _rows_from_form(form) -> list[ExtractedRow]:
     # Order-level validations.
     if any(ch.isdigit() for ch in requested_by):
         raise ValueError("'Solicitado por' no debería contener números (parece una placa). Revisá ese campo.")
-    if order_date and order_date > date.today().isoformat():
+    if order_date and order_date > _today_iso():
         raise ValueError(f"La fecha {order_date} es futura. Corregí la fecha.")
 
     rows: list[ExtractedRow] = []
@@ -94,7 +103,7 @@ def ingest():
     with db.get_conn() as conn:
         requesters, cities = _options(conn)
     return render_template("ingest.html", requesters=requesters, cities=cities,
-                           categories=DEFAULT_CATEGORIES, today=date.today().isoformat())
+                           categories=DEFAULT_CATEGORIES, today=_today_iso())
 
 
 @app.post("/ingest")
@@ -114,7 +123,7 @@ def ingest_post():
         requesters, cities = _options(conn)
     return render_template(
         "ingest.html", requesters=requesters, cities=cities,
-        categories=DEFAULT_CATEGORIES, today=date.today().isoformat(),
+        categories=DEFAULT_CATEGORIES, today=_today_iso(),
         summary=summary.model_dump() if summary else None, error=error,
     )
 
