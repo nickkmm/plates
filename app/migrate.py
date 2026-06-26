@@ -108,6 +108,21 @@ def main(argv: list[str] | None = None) -> int:
     # Drop fully-empty separator rows, then forward-fill those columns so
     # continuation rows inherit their order's values instead of being dropped.
     df = df.dropna(how="all")
+
+    # Drop "empty" ledger lines that carry no real content: no order number, no
+    # plate (RANGO), and no quantity. These leftover/half-filled rows would
+    # otherwise be swept into the previous order by the forward-fill below
+    # (creating phantom plates).
+    def _has_content(r):
+        cant = r["CANT"]
+        return not (
+            pd.isna(r["ORDEN DE PRODUCCION"])
+            and pd.isna(r["RANGO"])
+            and (pd.isna(cant) or cant == 0)
+        )
+
+    df = df[df.apply(_has_content, axis=1)]
+
     for c in ["FECHA", "ORDEN DE PRODUCCION", "SOLICITADO POR", "TIPO"]:
         df[c] = df[c].ffill()
 

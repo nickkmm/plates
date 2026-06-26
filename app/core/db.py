@@ -188,7 +188,13 @@ def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
             SELECT o.id, o.order_number, o.order_date, o.requested_by, o.city,
                    count(p.id) AS n_plates,
                    COALESCE(SUM(p.quantity), 0) AS total_qty,
-                   string_agg(COALESCE(p.plate_number, '(s/n)'), ', ' ORDER BY p.id) AS plates
+                   string_agg(
+                       CASE
+                           WHEN p.plate_number IS NOT NULL THEN p.plate_number
+                           WHEN p.is_batch_replacement THEN 'reposición'
+                           WHEN p.is_voided THEN 'anulada'
+                           ELSE 'sin placa'
+                       END, ', ' ORDER BY p.id) AS plates
             FROM production_orders o
             LEFT JOIN plates p ON p.order_id = o.id
             GROUP BY o.id
