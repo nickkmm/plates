@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Registros</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .muted { color:#777; font-size:.9rem; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { border:1px solid #e3e3e3; padding:.4rem .55rem; text-align:left; vertical-align:top; }
+    th { background:#f6f6f6; }
+    .plates { color:#444; font-size:.85rem; }
+    button.del { background:#c33; color:#fff; border:0; border-radius:6px; padding:.35rem .6rem; cursor:pointer; font-size:.82rem; }
+  </style>
+</head>
+<body>
+  <nav class="tabs">
+    <a href="{{ url_for('ingest') }}" class="{{ 'on' if request.endpoint=='ingest' }}">Registrar</a>
+    <a href="{{ url_for('review') }}" class="{{ 'on' if request.endpoint=='review' }}">Revisión</a>
+    <a href="{{ url_for('inventory') }}" class="{{ 'on' if request.endpoint=='inventory' }}">Inventario</a>
+    <a href="{{ url_for('records') }}" class="{{ 'on' if request.endpoint=='records' }}">Registros</a>
+  </nav>
+  <h1>Últimas órdenes registradas</h1>
+  <p class="muted">Las 50 más recientes (por orden de carga). Eliminar borra la orden y sus placas, y recalcula el inventario.</p>
+
+  {% if rows %}
+  <table>
+    <thead>
+      <tr><th>Fecha</th><th>Orden</th><th>Solicitado</th><th>Ciudad</th><th>Placas</th><th>Cant.</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.order_date }}</td>
+        <td>{{ r.order_number }}</td>
+        <td>{{ r.requested_by }}</td>
+        <td>{{ r.city or '—' }}</td>
+        <td><span class="muted">{{ r.n_plates }} —</span> <span class="plates">{{ r.plates or '—' }}</span></td>
+        <td>{{ r.total_qty }}</td>
+        <td>
+          <form method="post" action="{{ url_for('records_delete') }}"
+                onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} y sus {{ r.n_plates }} placa(s)?');">
+            <input type="hidden" name="order_id" value="{{ r.id }}">
+            <button class="del" type="submit">Eliminar</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No hay órdenes registradas todavía.</p>
+  {% endif %}
+</body>
+</html>

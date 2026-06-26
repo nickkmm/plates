@@ -180,6 +180,34 @@ def distinct_cities(conn: psycopg.Connection) -> list[str]:
                 if any(ch.isalnum() for ch in c) and "ANULAD" not in c.upper()]
 
 
+def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
+    """Most recently registered orders with a summary of their plates."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT o.id, o.order_number, o.order_date, o.requested_by, o.city,
+                   count(p.id) AS n_plates,
+                   COALESCE(SUM(p.quantity), 0) AS total_qty,
+                   string_agg(COALESCE(p.plate_number, '(s/n)'), ', ' ORDER BY p.id) AS plates
+            FROM production_orders o
+            LEFT JOIN plates p ON p.order_id = o.id
+            GROUP BY o.id
+            ORDER BY o.created_at DESC, o.id DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def delete_order(conn: psycopg.Connection, order_id: int) -> None:
+    """Delete an order and all its plates (plates first, for the FK)."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM plates WHERE order_id = %s", (order_id,))
+        cur.execute("DELETE FROM production_orders WHERE id = %s", (order_id,))
+
+
 def review_rows(conn: psycopg.Connection) -> list[dict]:
     """Rows flagged for review: possible duplicates only (real repeated plates)."""
     with conn.cursor() as cur:

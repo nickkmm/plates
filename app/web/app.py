@@ -199,6 +199,22 @@ def inventory_alistado():
     return redirect(url_for("inventory"))
 
 
+@app.get("/records")
+def records():
+    with db.get_conn() as conn:
+        rows = db.recent_orders(conn)
+    return render_template("records.html", rows=rows)
+
+
+@app.post("/records/delete")
+def records_delete():
+    with db.get_conn() as conn:
+        db.delete_order(conn, int(request.form["order_id"]))
+        db.recalc_inventory(conn)  # removing plates changes consumed/waste
+        conn.commit()
+    return redirect(url_for("records"))
+
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}
