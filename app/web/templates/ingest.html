@@ -106,10 +106,10 @@
   </form>
 
   <script>
-    // Muestra de placa por tipo (placeholder).
+    // Patrón del formato por tipo (placeholder): A=letra, 0=número.
     const HINTS = {
-      'MOTO PARTICULAR': 'KWD91G', 'MOTO PÚBLICO': 'KWD91G',
-      'CARRO PARTICULAR': 'HMF922', 'CARRO PÚBLICO': 'HMF922',
+      'MOTO PARTICULAR': 'AAA00A', 'MOTO PÚBLICO': 'AAA00A',
+      'CARRO PARTICULAR': 'AAA000', 'CARRO PÚBLICO': 'AAA000',
     };
     function updateHint(typeSel) {
       const tr = typeSel.closest('tr');
