@@ -29,6 +29,7 @@
     <a href="{{ url_for('ingest') }}" class="{{ 'on' if request.endpoint=='ingest' }}">Registrar</a>
     <a href="{{ url_for('review') }}" class="{{ 'on' if request.endpoint=='review' }}">Revisión</a>
     <a href="{{ url_for('inventory') }}" class="{{ 'on' if request.endpoint=='inventory' }}">Inventario</a>
+    <a href="{{ url_for('records') }}" class="{{ 'on' if request.endpoint=='records' }}">Registros</a>
   </nav>
   <h1>Registros marcados para revisión</h1>
   <p class="muted">Posibles placas duplicadas (la misma placa aparece 2+ veces). Editá y guardá, marcá como revisada (quitar de la lista), o eliminá si es un error.</p>
