@@ -16,7 +16,12 @@
     th, td { border:1px solid #e3e3e3; padding:.4rem .55rem; text-align:left; vertical-align:top; }
     th { background:#f6f6f6; }
     .plates { color:#444; font-size:.85rem; }
-    button.del { background:#c33; color:#fff; border:0; border-radius:6px; padding:.35rem .6rem; cursor:pointer; font-size:.82rem; }
+    .actions { white-space:nowrap; }
+    .actions a.ver, .actions button { display:inline-block; border:0; border-radius:6px; padding:.38rem .8rem; font-size:.82rem; cursor:pointer; text-decoration:none; }
+    .actions a.ver { background:#0b6bcb; color:#fff; margin-right:.4rem; }
+    .actions a.ver:hover { background:#095bb0; }
+    .actions button.del { background:#c33; color:#fff; }
+    .actions button.del:hover { background:#b02a2a; }
   </style>
 </head>
 <body>
@@ -43,7 +48,7 @@
         <td>{{ r.city or '—' }}</td>
         <td>{{ r.total_qty }}</td>
         <td class="actions">
-          <a href="{{ url_for('record_detail', order_id=r.id) }}">ver</a>
+          <a class="ver" href="{{ url_for('record_detail', order_id=r.id) }}">Ver</a>
           <form method="post" action="{{ url_for('records_delete') }}" style="display:inline"
                 onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} ({{ r.total_qty }} placa(s))?');">
             <input type="hidden" name="order_id" value="{{ r.id }}">
