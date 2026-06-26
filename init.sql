@@ -18,7 +18,8 @@ CREATE TABLE plates (
     plate_number TEXT,              -- single plate, or the START of a range
     plate_to TEXT,                  -- END of a range (NULL for single plates / reposición)
     is_batch_replacement BOOLEAN DEFAULT false,
-    is_voided BOOLEAN DEFAULT false,
+    is_voided BOOLEAN DEFAULT false,           -- order annulled: NOT consumed
+    is_plate_annulled BOOLEAN DEFAULT false,   -- plate annulled but blank lost: IS consumed, just flagged
     quantity INTEGER NOT NULL DEFAULT 1,
     material TEXT,
     prepared_by TEXT,

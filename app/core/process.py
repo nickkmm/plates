@@ -23,6 +23,7 @@ class Summary(BaseModel):
     blank_preparations: int = 0
     possible_duplicates: int = 0
     voided: int = 0
+    plate_annulled: int = 0
     batch_replacements: int = 0
     review_notes: list[str] = []
 
@@ -107,6 +108,8 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
                     summary.possible_duplicates += 1
                 if r.is_voided:
                     summary.voided += 1
+                if r.is_plate_annulled:
+                    summary.plate_annulled += 1
                 if r.is_batch_replacement:
                     summary.batch_replacements += 1
 
