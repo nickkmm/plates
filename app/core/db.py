@@ -67,9 +67,9 @@ def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
             """
             INSERT INTO plates (
                 order_id, plate_type, plate_number, plate_to, is_batch_replacement,
-                is_voided, quantity, material, prepared_by, is_possible_duplicate
+                is_voided, is_plate_annulled, quantity, material, prepared_by, is_possible_duplicate
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 order_id,
@@ -78,6 +78,7 @@ def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
                 row.plate_to,
                 row.is_batch_replacement,
                 row.is_voided,
+                row.is_plate_annulled,
                 row.quantity,
                 row.material,
                 row.prepared_by,

@@ -46,7 +46,7 @@
     <strong>Registrado ✓</strong>
     <ul>
       <li>Órdenes: {{ summary.orders_inserted }} · Placas: {{ summary.plates_inserted }}</li>
-      <li>Reposiciones: {{ summary.batch_replacements }} · Anuladas: {{ summary.voided }} · Posibles duplicados: {{ summary.possible_duplicates }}</li>
+      <li>Reposiciones: {{ summary.batch_replacements }} · Órdenes anuladas: {{ summary.voided }} · Placas anuladas: {{ summary.plate_annulled }} · Posibles duplicados: {{ summary.possible_duplicates }}</li>
     </ul>
     {% if summary.possible_duplicates %}<p class="muted">Revisá los duplicados en <a href="{{ url_for('review') }}">Revisión</a>.</p>{% endif %}
   </div>
@@ -86,6 +86,7 @@
               <option value="rango">Rango</option>
               <option value="reposicion">Reposición</option>
               <option value="anulada_orden">Orden anulada</option>
+              <option value="placa_anulada">Placa anulada</option>
               <option value="muestra">Muestra</option>
             </select>
           </td>

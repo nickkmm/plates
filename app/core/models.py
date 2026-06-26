@@ -36,6 +36,7 @@ class ExtractedRow(BaseModel):
     prepared_by: str | None = Field(default=None, description="ALISTADO POR (rarely filled)")
     is_batch_replacement: bool = Field(default=False)
     is_voided: bool = Field(default=False)
+    is_plate_annulled: bool = Field(default=False)  # plate annulled, blank lost (still consumed)
 
     @field_validator("order_number", mode="before")
     @classmethod

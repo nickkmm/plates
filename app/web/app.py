@@ -68,7 +68,7 @@ def _rows_from_form(form) -> list[ExtractedRow]:
             continue  # skip empty line
         plate_number = (pn or "").strip() or None
         plate_to = (pto or "").strip() or None
-        is_batch = is_voided = False
+        is_batch = is_voided = is_plate_annulled = False
         ptype = pt.strip()
         if lt == "reposicion":
             is_batch, plate_number, plate_to = True, None, None
@@ -81,6 +81,11 @@ def _rows_from_form(form) -> list[ExtractedRow]:
                 raise ValueError("En 'Rango' tenés que indicar desde y hasta.")
             plate_number = validate_plate(plate_number, ptype)  # desde
             plate_to = validate_plate(plate_to, ptype)          # hasta
+        elif lt == "placa_anulada":
+            # blank was lost -> counts as consumed, but flagged for waste tracking
+            plate_to, is_plate_annulled = None, True
+            if plate_number:
+                plate_number = validate_plate(plate_number, ptype)
         else:  # placa (single)
             plate_to = None
             if plate_number:
@@ -89,6 +94,7 @@ def _rows_from_form(form) -> list[ExtractedRow]:
             order_number=order_number, order_date=order_date, requested_by=requested_by,
             city=city, plate_type=pt.strip(), plate_number=plate_number, plate_to=plate_to,
             quantity=int(qty or 1), is_batch_replacement=is_batch, is_voided=is_voided,
+            is_plate_annulled=is_plate_annulled,
         ))
     return rows
 
