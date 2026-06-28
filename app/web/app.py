@@ -18,12 +18,15 @@ from flask import Flask, redirect, render_template, request, url_for
 
 from app.core import db
 from app.core.models import ExtractedRow
-from app.core.normalize import validate_plate
+from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES, validate_plate
 from app.core.process import process_rows
 
 app = Flask(__name__)
 
-DEFAULT_CATEGORIES = ["MOTO PARTICULAR", "CARRO PARTICULAR", "CARRO PÚBLICO", "MOTO PÚBLICO"]
+# Plate TYPES are what the user picks per plate (granular, 5). Inventory
+# CATEGORIES are the 3 materials those types discount from (público merged).
+FORM_PLATE_TYPES = list(PLATE_TYPES)
+INVENTORY_CATS = list(INVENTORY_CATEGORIES)
 
 # The container runs in UTC; compute "today" in Colombia so the date default
 # and the future-date validation use local time, not UTC.
@@ -109,7 +112,7 @@ def ingest():
     with db.get_conn() as conn:
         requesters, cities = _options(conn)
     return render_template("ingest.html", requesters=requesters, cities=cities,
-                           categories=DEFAULT_CATEGORIES, today=_today_iso())
+                           categories=FORM_PLATE_TYPES, today=_today_iso())
 
 
 @app.post("/ingest")
@@ -129,7 +132,7 @@ def ingest_post():
         requesters, cities = _options(conn)
     return render_template(
         "ingest.html", requesters=requesters, cities=cities,
-        categories=DEFAULT_CATEGORIES, today=_today_iso(),
+        categories=FORM_PLATE_TYPES, today=_today_iso(),
         summary=summary.model_dump() if summary else None, error=error,
     )
 
@@ -180,8 +183,10 @@ def review_delete():
 def inventory():
     with db.get_conn() as conn:
         rows = db.inventory_view(conn)
-    categories = sorted({*DEFAULT_CATEGORIES, *(r["category"] for r in rows)})
-    return render_template("inventory.html", rows=rows, categories=categories)
+        ornamental = db.ornamental_count(conn)
+    categories = sorted({*INVENTORY_CATS, *(r["category"] for r in rows)})
+    return render_template("inventory.html", rows=rows, categories=categories,
+                           ornamental=ornamental)
 
 
 @app.post("/inventory/alistado")

@@ -110,8 +110,13 @@
   <script>
     // Patrón del formato por tipo (placeholder): A=letra, 0=número.
     const HINTS = {
-      'MOTO PARTICULAR': 'AAA00A', 'MOTO PÚBLICO': 'AAA00A',
-      'CARRO PARTICULAR': 'AAA000', 'CARRO PÚBLICO': 'AAA000',
+      'MOTO PARTICULAR': 'AAA00A',
+      'CARRO PARTICULAR': 'AAA000',
+      'CARRO PÚBLICO': 'AAA000',
+      'MOTO CARRO PARTICULAR': '000AAA',
+      'MOTO CARRO PÚBLICO': '000AAA',
+      'REMOLQUE': 'R00000 o S00000',
+      'ORNAMENTAL': 'AAA000',
     };
     function updateHint(typeSel) {
       const tr = typeSel.closest('tr');

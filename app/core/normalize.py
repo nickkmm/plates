@@ -55,21 +55,77 @@ def normalize_requested_by(value: str) -> str:
     return folded
 
 
-# Plate format per category (Colombian plates). Públicos assumed same as
-# particulares until confirmed otherwise.
+# The plate TYPE stored per plate (granular, what the user picks in the form).
+PLATE_TYPES = (
+    "MOTO PARTICULAR", "CARRO PARTICULAR",
+    "MOTO CARRO PARTICULAR", "MOTO CARRO PÚBLICO",
+    "CARRO PÚBLICO", "REMOLQUE", "ORNAMENTAL",
+)
+# The INVENTORY materials (blanks) a type discounts from.
+INVENTORY_CATEGORIES = ("CARRO PARTICULAR", "MOTO PARTICULAR", "PÚBLICO")
+
+# Type -> material grouping:
+_PUBLICO_TYPES = ("CARRO PÚBLICO", "MOTO CARRO PÚBLICO", "REMOLQUE")  # share the público blank
+_NON_MATERIAL_TYPES = ("ORNAMENTAL",)  # consume no blank; just a counter
+
+
+def inventory_category(plate_type: str | None) -> str | None:
+    """Map a plate TYPE to the inventory MATERIAL it consumes (None = no material).
+
+    - moto carro particular -> MOTO PARTICULAR
+    - carro/moto-carro público + remolque -> PÚBLICO
+    - ornamental -> None (counted separately, discounts nothing)
+    """
+    if plate_type in _NON_MATERIAL_TYPES:
+        return None
+    if plate_type in _PUBLICO_TYPES:
+        return "PÚBLICO"
+    if plate_type == "MOTO CARRO PARTICULAR":
+        return "MOTO PARTICULAR"
+    return plate_type  # MOTO PARTICULAR, CARRO PARTICULAR
+
+
+# Plate format per TYPE (Colombian plates).
 PLATE_PATTERNS = {
-    "MOTO PARTICULAR": re.compile(r"[A-Z]{3}\d{2}[A-Z]"),   # e.g. KWD91G
-    "MOTO PÚBLICO":    re.compile(r"[A-Z]{3}\d{2}[A-Z]"),
-    "CARRO PARTICULAR": re.compile(r"[A-Z]{3}\d{3}"),        # e.g. HMF922
-    "CARRO PÚBLICO":    re.compile(r"[A-Z]{3}\d{3}"),
+    "MOTO PARTICULAR": re.compile(r"[A-Z]{3}\d{2}[A-Z]"),       # AAA00A  e.g. KWD91G
+    "CARRO PARTICULAR": re.compile(r"[A-Z]{3}\d{3}"),            # AAA000  e.g. HMF922
+    "CARRO PÚBLICO": re.compile(r"[A-Z]{3}\d{3}"),               # AAA000
+    "MOTO CARRO PARTICULAR": re.compile(r"\d{3}[A-Z]{3}"),       # 000AAA  e.g. 923NAA
+    "MOTO CARRO PÚBLICO": re.compile(r"\d{3}[A-Z]{3}"),          # 000AAA
+    "REMOLQUE": re.compile(r"[RS]\d{5}"),                        # R/S + 5 dígitos
+    "ORNAMENTAL": re.compile(r"[A-Z]{3}\d{3}"),                  # AAA000 (forma de carro)
 }
 
 _PLATE_DESC = {
     "MOTO PARTICULAR": "3 letras, 2 números y 1 letra (ej. KWD91G)",
-    "MOTO PÚBLICO": "3 letras, 2 números y 1 letra (ej. KWD91G)",
     "CARRO PARTICULAR": "3 letras y 3 números (ej. HMF922)",
     "CARRO PÚBLICO": "3 letras y 3 números (ej. HMF922)",
+    "MOTO CARRO PARTICULAR": "3 números y 3 letras (ej. 923NAA)",
+    "MOTO CARRO PÚBLICO": "3 números y 3 letras (ej. 923NAA)",
+    "REMOLQUE": "R o S y 5 números (ej. R12345)",
+    "ORNAMENTAL": "3 letras y 3 números (ej. HMF922)",
 }
+
+
+def normalize_plate_type(value: str | None) -> str | None:
+    """Canonical plate TYPE. Keeps types granular; material grouping is separate.
+
+    Maps the historical label 'MOTO PÚBLICO' to today's 'MOTO CARRO PÚBLICO'.
+    """
+    if not value:
+        return value
+    f = _fold(value)  # uppercase, accent-stripped, single-spaced
+    if "ORNAMENTAL" in f:
+        return "ORNAMENTAL"
+    if "REMOLQUE" in f:
+        return "REMOLQUE"
+    if "MOTO CARRO" in f or f.replace(" ", "").startswith("MOTOCARRO"):
+        return "MOTO CARRO PARTICULAR" if "PARTICULAR" in f else "MOTO CARRO PÚBLICO"
+    if f == "MOTO PUBLICO":          # historical label for the público moto-carro
+        return "MOTO CARRO PÚBLICO"
+    if "PUBLIC" in f:                # "CARRO PÚBLICO", or a bare "PÚBLICO"
+        return "CARRO PÚBLICO"
+    return f                          # MOTO PARTICULAR, CARRO PARTICULAR
 
 
 def clean_plate(value: str) -> str:
@@ -157,6 +213,7 @@ def normalize_row(row: ExtractedRow) -> ExtractedRow:
     """
     data = row.model_dump()
     data["requested_by"] = normalize_requested_by(row.requested_by)
+    data["plate_type"] = normalize_plate_type(row.plate_type)  # merge público variants
     data["city"] = normalize_city(row.city)
     data["plate_to"] = _fold(row.plate_to) if row.plate_to else None  # range end, uppercased
 
