@@ -25,12 +25,7 @@
   </style>
 </head>
 <body>
-  <nav class="tabs">
-    <a href="{{ url_for('ingest') }}" class="{{ 'on' if request.endpoint=='ingest' }}">Registrar</a>
-    <a href="{{ url_for('review') }}" class="{{ 'on' if request.endpoint=='review' }}">Revisión</a>
-    <a href="{{ url_for('inventory') }}" class="{{ 'on' if request.endpoint=='inventory' }}">Inventario</a>
-    <a href="{{ url_for('records') }}" class="{{ 'on' if request.endpoint=='records' }}">Registros</a>
-  </nav>
+  {% include "_nav.html" %}
   <h1>Últimas órdenes registradas</h1>
   <p class="muted">Las 50 más recientes (por orden de carga). Eliminar borra la orden y sus placas, y recalcula el inventario.</p>
 

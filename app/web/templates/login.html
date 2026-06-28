@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Iniciar sesión</title>
+  <style>
+    :root { --green:#1a9c5b; --blue:#0b6bcb; --red:#d33; --ink:#222; }
+    body { font-family: system-ui, sans-serif; color: var(--ink); background:#f3f6fb;
+           min-height:100vh; margin:0; display:flex; align-items:center; justify-content:center; padding:1rem; }
+    .card { background:#fff; border:1px solid #e2e2e2; border-radius:14px;
+            box-shadow:0 4px 18px rgba(0,0,0,.07); padding:2rem 1.8rem; width:100%; max-width:360px; box-sizing:border-box; }
+    .brand { text-align:center; font-weight:800; color:var(--blue); letter-spacing:.5px; margin-bottom:.4rem; }
+    h1 { font-size:1.3rem; margin:0 0 .3rem; text-align:center; }
+    .muted { color:#777; font-size:.9rem; text-align:center; margin:0 0 1.4rem; }
+    label { font-size:.82rem; color:#555; display:flex; flex-direction:column; gap:.3rem; margin-bottom:1rem; }
+    input { padding:.6rem; border:1px solid #ccc; border-radius:7px; font-size:1rem; box-sizing:border-box; }
+    button { width:100%; background:var(--green); color:#fff; border:0; border-radius:8px;
+             padding:.7rem; font-size:1rem; font-weight:600; cursor:pointer; }
+    button:hover { background:#168a50; }
+    .error { background:#fdecec; border:1px solid var(--red); border-radius:8px;
+             padding:.7rem .9rem; color:#900; font-size:.9rem; margin-bottom:1.2rem; }
+  </style>
+</head>
+<body>
+  <form class="card" method="post" action="{{ url_for('login') }}">
+    <div class="brand">INGSE</div>
+    <h1>Iniciar sesión</h1>
+    <p class="muted">Control de producción de placas</p>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>Usuario
+      <input type="text" name="username" autocomplete="username" autofocus required>
+    </label>
+    <label>Contraseña
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Entrar</button>
+  </form>
+</body>
+</html>

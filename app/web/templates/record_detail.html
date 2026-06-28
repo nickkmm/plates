@@ -24,12 +24,7 @@
   </style>
 </head>
 <body>
-  <nav class="tabs">
-    <a href="{{ url_for('ingest') }}">Registrar</a>
-    <a href="{{ url_for('review') }}">Revisión</a>
-    <a href="{{ url_for('inventory') }}">Inventario</a>
-    <a href="{{ url_for('records') }}" class="on">Registros</a>
-  </nav>
+  {% include "_nav.html" %}
 
   <h1>Orden {{ order.order_number }}</h1>
   <div class="meta">

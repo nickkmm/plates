@@ -21,6 +21,20 @@ docker compose up -d
 docker compose exec db psql -U plates_user -d plates -c '\dt'
 ```
 
+## Web authentication
+
+The web app is gated by a session-based login page (`/login`). Configure two
+env vars (see `.env.example`):
+
+- `SECRET_KEY` — signs session cookies. Generate with
+  `python -c "import secrets; print(secrets.token_hex(32))"`. Required.
+- `AUTH_USERS` — comma-separated `username:passwordhash` pairs. Hash a password
+  with `python -m app.web.hash_password 'the-password'`, then set e.g.
+  `AUTH_USERS=admin:<printed-hash>`.
+- `COOKIE_SECURE=1` in production (HTTPS) so the cookie is marked `Secure`.
+
+`/healthz` stays open for liveness probes. Sessions last 12 hours.
+
 ## Deployment
 
 Push to `main`. The workflow connects to the VPS, syncs `/opt/plates` to the
