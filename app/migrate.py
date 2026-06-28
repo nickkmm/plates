@@ -15,16 +15,40 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import date
 
 import pandas as pd
 from pydantic import ValidationError
 
 from app.core import db
 from app.core.models import ExtractedRow
-from app.core.process import process_rows
+from app.core.process import _is_alistado, process_rows
 
-# Categories tracked in inventory (must match TIPO values and Hoja2 headers).
-INVENTORY_CATEGORIES = ["MOTO PARTICULAR", "CARRO PARTICULAR", "CARRO PÚBLICO", "MOTO PÚBLICO"]
+# Alistamiento (blanks prepared) reconciled against the physical book, Feb–Jun 2026.
+# This REPLACES the Excel's ALISTAMIENTO rows, which were unreliable: MAT-only rows
+# silently dropped by the filter, misreads (7300 -> 2x1300), duplicates (823 x2,
+# 1370 -> 1310), and a wrong Hoja2 baseline. The first three rows are the corrected
+# initial baseline. Source of truth: data/alistamiento_conciliacion.md.
+#   (date, category, quantity, prepared_by)
+RECONCILED_ALISTAMIENTO = [
+    ("2026-02-23", "CARRO PARTICULAR", 362, "INICIAL"),
+    ("2026-02-23", "MOTO PARTICULAR", 1486, "INICIAL"),
+    ("2026-02-23", "PÚBLICO", 731, "INICIAL"),
+    ("2026-03-27", "CARRO PARTICULAR", 550, "GILMER GUTIÉRREZ"),
+    ("2026-03-27", "MOTO PARTICULAR", 1300, "GILMER GUTIÉRREZ"),
+    ("2026-03-30", "MOTO PARTICULAR", 1300, "GILMER GUTIÉRREZ"),
+    ("2026-04-01", "CARRO PARTICULAR", 376, None),
+    ("2026-04-21", "MOTO PARTICULAR", 1300, "GILMER GUTIÉRREZ"),
+    ("2026-05-13", "CARRO PARTICULAR", 200, "GILMER GUTIÉRREZ"),
+    ("2026-05-16", "CARRO PARTICULAR", 100, "GILMER GUTIÉRREZ"),
+    ("2026-05-22", "CARRO PARTICULAR", 825, "GILMER GUTIÉRREZ"),
+    ("2026-05-22", "MOTO PARTICULAR", 1300, "GILMER GUTIÉRREZ"),
+    ("2026-05-22", "MOTO PARTICULAR", 1300, "GILMER GUTIÉRREZ"),
+    ("2026-05-22", "PÚBLICO", 100, "GILMER GUTIÉRREZ"),
+    ("2026-06-03", "PÚBLICO", 823, "GILMER GUTIÉRREZ"),
+    ("2026-06-05", "MOTO PARTICULAR", 1310, "GILMER GUTIÉRREZ"),
+    # 06-24 MOTO 1310 omitted: after the 22-Jun cutoff; enters later via the live ledger.
+]
 
 # Excel header -> ExtractedRow field.
 COLUMN_MAP = {
@@ -69,22 +93,6 @@ def _to_row(record: dict) -> ExtractedRow:
             raw[f] = str(raw[f])
 
     return ExtractedRow(**raw)
-
-
-def read_initial_stock(path: str):
-    """Read the 'alistado' baseline per category + its date from the Hoja2 sheet.
-
-    Returns (stock: dict[category, qty], base_date or None).
-    """
-    df = pd.read_excel(path, sheet_name="Hoja2", header=1)
-    first = df.iloc[0]
-    stock = {}
-    for cat in INVENTORY_CATEGORIES:
-        if cat in df.columns and pd.notna(first.get(cat)):
-            stock[cat] = int(first[cat])
-    base_date = first.get("FECHA")
-    base_date = base_date.date() if hasattr(base_date, "date") else None
-    return stock, base_date
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -144,23 +152,25 @@ def main(argv: list[str] | None = None) -> int:
         print("\nDry run — nothing inserted.")
         return 0
 
-    # The Feb baseline (Hoja2) is loaded as the first ALISTAMIENTO events, so
-    # "alistado" includes it and available = prepared - consumed.
-    stock, base_date = read_initial_stock(args.excel_path)
-    print(f"Loading baseline alistado from Hoja2 ({base_date}): {stock}")
+    # The Excel's ALISTAMIENTO rows are unreliable, so discard them and load the
+    # reconciled set (verified against the book). Plate rows still come from Excel.
+    plate_rows = [r for r in rows if not _is_alistado(r)]
+    discarded = len(rows) - len(plate_rows)
+    print(f"Discarded {discarded} Excel ALISTAMIENTO rows; "
+          f"loading {len(RECONCILED_ALISTAMIENTO)} reconciled ones.")
     with db.get_conn() as conn:
-        for category, qty in stock.items():
+        for d, category, qty, by in RECONCILED_ALISTAMIENTO:
             db.insert_blank_preparation(
-                conn, prep_date=base_date, category=category,
-                quantity=qty, prepared_by="INICIAL (Hoja2)",
+                conn, prep_date=date.fromisoformat(d), category=category,
+                quantity=qty, prepared_by=by,
             )
         conn.commit()
 
-    summary = process_rows(rows)
+    summary = process_rows(plate_rows)
     print("\n=== Migration summary ===")
     print(f"Orders inserted:        {summary.orders_inserted}")
     print(f"Plates inserted:        {summary.plates_inserted}")
-    print(f"Blank preparations:     {summary.blank_preparations}")
+    print(f"Blank preparations:     {len(RECONCILED_ALISTAMIENTO)} (reconciled)")
     print(f"Possible duplicates:    {summary.possible_duplicates}")
     print(f"Voided:                 {summary.voided}")
     print(f"Batch replacements:     {summary.batch_replacements}")

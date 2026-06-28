@@ -9,11 +9,13 @@ container uses, plus DB_HOST/DB_PORT for where to reach it):
 from __future__ import annotations
 
 import os
+from collections import defaultdict
 from collections.abc import Iterable
 
 import psycopg
 
 from app.core.models import ExtractedRow
+from app.core.normalize import inventory_category
 
 
 def get_conn() -> psycopg.Connection:
@@ -100,14 +102,29 @@ def insert_blank_preparation(conn: psycopg.Connection, *, prep_date, category: s
         )
 
 
-def recalc_inventory(conn: psycopg.Connection) -> None:
-    """Recompute prepared and consumed per category.
+def _consumed_by_material(cur, *, where: str) -> dict[str, int]:
+    """Sum plate quantities per inventory MATERIAL, mapping types in Python.
 
-      prepared = SUM(blank_preparations.quantity)  (includes the Feb baseline,
-                 which is stored as the first ALISTAMIENTO events)
-      consumed = SUM(plates.quantity) excluding order-annulled (is_voided = true).
-                 REPOSICION and plate-annulled count as consumed.
-      available (in the view) = prepared - consumed.
+    Ornamental (and any other no-material type) maps to None and is skipped.
+    """
+    cur.execute(
+        f"SELECT plate_type, COALESCE(SUM(quantity), 0) FROM plates WHERE {where} GROUP BY plate_type"
+    )
+    totals: dict[str, int] = defaultdict(int)
+    for plate_type, qty in cur.fetchall():
+        material = inventory_category(plate_type)
+        if material is not None:
+            totals[material] += qty
+    return totals
+
+
+def recalc_inventory(conn: psycopg.Connection) -> None:
+    """Recompute prepared and consumed per inventory MATERIAL.
+
+      prepared = SUM(blank_preparations.quantity) per category.
+      consumed = SUM(plates.quantity) per material (types mapped via
+                 inventory_category), excluding order-annulled (is_voided=true).
+                 Ornamental consumes no material (skipped). available = prepared - consumed.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -119,37 +136,43 @@ def recalc_inventory(conn: psycopg.Connection) -> None:
             ON CONFLICT (category) DO UPDATE SET prepared = EXCLUDED.prepared
             """
         )
-        cur.execute(
-            """
-            INSERT INTO inventory_categories (category, consumed)
-            SELECT plate_type, COALESCE(SUM(quantity), 0)
-            FROM plates
-            WHERE is_voided = false
-            GROUP BY plate_type
-            ON CONFLICT (category) DO UPDATE SET consumed = EXCLUDED.consumed
-            """
-        )
+        for material, qty in _consumed_by_material(cur, where="is_voided = false").items():
+            cur.execute(
+                """
+                INSERT INTO inventory_categories (category, consumed) VALUES (%s, %s)
+                ON CONFLICT (category) DO UPDATE SET consumed = EXCLUDED.consumed
+                """,
+                (material, qty),
+            )
 
 
 def inventory_view(conn: psycopg.Connection) -> list[dict]:
-    """Per-category inventory with computed available = prepared - consumed."""
+    """Per-material inventory with available = prepared - consumed, plus wasted."""
+    with conn.cursor() as cur:
+        wasted = _consumed_by_material(cur, where="is_plate_annulled = true")
+        cur.execute(
+            "SELECT category, prepared, consumed FROM inventory_categories ORDER BY category"
+        )
+        rows = []
+        for category, prepared, consumed in cur.fetchall():
+            rows.append({
+                "category": category,
+                "prepared": prepared,
+                "consumed": consumed,
+                "available": prepared - consumed,
+                "wasted": wasted.get(category, 0),
+            })
+        return rows
+
+
+def ornamental_count(conn: psycopg.Connection) -> int:
+    """Total ornamental plates made (no material; just a counter)."""
     with conn.cursor() as cur:
         cur.execute(
-            """
-            SELECT ic.category, ic.prepared, ic.consumed,
-                   (ic.prepared - ic.consumed) AS available,
-                   COALESCE(w.wasted, 0) AS wasted
-            FROM inventory_categories ic
-            LEFT JOIN (
-                SELECT plate_type, SUM(quantity) AS wasted
-                FROM plates WHERE is_plate_annulled = true
-                GROUP BY plate_type
-            ) w ON w.plate_type = ic.category
-            ORDER BY ic.category
-            """
+            "SELECT COALESCE(SUM(quantity), 0) FROM plates "
+            "WHERE plate_type = 'ORNAMENTAL' AND is_voided = false"
         )
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, r)) for r in cur.fetchall()]
+        return cur.fetchone()[0]
 
 
 def distinct_requested_by(conn: psycopg.Connection) -> list[str]:

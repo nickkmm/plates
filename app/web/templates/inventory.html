@@ -26,6 +26,7 @@
     .bar > i.over { background: var(--red); }
     .pct { font-size: .75rem; color: #666; margin-top: .25rem; }
     .warn { color: var(--red); font-size: .78rem; margin-top: .4rem; }
+    .card.counter { border-style: dashed; }
     form.inline { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; border: 1px solid #e2e2e2; border-radius: 10px; padding: .8rem; }
     form.inline label { font-size: .78rem; color: #555; display: flex; flex-direction: column; gap: .2rem; }
     input, select { padding: .4rem; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; }
@@ -59,6 +60,12 @@
         {% if r.available < 0 %}<div class="warn">⚠ Negativo — probablemente faltan alistamientos por cargar.</div>{% endif %}
       </div>
     {% endfor %}
+
+    <div class="card counter">
+      <h3>ORNAMENTAL</h3>
+      <div class="avail pos">{{ ornamental }}</div>
+      <div class="sub">placas hechas</div>
+    </div>
   </div>
 
   <h2>Registrar alistamiento (entrada de blancos / material)</h2>
