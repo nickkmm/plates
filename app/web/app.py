@@ -6,22 +6,50 @@ Routes:
   POST /ingest      -> build rows from the form, then the shared backend process_rows
   GET  /review      -> table of rows flagged for review (real duplicate plates)
   GET  /inventory   -> per-category inventory cards
-  GET  /healthz     -> liveness probe
+  GET/POST /login   -> session login page (open)
+  POST /logout      -> clear the session (open)
+  GET  /healthz     -> liveness probe (open)
+
+All routes except /login, /logout and /healthz require an authenticated
+session (see app.web.auth.login_required).
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import Flask, redirect, render_template, request, url_for
+from flask import Flask, redirect, render_template, request, session, url_for
 
 from app.core import db
 from app.core.models import ExtractedRow
 from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES, validate_plate
 from app.core.process import process_rows
+from app.web import auth
+from app.web.auth import login_required
 
 app = Flask(__name__)
+
+# Session signing key — required so cookies can't be forged. Generate one with:
+#   python -c "import secrets; print(secrets.token_hex(32))"
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY env var is required. Generate one with: "
+        'python -c "import secrets; print(secrets.token_hex(32))"'
+    )
+app.secret_key = SECRET_KEY
+
+# Mark the session cookie Secure only behind HTTPS (set COOKIE_SECURE=1 in
+# production). Off by default so local plain-HTTP dev still works.
+_COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").strip().lower() in ("1", "true", "yes")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=_COOKIE_SECURE,
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+)
 
 # Plate TYPES are what the user picks per plate (granular, 5). Inventory
 # CATEGORIES are the 3 materials those types discount from (público merged).
@@ -102,12 +130,48 @@ def _rows_from_form(form) -> list[ExtractedRow]:
     return rows
 
 
+@app.get("/login")
+def login():
+    if session.get("user"):
+        return redirect(url_for("ingest"))
+    next_url = request.args.get("next", "")
+    return render_template("login.html", next=next_url if auth.is_safe_next(next_url) else "")
+
+
+@app.post("/login")
+def login_post():
+    username = (request.form.get("username") or "").strip()
+    password = request.form.get("password") or ""
+    next_url = request.form.get("next") or ""
+    if auth.verify_credentials(username, password):
+        session.clear()
+        session["user"] = username
+        session.permanent = True
+        return redirect(next_url if auth.is_safe_next(next_url) else url_for("ingest"))
+    return (
+        render_template(
+            "login.html",
+            error="Usuario o contraseña incorrectos.",
+            next=next_url if auth.is_safe_next(next_url) else "",
+        ),
+        401,
+    )
+
+
+@app.route("/logout", methods=["GET", "POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.get("/")
+@login_required
 def index():
     return redirect(url_for("ingest"))
 
 
 @app.get("/ingest")
+@login_required
 def ingest():
     with db.get_conn() as conn:
         requesters, cities = _options(conn)
@@ -116,6 +180,7 @@ def ingest():
 
 
 @app.post("/ingest")
+@login_required
 def ingest_post():
     summary = None
     error = None
@@ -138,6 +203,7 @@ def ingest_post():
 
 
 @app.get("/review")
+@login_required
 def review():
     with db.get_conn() as conn:
         rows = db.review_rows(conn)
@@ -145,6 +211,7 @@ def review():
 
 
 @app.post("/review/update")
+@login_required
 def review_update():
     plate_id = int(request.form["plate_id"])
     plate_number = (request.form.get("plate_number") or "").strip() or None
@@ -163,6 +230,7 @@ def review_update():
 
 
 @app.post("/review/resolve")
+@login_required
 def review_resolve():
     with db.get_conn() as conn:
         db.resolve_plate(conn, int(request.form["plate_id"]))
@@ -171,6 +239,7 @@ def review_resolve():
 
 
 @app.post("/review/delete")
+@login_required
 def review_delete():
     with db.get_conn() as conn:
         db.delete_plate(conn, int(request.form["plate_id"]))
@@ -180,6 +249,7 @@ def review_delete():
 
 
 @app.get("/inventory")
+@login_required
 def inventory():
     with db.get_conn() as conn:
         rows = db.inventory_view(conn)
@@ -190,6 +260,7 @@ def inventory():
 
 
 @app.post("/inventory/alistado")
+@login_required
 def inventory_alistado():
     with db.get_conn() as conn:
         db.insert_blank_preparation(
@@ -205,6 +276,7 @@ def inventory_alistado():
 
 
 @app.get("/records")
+@login_required
 def records():
     with db.get_conn() as conn:
         rows = db.recent_orders(conn)
@@ -212,6 +284,7 @@ def records():
 
 
 @app.get("/records/<int:order_id>")
+@login_required
 def record_detail(order_id):
     with db.get_conn() as conn:
         order, plates = db.order_detail(conn, order_id)
@@ -221,6 +294,7 @@ def record_detail(order_id):
 
 
 @app.post("/records/delete")
+@login_required
 def records_delete():
     with db.get_conn() as conn:
         db.delete_order(conn, int(request.form["order_id"]))
