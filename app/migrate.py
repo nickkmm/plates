@@ -47,7 +47,7 @@ RECONCILED_ALISTAMIENTO = [
     ("2026-05-22", "PÚBLICO", 100, "GILMER GUTIÉRREZ"),
     ("2026-06-03", "PÚBLICO", 823, "GILMER GUTIÉRREZ"),
     ("2026-06-05", "MOTO PARTICULAR", 1310, "GILMER GUTIÉRREZ"),
-    # 06-24 MOTO 1310 omitted: after the 22-Jun cutoff; enters later via the live ledger.
+    ("2026-06-24", "MOTO PARTICULAR", 1310, "GILMER GUTIÉRREZ"),  # confirmed from the live ledger
 ]
 
 # Excel header -> ExtractedRow field.
@@ -101,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sheet", default="BD ", help='Sheet name (default: "BD ").')
     parser.add_argument("--header-row", type=int, default=1, help="0-based header row (default: 1).")
     parser.add_argument("--dry-run", action="store_true", help="Parse and report only; no insert.")
+    parser.add_argument("--keep-duplicates", action="store_true",
+                        help="Do not drop exact-duplicate ledger lines (debugging).")
     args = parser.parse_args(argv)
 
     df = pd.read_excel(args.excel_path, sheet_name=args.sheet, header=args.header_row)
@@ -133,6 +135,34 @@ def main(argv: list[str] | None = None) -> int:
 
     for c in ["FECHA", "ORDEN DE PRODUCCION", "SOLICITADO POR", "TIPO"]:
         df[c] = df[c].ffill()
+
+    # Future-dated rows are year typos (e.g. order 1068 written 2027-03-28 instead
+    # of 2026). Shift them back one year so they land on the real (past) date.
+    today = pd.Timestamp(date.today())
+    future = pd.to_datetime(df["FECHA"], errors="coerce") > today
+    if int(future.sum()):
+        df.loc[future, "FECHA"] = df.loc[future, "FECHA"] - pd.DateOffset(years=1)
+        print(f"Corrected {int(future.sum())} future-dated rows (year typo, shifted back 1 year).")
+
+    # The photo-extraction agent transcribes some ledger pages twice, producing
+    # exact-duplicate lines (same fecha/orden/tipo/rango/cant). A real plate can't
+    # be made twice and identical reposición/muestra lines are double-reads, so we
+    # drop exact duplicates (keep the first). Annulments/remakes carry different
+    # RANGO text, so they survive. The key is type-normalized so 598 == "598" and
+    # 2.0 == 2 collapse (the live ledger mixes int/text and int/float).
+    def _key_val(v):
+        if pd.isna(v):
+            return ""
+        if isinstance(v, float) and v.is_integer():
+            return str(int(v))
+        return str(v).strip().upper()
+
+    dedup_cols = ["FECHA", "ORDEN DE PRODUCCION", "TIPO", "RANGO", "CANT"]
+    key = df[dedup_cols].apply(lambda col: col.map(_key_val))
+    before = len(df)
+    if not args.keep_duplicates:
+        df = df[~key.duplicated(keep="first")]
+    print(f"Dropped {before - len(df)} exact-duplicate ledger lines (agent double-reads).")
 
     rows: list[ExtractedRow] = []
     unmapped: list[tuple[int, str]] = []

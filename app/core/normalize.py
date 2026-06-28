@@ -19,15 +19,51 @@ import unicodedata
 
 from app.core.models import ExtractedRow
 
-# Known canonical tokens for requested_by. These are exact-value replacements
-# only — anything not listed is left as-is (just cleaned), so distinct
-# intermediaries are never collapsed into one another.
-_REQUESTED_BY_ALIASES = {
-    "PTO V": "PTO.V",
-    "PTO.V": "PTO.V",
-    "PTOV": "PTO.V",
-    "PUNTO DE VENTA": "PTO.V",
-    "INGSE": "INGSE",
+# Curated requested_by normalization, confirmed manually with the user (the same
+# decisions used to clean the first ledger; see data/normalize.py). Maps known
+# spelling variants of the SAME intermediary to one canonical form. Entities that
+# are genuinely different are deliberately NOT merged (e.g. MUVA GRANADA vs MUVA
+# SERGIO, DIANA.P vs DIANA.Z, MAGDA vs MAGDA ISABEL RUBIANO, each CDA/GRANADA branch).
+# Keys are matching-normalized (uppercase, accent-stripped, no dots/spaces); the
+# canonical short form (NAME.INITIAL) is used only when it already existed in the data.
+_REQUESTED_BY_MAP_RAW = {
+    "PTOV": "PTO.V", "PTODEVENTA": "PTO.V", "PTOVENTA": "PTO.V", "PUNTODEVENTA": "PTO.V",
+    "DIANAP": "DIANA.P", "DIANAPAREDES": "DIANA.P",
+    "DIANAZ": "DIANA.Z", "DIANAZAMORA": "DIANA.Z", "DIANAR": "DIANA.R",
+    "TSANTAELENA": "T.SANTA ELENA", "TSTAELENA": "T.SANTA ELENA",
+    "STAELENA": "T.SANTA ELENA", "SANTAELENA": "T.SANTA ELENA",
+    "JENNYR": "JENNY.R", "JENNYROJAS": "JENNY.R", "YENYROJAS": "JENNY.R",
+    "JENIROJASPINO": "JENNY.R", "JENNYVR": "JENNY.R",
+    "GRANADAL": "GRANADA.L", "GRANADAC": "GRANADA.C",
+    "WILTHER": "WILTHER.O", "WILTHERO": "WILTHER.O",
+    "CALISUR": "CALISUR", "CALISURV": "CALISUR", "CALISURVILLA": "CALISUR", "CALISURPTO": "CALISUR",
+    "SINTEL": "SINTEL", "SINTELSAS": "SINTEL",
+    "CARLOSV": "CARLOS.V", "DPOLLO": "D.POLLO",
+    "FLORENCIAL": "FLORENCIA.L", "FLORENCIA": "FLORENCIA.L", "FLORENCIALISBEP": "FLORENCIA.L",
+    "ADRIANV": "ADRIAN.V", "ADRIAN": "ADRIAN.V", "ADRIANOV": "ADRIAN.V", "ADRINAV": "ADRIAN.V",
+    "ADRIANAV": "ADRIANA.V",
+    "BERTHAT": "BERTHA.T", "BERTHATAVARES": "BERTHA.T",
+    "ONEYDA": "ONEYDA VELEZ", "ONEYDAVELEZ": "ONEYDA VELEZ",
+    "ANDALUCIA": "CARLOS ANDALUCIA", "CARLOSANDALUCIA": "CARLOS ANDALUCIA",
+    "TUQUERRES": "TUQUERRES", "TUQUERRESR": "TUQUERRES",
+    "CREARO": "CREAR.O", "CREARDEOCC": "CREAR.O",
+    "EMILIOMONTE": "EMILIO.MONTE", "LINAP": "LINA.P",
+    # Variants confirmed from the live ledger (June 2026 data, not in the first
+    # cleaning script). SERGIO and qualified PTO.V points of sale are left separate
+    # on purpose, pending review.
+    "D.WELLMAN": "D.WILLIAM", "D.WILLIAN": "D.WILLIAM",
+    "INELMA SAS": "INELMA", "INELMA SRS": "INELMA",
+    "ING CAMELITA": "ING CARMELITA",
+    "ADRIANA": "ADRIANA.V",
+    "JUAN CALI": "JUAN.CALI", "JUAN MEJIA": "JUAN.M",
+    "ALFREDO VILLAVICENCIO": "ALFREDO.V",
+    "ING.INCAUCA": "INCAUCA", "ING.RIOPAILA": "RIOPAILA", "ING.PROVIDENCIA": "PROVIDENCIA",
+    "ALIRIO PTO ASS": "ALIRIO.P",
+    "ANGEL PINO": "ANGEL.P",
+    "JAIRO LUDEGAS": "JAIRO.L",
+    "MARIO TUQUERRES": "MARIO.T",
+    "WILTHER APARA": "WILTHER.O",
+    "GPS SKY": "GPS",
 }
 
 _WHITESPACE = re.compile(r"\s+")
@@ -43,16 +79,48 @@ def _fold(text: str) -> str:
     return _WHITESPACE.sub(" ", _strip_accents(text).upper()).strip()
 
 
-def normalize_requested_by(value: str) -> str:
-    """Conservative normalization: clean whitespace/casing, map known tokens.
+_DOTS_SPACES = re.compile(r"[.\s]+")
+_REDUNDANT_DOT = re.compile(r"\s*\.\s*")
+_TRAILING_DOT = re.compile(r"\.+$")
+_NUMERIC = re.compile(r"\d+(\.0)?")
 
-    Never merges two different free-text names — only canonicalizes exact
-    matches in the alias table.
+
+def _rb_key(text: str) -> str:
+    """Matching key for requested_by: uppercase, accent-stripped, no dots/spaces."""
+    return _DOTS_SPACES.sub("", _strip_accents(text).upper())
+
+
+# Derived once: map keyed by the robust matching key (collapses accent variants).
+_REQUESTED_BY_MAP = {_rb_key(k): v for k, v in _REQUESTED_BY_MAP_RAW.items()}
+
+
+def _normalize_spelling(value: str) -> str:
+    """Generic spelling cleanup (case, spaces, dots) WITHOUT merging entities.
+
+    Keeps accents (BOGOTÁ, GUTIÉRREZ). 'X . Y' -> 'X.Y'; drops a dangling dot.
     """
-    folded = _fold(value)
-    if folded in _REQUESTED_BY_ALIASES:
-        return _REQUESTED_BY_ALIASES[folded]
-    return folded
+    s = _REDUNDANT_DOT.sub(".", value.strip().upper())
+    s = _TRAILING_DOT.sub("", s)
+    return _WHITESPACE.sub(" ", s).strip()
+
+
+def normalize_requested_by(value: str) -> str:
+    """Canonical requested_by.
+
+    Maps known spelling variants of the SAME intermediary to one curated form
+    (see _REQUESTED_BY_MAP_RAW); otherwise just cleans spelling. Distinct
+    intermediaries are never merged. Numeric runaways (a misaligned row that put a
+    number in this column) are left untouched.
+    """
+    s = str(value).strip()
+    if not s:
+        return value
+    if _NUMERIC.fullmatch(s):
+        return value
+    key = _rb_key(s)
+    if key in _REQUESTED_BY_MAP:
+        return _REQUESTED_BY_MAP[key]
+    return _normalize_spelling(s)
 
 
 # The plate TYPE stored per plate (granular, what the user picks in the form).
