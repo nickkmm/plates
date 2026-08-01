@@ -95,6 +95,35 @@ def _to_row(record: dict) -> ExtractedRow:
     return ExtractedRow(**raw)
 
 
+def _shift_future_dates(dates: pd.Series, today: pd.Timestamp) -> tuple[pd.Series, int]:
+    """Shift year-typo future dates back one year (e.g. order 1068 written
+    2027-03-28 instead of 2026 -> 2026-03-28).
+
+    Returns (corrected_series, count_corrected). The comparison mask is built
+    from a coerced copy (so unparseable values compare as NaT, i.e. not
+    future) but the subtraction is applied to the ORIGINAL series, matching
+    the exact semantics `main()` used before this was factored out.
+    """
+    future = pd.to_datetime(dates, errors="coerce") > today
+    shifted = dates.copy()
+    if int(future.sum()):
+        # pandas-stubs has no Series-minus-DateOffset overload for a Series of
+        # unspecified (object/mixed) dtype, though this is standard, valid
+        # pandas at runtime.
+        shifted.loc[future] = shifted.loc[future] - pd.DateOffset(years=1)  # type: ignore[operator]
+    return shifted, int(future.sum())
+
+
+def _key_val(v: object) -> str:
+    """Type-normalized dedup key so 598 == '598' and 2.0 == 2 collapse (the
+    live ledger mixes int/text and int/float for the same logical value)."""
+    if pd.isna(v):  # type: ignore[call-overload]  # pd.isna accepts any scalar at runtime
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v).strip().upper()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Migrate normalized Excel into Postgres.")
     parser.add_argument("excel_path")
@@ -139,10 +168,9 @@ def main(argv: list[str] | None = None) -> int:
     # Future-dated rows are year typos (e.g. order 1068 written 2027-03-28 instead
     # of 2026). Shift them back one year so they land on the real (past) date.
     today = pd.Timestamp(date.today())
-    future = pd.to_datetime(df["FECHA"], errors="coerce") > today
-    if int(future.sum()):
-        df.loc[future, "FECHA"] = df.loc[future, "FECHA"] - pd.DateOffset(years=1)
-        print(f"Corrected {int(future.sum())} future-dated rows (year typo, shifted back 1 year).")
+    df["FECHA"], n_shifted = _shift_future_dates(df["FECHA"], today)
+    if n_shifted:
+        print(f"Corrected {n_shifted} future-dated rows (year typo, shifted back 1 year).")
 
     # The photo-extraction agent transcribes some ledger pages twice, producing
     # exact-duplicate lines (same fecha/orden/tipo/rango/cant). A real plate can't
@@ -150,13 +178,6 @@ def main(argv: list[str] | None = None) -> int:
     # drop exact duplicates (keep the first). Annulments/remakes carry different
     # RANGO text, so they survive. The key is type-normalized so 598 == "598" and
     # 2.0 == 2 collapse (the live ledger mixes int/text and int/float).
-    def _key_val(v):
-        if pd.isna(v):
-            return ""
-        if isinstance(v, float) and v.is_integer():
-            return str(int(v))
-        return str(v).strip().upper()
-
     dedup_cols = ["FECHA", "ORDEN DE PRODUCCION", "TIPO", "RANGO", "CANT"]
     key = df[dedup_cols].apply(lambda col: col.map(_key_val))
     before = len(df)
