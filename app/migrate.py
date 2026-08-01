@@ -22,6 +22,7 @@ from pydantic import ValidationError
 
 from app.core import db
 from app.core.models import ExtractedRow
+from app.core.normalize import clean_plate
 from app.core.process import _is_alistado, process_rows
 
 # Alistamiento (blanks prepared) reconciled against the physical book, Feb–Jun 2026.
@@ -88,9 +89,14 @@ def _to_row(record: dict) -> ExtractedRow:
     except (ValueError, TypeError):
         raw["quantity"] = 1  # non-numeric (e.g. "ANULADO", "ORNAMENTAL") -> default 1
 
-    for f in ("requested_by", "plate_type", "plate_number", "city", "material", "prepared_by"):
+    for f in ("requested_by", "plate_type", "city", "material", "prepared_by"):
         if raw.get(f) is not None:
             raw[f] = str(raw[f])
+    # plate_number must match the live form's cleaning (validate_plate -> clean_plate:
+    # uppercase, ALL whitespace stripped) so a plate migrated from Excel and the same
+    # plate entered later through the app land on the identical string for dedup.
+    if raw.get("plate_number") is not None:
+        raw["plate_number"] = clean_plate(str(raw["plate_number"]))
 
     return ExtractedRow(**raw)
 
