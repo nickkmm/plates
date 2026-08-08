@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import TypeGuard
 
 from app.core.models import ExtractedRow
 
@@ -242,17 +243,17 @@ def _is_reposicion(folded: str) -> bool:
 _NON_PLATE_EXACT = {"MUESTRA", "MUESTRAS", "INGSE", "KWP"}
 
 
-def is_real_plate(plate_number: str | None) -> bool:
+def is_real_plate(plate_number: str | None) -> TypeGuard[str]:
     """True only for values that identify a unique plate (eligible for dedup).
 
     Excludes None, sample/internal markers, and serial notes like 'S/43050'.
+    Typed as a TypeGuard so callers filtering with this (e.g. process.py's
+    comprehensions) get `str` narrowing instead of `str | None`.
     """
     if not plate_number:
         return False
     f = plate_number.strip().upper()
-    if f in _NON_PLATE_EXACT or f.startswith("S/"):
-        return False
-    return True
+    return not (f in _NON_PLATE_EXACT or f.startswith("S/"))
 
 
 def annulment_kind(*folded_texts: str) -> str | None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from collections.abc import Iterable
+from datetime import date
 
 import psycopg
 
@@ -30,7 +31,7 @@ def get_conn() -> psycopg.Connection:
 
 def existing_plate_numbers(conn: psycopg.Connection, candidates: Iterable[str]) -> set[str]:
     """Return the subset of `candidates` already present as live (non-voided) plates."""
-    values = [c for c in {c for c in candidates if c}]
+    values = list({c for c in candidates if c})
     if not values:
         return set()
     with conn.cursor() as cur:
@@ -46,7 +47,7 @@ def existing_plate_numbers(conn: psycopg.Connection, candidates: Iterable[str]) 
         return {r[0] for r in cur.fetchall()}
 
 
-def insert_order(conn: psycopg.Connection, *, order_number: str, order_date, requested_by: str,
+def insert_order(conn: psycopg.Connection, *, order_number: str, order_date: date, requested_by: str,
                  city: str | None) -> int:
     """Insert one production_orders row and return its id."""
     with conn.cursor() as cur:
@@ -58,7 +59,9 @@ def insert_order(conn: psycopg.Connection, *, order_number: str, order_date, req
             """,
             (order_number, order_date, requested_by, city),
         )
-        return cur.fetchone()[0]
+        row = cur.fetchone()
+        assert row is not None, "RETURNING id on a successful INSERT always yields a row"
+        return row[0]
 
 
 def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
@@ -89,9 +92,16 @@ def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
         )
 
 
-def insert_blank_preparation(conn: psycopg.Connection, *, prep_date, category: str,
+def insert_blank_preparation(conn: psycopg.Connection, *, prep_date: date | str | None, category: str,
                              quantity: int, prepared_by: str | None) -> None:
-    """Record one ALISTAMIENTO event (blanks prepared / material intake)."""
+    """Record one ALISTAMIENTO event (blanks prepared / material intake).
+
+    prep_date is a real `date` when called from process_rows (via the pydantic-
+    coerced ExtractedRow), but the standalone /inventory/alistado form route
+    passes the raw form string (or None) directly; the column is nullable and
+    psycopg/Postgres accept an ISO date string for a DATE column, so both are
+    valid as-is.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -102,7 +112,7 @@ def insert_blank_preparation(conn: psycopg.Connection, *, prep_date, category: s
         )
 
 
-def _consumed_by_material(cur, *, where: str) -> dict[str, int]:
+def _consumed_by_material(cur: psycopg.Cursor, *, where: str) -> dict[str, int]:
     """Sum plate quantities per inventory MATERIAL, mapping types in Python.
 
     Ornamental (and any other no-material type) maps to None and is skipped.
@@ -172,7 +182,9 @@ def ornamental_count(conn: psycopg.Connection) -> int:
             "SELECT COALESCE(SUM(quantity), 0) FROM plates "
             "WHERE plate_type = 'ORNAMENTAL' AND is_voided = false"
         )
-        return cur.fetchone()[0]
+        row = cur.fetchone()
+        assert row is not None, "a bare SUM(...) aggregate always yields exactly one row"
+        return row[0]
 
 
 def distinct_requested_by(conn: psycopg.Connection) -> list[str]:
@@ -226,11 +238,12 @@ def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
             """,
             (limit,),
         )
+        assert cur.description is not None, "cur.description is always set after a successful SELECT"
         cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, r)) for r in cur.fetchall()]
+        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
 
 
-def order_detail(conn: psycopg.Connection, order_id: int):
+def order_detail(conn: psycopg.Connection, order_id: int) -> tuple[dict | None, list[dict]]:
     """Return (order dict, list of its plate dicts) for the detail view."""
     with conn.cursor() as cur:
         cur.execute(
@@ -241,7 +254,8 @@ def order_detail(conn: psycopg.Connection, order_id: int):
         row = cur.fetchone()
         if not row:
             return None, []
-        order = dict(zip([d[0] for d in cur.description], row))
+        assert cur.description is not None, "cur.description is always set after a successful SELECT"
+        order = dict(zip([d[0] for d in cur.description], row, strict=False))
         cur.execute(
             """
             SELECT plate_type, plate_number, plate_to, quantity,
@@ -250,8 +264,9 @@ def order_detail(conn: psycopg.Connection, order_id: int):
             """,
             (order_id,),
         )
+        assert cur.description is not None, "cur.description is always set after a successful SELECT"
         pcols = [d[0] for d in cur.description]
-        plates = [dict(zip(pcols, r)) for r in cur.fetchall()]
+        plates = [dict(zip(pcols, r, strict=False)) for r in cur.fetchall()]
     return order, plates
 
 
@@ -275,8 +290,9 @@ def review_rows(conn: psycopg.Connection) -> list[dict]:
             ORDER BY p.plate_number, o.order_date
             """
         )
+        assert cur.description is not None, "cur.description is always set after a successful SELECT"
         cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, r)) for r in cur.fetchall()]
+        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
 
 
 def update_plate(conn: psycopg.Connection, plate_id: int, *, plate_type: str,
