@@ -442,38 +442,37 @@ class TestNormalizeRow:
         assert result.is_voided is True
         assert result.plate_number is None
 
-    def test_anulad_placa_current_behavior(self):
-        """Documents the CURRENT observed behavior for the 'placa anulada'
-        (blank lost but still consumed) case, per annulment_kind's "plate"
-        classification.
+    def test_anulad_placa_sets_plate_annulled_flag(self):
+        """'Placa anulada' (blank lost but still consumed): annulment_kind()
+        classifies ANULAD+PLACA text as kind == "plate" (see its docstring:
+        "the blank WAS lost -> consumed"). normalize_row() must react to that
+        by setting is_plate_annulled -- mirroring the web form's dedicated
+        "Placa anulada" line type, which sets this flag directly -- so
+        historical/migrated rows carrying this ledger text are counted in
+        "Desperdicio" (waste) tracking too, not just form-entered ones.
 
-        NOTE: annulment_kind() computes kind == "plate" for ANULAD+PLACA
-        text (see its docstring: "the blank WAS lost -> consumed"), correctly
-        leaving is_voided False here. However normalize_row() only branches
-        on `kind in ("order", "bare")` -- there is no branch reacting to
-        kind == "plate" at all. As implemented, this means:
-          - plate_number is cleared to None (the generic "ANULAD ... in
-            text" elif fires the same way it does for order/bare/REPITE),
-            NOT preserved.
-          - is_plate_annulled is NOT set True by this function (the flag is
-            only ever set True in app/web/app.py's `placa_anulada` form
-            line-type, never inferred here from ledger text).
-        This looks like a real gap between annulment_kind's documented
-        intent and normalize_row's handling of its "plate" result (flagged
-        to the user rather than silently patched, per task instructions).
+        plate_number still clears to None here: the RANGO cell held the
+        annulment phrase itself, not a real plate, so there's nothing to
+        preserve.
         """
         row = make_row(plate_number="ANULADA PLACA")
         result = normalize_row(row)
         assert result.plate_number is None
         assert result.is_voided is False
-        assert result.is_plate_annulled is False
+        assert result.is_plate_annulled is True
 
     def test_anulad_placa_with_embedded_real_plate_still_clears_it(self):
-        """Same gap as above, shown with a real plate number embedded
-        alongside the annotation -- it is still discarded entirely."""
+        """A real plate number embedded alongside the annotation in the same
+        RANGO cell is still discarded entirely (the elif that nulls
+        plate_number fires on any "ANULAD" substring, not just a bare
+        annulment phrase) -- unlike the flag fix above, this narrower
+        behavior was left as-is: preserving an embedded plate here is a
+        separate, more ambiguous judgment call, not touched by this fix.
+        is_plate_annulled is still correctly set regardless."""
         row = make_row(plate_number="HMF922 ANULADA PLACA")
         result = normalize_row(row)
         assert result.plate_number is None
+        assert result.is_plate_annulled is True
 
     def test_real_plate_is_kept_and_uppercased(self):
         row = make_row(plate_number="hmf922")

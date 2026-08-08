@@ -138,6 +138,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="Parse and report only; no insert.")
     parser.add_argument("--keep-duplicates", action="store_true",
                         help="Do not drop exact-duplicate ledger lines (debugging).")
+    parser.add_argument("--since", default=None,
+                        help="Incremental mode: only migrate rows with FECHA strictly after "
+                             "this date (YYYY-MM-DD), applied AFTER year-typo correction so a "
+                             "mis-dated row that really belongs before the cutoff isn't "
+                             "re-migrated. Also switches ALISTAMIENTO handling: instead of the "
+                             "hardcoded RECONCILED_ALISTAMIENTO baseline (Feb-Jun only), the "
+                             "Excel's own ALISTAMIENTO rows for this range are trusted and "
+                             "loaded via process_rows, same as the live web form does.")
     args = parser.parse_args(argv)
 
     df = pd.read_excel(args.excel_path, sheet_name=args.sheet, header=args.header_row)
@@ -178,6 +186,13 @@ def main(argv: list[str] | None = None) -> int:
     if n_shifted:
         print(f"Corrected {n_shifted} future-dated rows (year typo, shifted back 1 year).")
 
+    if args.since:
+        since_date = pd.Timestamp(args.since)
+        before_since = len(df)
+        df = df[df["FECHA"] > since_date]
+        print(f"--since {args.since}: kept {len(df)} of {before_since} rows "
+              f"(FECHA > {args.since}, applied after year-typo correction).")
+
     # The photo-extraction agent transcribes some ledger pages twice, producing
     # exact-duplicate lines (same fecha/orden/tipo/rango/cant). A real plate can't
     # be made twice and identical reposición/muestra lines are double-reads, so we
@@ -209,25 +224,36 @@ def main(argv: list[str] | None = None) -> int:
         print("\nDry run — nothing inserted.")
         return 0
 
-    # The Excel's ALISTAMIENTO rows are unreliable, so discard them and load the
-    # reconciled set (verified against the book). Plate rows still come from Excel.
-    plate_rows = [r for r in rows if not _is_alistado(r)]
-    discarded = len(rows) - len(plate_rows)
-    print(f"Discarded {discarded} Excel ALISTAMIENTO rows; "
-          f"loading {len(RECONCILED_ALISTAMIENTO)} reconciled ones.")
-    with db.get_conn() as conn:
-        for d, category, qty, by in RECONCILED_ALISTAMIENTO:
-            db.insert_blank_preparation(
-                conn, prep_date=date.fromisoformat(d), category=category,
-                quantity=qty, prepared_by=by,
-            )
-        conn.commit()
+    if args.since:
+        # Incremental range: no reconciled baseline exists for it yet, so trust
+        # this batch's own ALISTAMIENTO rows via process_rows's normal handling
+        # (same path the live web form uses), instead of RECONCILED_ALISTAMIENTO
+        # (which only covers the original Feb-Jun historical baseline).
+        alistado_n = sum(1 for r in rows if _is_alistado(r))
+        print(f"{alistado_n} Excel ALISTAMIENTO rows in range; loading as-is (not reconciled).")
+        summary = process_rows(rows)
+        blank_preps_label = f"{summary.blank_preparations} (from Excel, unreconciled)"
+    else:
+        # The Excel's ALISTAMIENTO rows are unreliable, so discard them and load the
+        # reconciled set (verified against the book). Plate rows still come from Excel.
+        plate_rows = [r for r in rows if not _is_alistado(r)]
+        discarded = len(rows) - len(plate_rows)
+        print(f"Discarded {discarded} Excel ALISTAMIENTO rows; "
+              f"loading {len(RECONCILED_ALISTAMIENTO)} reconciled ones.")
+        with db.get_conn() as conn:
+            for d, category, qty, by in RECONCILED_ALISTAMIENTO:
+                db.insert_blank_preparation(
+                    conn, prep_date=date.fromisoformat(d), category=category,
+                    quantity=qty, prepared_by=by,
+                )
+            conn.commit()
+        summary = process_rows(plate_rows)
+        blank_preps_label = f"{len(RECONCILED_ALISTAMIENTO)} (reconciled)"
 
-    summary = process_rows(plate_rows)
     print("\n=== Migration summary ===")
     print(f"Orders inserted:        {summary.orders_inserted}")
     print(f"Plates inserted:        {summary.plates_inserted}")
-    print(f"Blank preparations:     {len(RECONCILED_ALISTAMIENTO)} (reconciled)")
+    print(f"Blank preparations:     {blank_preps_label}")
     print(f"Possible duplicates:    {summary.possible_duplicates}")
     print(f"Voided:                 {summary.voided}")
     print(f"Batch replacements:     {summary.batch_replacements}")

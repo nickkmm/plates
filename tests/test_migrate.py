@@ -4,14 +4,6 @@ Uses small synthetic pandas Series/dicts, no real Excel file. _key_val and
 _shift_future_dates were originally nested inside main() and have been
 hoisted to module level (behavior-preserving refactor) specifically so they
 can be unit-tested here; _to_row was already module-level.
-
-NOTE on plate_number whitespace: a concurrent change elsewhere may alter
-_to_row's whitespace handling for plate_number. The test below
-(`test_plate_number_keeps_internal_whitespace_current_behavior`) pins down
-the CURRENT behavior observed in this worktree (internal whitespace is NOT
-collapsed, only leading/trailing via ExtractedRow's own validator) --
-intentionally, per task instructions, rather than asserting the "fixed"
-behavior.
 """
 
 from __future__ import annotations
@@ -174,18 +166,15 @@ class TestToRow:
         row = _to_row(_base_record(CANT=0, MATERIAL=999))
         assert row.quantity == 0
 
-    # --- current (unfixed) whitespace behavior ------------------------------
+    # --- plate_number cleaning ------------------------------------------
 
-    def test_plate_number_keeps_internal_whitespace_current_behavior(self):
-        """Pinning down CURRENT behavior, not the desired one: _clean() only
-        treats a string as blank if IT strips to empty -- it does not strip
-        non-blank strings itself. ExtractedRow's own blank-to-none validator
-        strips leading/trailing whitespace, but nothing collapses internal
-        whitespace at this stage (that only happens later, in
-        normalize.clean_plate / normalize_row, if at all). See module
-        docstring above."""
-        row = _to_row(_base_record(RANGO=" HMF 922 "))
-        assert row.plate_number == "HMF 922"  # internal space NOT removed
+    def test_plate_number_strips_internal_whitespace(self):
+        """_to_row runs plate_number through clean_plate (uppercase, ALL
+        whitespace stripped) so a plate migrated from Excel lands on the same
+        string the live form would produce for the identical plate -- see
+        the clean_plate call in _to_row."""
+        row = _to_row(_base_record(RANGO=" hmf 922 "))
+        assert row.plate_number == "HMF922"
 
     def test_plate_number_with_no_extra_whitespace_unaffected(self):
         row = _to_row(_base_record(RANGO="HMF922"))

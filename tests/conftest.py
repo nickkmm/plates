@@ -20,11 +20,18 @@ import os
 from werkzeug.security import generate_password_hash
 
 # --- Auth env vars required at `app.web.app` import time ------------------
+# Forced (not setdefault): local dev runs this suite inside the plates-web
+# container too (matching Python/psycopg without a host venv), which already
+# has the REAL SECRET_KEY/AUTH_USERS exported from .env at container start.
+# setdefault would silently keep those real values, so login attempts with
+# TEST_USERNAME/TEST_PASSWORD below would 401 against the real AUTH_USERS
+# instead of testing anything -- forced assignment keeps the suite hermetic
+# regardless of where it's invoked from, matching DB_HOST/DB_PORT below.
 TEST_USERNAME = "testuser"
 TEST_PASSWORD = "testpass123"
 
-os.environ.setdefault("SECRET_KEY", "test-secret-key-do-not-use-in-production")
-os.environ.setdefault("AUTH_USERS", f"{TEST_USERNAME}:{generate_password_hash(TEST_PASSWORD)}")
+os.environ["SECRET_KEY"] = "test-secret-key-do-not-use-in-production"
+os.environ["AUTH_USERS"] = f"{TEST_USERNAME}:{generate_password_hash(TEST_PASSWORD)}"
 
 # --- Test database ----------------------------------------------------------
 # Point at a SEPARATE database (`plates_test`) on the same already-running

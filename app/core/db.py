@@ -46,7 +46,7 @@ def existing_plate_numbers(conn: psycopg.Connection, candidates: Iterable[str]) 
         return {r[0] for r in cur.fetchall()}
 
 
-def insert_order(conn: psycopg.Connection, *, order_number: int, order_date, requested_by: str,
+def insert_order(conn: psycopg.Connection, *, order_number: str, order_date, requested_by: str,
                  city: str | None) -> int:
     """Insert one production_orders row and return its id."""
     with conn.cursor() as cur:
@@ -304,6 +304,26 @@ def resolve_plate(conn: psycopg.Connection, plate_id: int) -> None:
 
 
 def delete_plate(conn: psycopg.Connection, plate_id: int) -> None:
-    """Delete a plate row (e.g. a clear misread)."""
+    """Delete a plate row (e.g. a clear misread).
+
+    If this leaves exactly one other flagged row with the same plate_number,
+    clear its flag too — the duplicate that prompted it is gone, so there's
+    nothing left to compare against. If 2+ still share the number, leave them
+    flagged: there may still be a real ambiguity to review.
+    """
     with conn.cursor() as cur:
+        cur.execute("SELECT plate_number FROM plates WHERE id = %s", (plate_id,))
+        row = cur.fetchone()
+        plate_number = row[0] if row else None
         cur.execute("DELETE FROM plates WHERE id = %s", (plate_id,))
+        if plate_number:
+            cur.execute(
+                "SELECT id FROM plates WHERE plate_number = %s AND is_possible_duplicate = true",
+                (plate_number,),
+            )
+            remaining = cur.fetchall()
+            if len(remaining) == 1:
+                cur.execute(
+                    "UPDATE plates SET is_possible_duplicate = false WHERE id = %s",
+                    (remaining[0][0],),
+                )
