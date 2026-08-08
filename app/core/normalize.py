@@ -64,6 +64,10 @@ _REQUESTED_BY_MAP_RAW = {
     "MARIO TUQUERRES": "MARIO.T",
     "WILTHER APARA": "WILTHER.O",
     "GPS SKY": "GPS",
+    # Confirmed 2026-08-08: same entity, word order swapped (10 orders as "MUVA
+    # SERGIO" vs 1 as "SERGIO MUVA"). SERGIO.M/SERGIO.N and the other qualified
+    # PTO.V sub-points are still deliberately left separate, unconfirmed.
+    "SERGIO MUVA": "MUVA SERGIO",
 }
 
 _WHITESPACE = re.compile(r"\s+")
@@ -300,9 +304,14 @@ def normalize_row(row: ExtractedRow) -> ExtractedRow:
         data["plate_number"] = plate_folded or None
 
     # order/bare annulment -> not consumed (is_voided). plate annulment -> the
-    # blank was lost, so it stays is_voided=False and counts as consumed.
+    # blank was lost, so it stays is_voided=False and counts as consumed, but
+    # flagged for waste tracking (mirrors the web form's dedicated "Placa
+    # anulada" line type, which sets is_plate_annulled directly instead of
+    # inferring it from ledger text).
     if kind in ("order", "bare"):
         data["is_voided"] = True
+    elif kind == "plate":
+        data["is_plate_annulled"] = True
 
     # If the annulment was written in the CIUDAD cell, that's not a real city.
     if city_folded and "ANULAD" in city_folded:
