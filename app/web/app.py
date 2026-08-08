@@ -93,7 +93,7 @@ def _rows_from_form(form) -> list[ExtractedRow]:
     rows: list[ExtractedRow] = []
     for lt, pt, pn, pto, qty in zip(
         form.getlist("line_type"), form.getlist("plate_type"),
-        form.getlist("plate_number"), form.getlist("plate_to"), form.getlist("quantity"),
+        form.getlist("plate_number"), form.getlist("plate_to"), form.getlist("quantity"), strict=False,
     ):
         if not (pt or "").strip():
             continue  # skip empty line
