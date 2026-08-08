@@ -290,18 +290,15 @@ class TestReviewDeleteRoute:
             cur.execute("SELECT count(*) FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone()[0] == 0
 
-    def test_recalc_leaves_consumed_stale_when_a_category_loses_its_last_plate(
+    def test_recalc_resets_consumed_when_a_category_loses_its_last_plate(
         self, authenticated_client, db_conn
     ):
-        """Real quirk in db.recalc_inventory, exercised through the route: its
-        consumed-sum only iterates materials that still have >=1 non-voided
-        plate row (a GROUP BY plate_type). Once the LAST plate for a category
-        is deleted, that category simply doesn't appear in the GROUP BY result
-        at all, so the UPSERT never touches its `consumed` column -- the prior
-        value is left stale instead of being reset to 0. Pinning this down as
-        current behavior (not asserting it's *desirable*): a category with
-        other still-live plates recalculates correctly; one that drops to zero
-        plates does not."""
+        """db.recalc_inventory's consumed-sum iterates the fixed set of known
+        materials (INVENTORY_CATEGORIES), not just whatever GROUP BY plate_type
+        happens to return -- so a category that drops to zero live plates gets
+        consumed explicitly reset to 0, instead of being skipped and left
+        stale. A category with other still-live plates continues to
+        recalculate correctly (unaffected by this fix)."""
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
         order_id = db.insert_order(db_conn, order_number="2402", order_date=date(2026, 1, 1),
@@ -323,7 +320,7 @@ class TestReviewDeleteRoute:
             cur.execute("SELECT count(*) FROM plates")
             assert cur.fetchone()[0] == 0  # the plate really is gone
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
-            assert cur.fetchone() == (7,)  # but consumed was never reset
+            assert cur.fetchone() == (0,)  # consumed correctly reset
 
     def test_deleting_one_of_a_flagged_pair_clears_the_surviving_sibling(self, authenticated_client, db_conn):
         """Exercises db.delete_plate's sibling-clearing behavior through the
