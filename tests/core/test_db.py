@@ -235,17 +235,19 @@ class TestRecentOrders:
         assert row["total_qty"] == 4
         assert row["plates"] == "AAA111, reposición, anulada, sin placa"
 
-    def test_order_with_no_plates_shows_zero_counts_and_sin_placa(self, db_conn):
+    def test_order_with_no_plates_shows_zero_counts_and_no_plates_label(self, db_conn):
         """A LEFT JOIN with zero matching plates still produces exactly one
-        (all-NULL) joined row, and the CASE's ELSE branch always yields a
-        string -- so string_agg has one non-NULL value to aggregate. Net
-        effect: 'plates' reads 'sin placa', never NULL, even though n_plates
-        (a count of p.id, which IS NULL here) is correctly 0."""
+        (all-NULL) joined row. The CASE's first branch (p.id IS NULL) catches
+        that phantom row and yields NULL instead of falling through to a real
+        plate-describing branch, so string_agg has nothing to aggregate and
+        'plates' reads NULL -- distinct from a real 'sin placa' row (a plate
+        line that was recorded but has no plate_number typed in, covered by
+        test_summarizes_plate_labels_per_row_kind below)."""
         db.insert_order(db_conn, order_number="501", order_date=date(2026, 1, 1), requested_by="PEDRO", city=None)
         rows = db.recent_orders(db_conn)
         assert rows[0]["n_plates"] == 0
         assert rows[0]["total_qty"] == 0
-        assert rows[0]["plates"] == "sin placa"
+        assert rows[0]["plates"] is None
 
     def test_most_recently_inserted_order_first(self, db_conn):
         db.insert_order(db_conn, order_number="600", order_date=date(2026, 1, 1), requested_by="PEDRO", city=None)

@@ -16,7 +16,7 @@ from datetime import date
 import psycopg
 
 from app.core.models import ExtractedRow
-from app.core.normalize import inventory_category
+from app.core.normalize import INVENTORY_CATEGORIES, inventory_category
 
 
 def get_conn() -> psycopg.Connection:
@@ -146,13 +146,17 @@ def recalc_inventory(conn: psycopg.Connection) -> None:
             ON CONFLICT (category) DO UPDATE SET prepared = EXCLUDED.prepared
             """
         )
-        for material, qty in _consumed_by_material(cur, where="is_voided = false").items():
+        # Iterate over the fixed set of materials (not just this query's keys) so a
+        # category that just lost its last live plate still gets consumed reset to
+        # 0, instead of being silently skipped (GROUP BY drops empty categories).
+        consumed = _consumed_by_material(cur, where="is_voided = false")
+        for material in INVENTORY_CATEGORIES:
             cur.execute(
                 """
                 INSERT INTO inventory_categories (category, consumed) VALUES (%s, %s)
                 ON CONFLICT (category) DO UPDATE SET consumed = EXCLUDED.consumed
                 """,
-                (material, qty),
+                (material, consumed.get(material, 0)),
             )
 
 
@@ -225,6 +229,7 @@ def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
                    COALESCE(SUM(p.quantity), 0) AS total_qty,
                    string_agg(
                        CASE
+                           WHEN p.id IS NULL THEN NULL  -- LEFT JOIN phantom row: no plate at all
                            WHEN p.plate_number IS NOT NULL THEN p.plate_number
                            WHEN p.is_batch_replacement THEN 'reposición'
                            WHEN p.is_voided THEN 'anulada'
