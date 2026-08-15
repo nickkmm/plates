@@ -14,6 +14,7 @@ import pytest
 
 from app.core.models import ExtractedRow
 from app.core.normalize import (
+    _CITY_SPECIFIC_TYPES,
     _PLATE_DESC,
     INVENTORY_CATEGORIES,
     PLATE_TYPES,
@@ -382,6 +383,64 @@ class TestNormalizeCity:
 
     def test_punctuation_only_slashes_returns_none(self):
         assert normalize_city("//") is None
+
+
+# --------------------------------------------------------------------------
+# implicit COLOMBIA for non city-specific plate types (normalize_row)
+# --------------------------------------------------------------------------
+
+
+class TestImplicitColombiaCity:
+    """Only CARRO PARTICULAR/PÚBLICO have city-specific plates; every other type
+    is nationwide, so a blank CIUDAD means COLOMBIA rather than 'unknown'.
+    Inference on blank ONLY -- a real city is never overridden."""
+
+    @pytest.mark.parametrize("plate_type", [
+        "MOTO PARTICULAR", "MOTO CARRO PARTICULAR", "MOTO CARRO PÚBLICO",
+        "REMOLQUE", "ORNAMENTAL",
+    ])
+    def test_blank_city_becomes_colombia(self, plate_type):
+        assert normalize_row(make_row(plate_type=plate_type, city=None)).city == "COLOMBIA"
+
+    @pytest.mark.parametrize("plate_type", ["CARRO PARTICULAR", "CARRO PÚBLICO"])
+    def test_city_specific_types_keep_a_blank_city_blank(self, plate_type):
+        assert normalize_row(make_row(plate_type=plate_type, city=None)).city is None
+
+    def test_covers_exactly_the_non_city_specific_plate_types(self):
+        """Guard: if PLATE_TYPES grows, this rule's coverage must be revisited."""
+        assert set(PLATE_TYPES) - set(_CITY_SPECIFIC_TYPES) == {
+            "MOTO PARTICULAR", "MOTO CARRO PARTICULAR", "MOTO CARRO PÚBLICO",
+            "REMOLQUE", "ORNAMENTAL",
+        }
+
+    def test_a_real_city_on_a_moto_row_is_never_overridden(self):
+        """~12% of historical MOTO PARTICULAR rows do name a real city."""
+        row = make_row(plate_type="MOTO PARTICULAR", city="FLORENCIA")
+        assert normalize_row(row).city == "FLORENCIA"
+
+    def test_a_real_city_on_a_moto_row_is_still_normalized(self):
+        row = make_row(plate_type="MOTO PARTICULAR", city="  granada ")
+        assert normalize_row(row).city == "GRANADA"
+
+    def test_punctuation_only_city_on_a_moto_row_becomes_colombia(self):
+        """normalize_city() turns junk into None, so the inference then fires."""
+        assert normalize_row(make_row(plate_type="MOTO PARTICULAR", city="-")).city == "COLOMBIA"
+
+    def test_empty_string_city_on_a_moto_row_becomes_colombia(self):
+        assert normalize_row(make_row(plate_type="MOTO PARTICULAR", city="")).city == "COLOMBIA"
+
+    def test_uses_the_normalized_plate_type_not_the_raw_one(self):
+        """'moto publico' normalizes to MOTO CARRO PÚBLICO -> not city-specific."""
+        assert normalize_row(make_row(plate_type="moto publico", city=None)).city == "COLOMBIA"
+
+    def test_raw_publico_normalizes_to_a_city_specific_type_and_stays_blank(self):
+        """'publico' -> CARRO PÚBLICO, which IS city-specific."""
+        assert normalize_row(make_row(plate_type="publico", city=None)).city is None
+
+    def test_annulled_city_cell_on_a_moto_row_becomes_colombia(self):
+        """The ANULAD rule empties the city cell first; the inference runs last,
+        so the row still ends up with the nationwide default rather than NULL."""
+        assert normalize_row(make_row(plate_type="MOTO PARTICULAR", city="ANULADO")).city == "COLOMBIA"
 
 
 # --------------------------------------------------------------------------

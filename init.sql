@@ -7,7 +7,6 @@ CREATE TABLE production_orders (
     order_number TEXT NOT NULL,
     order_date DATE NOT NULL,
     requested_by TEXT NOT NULL,
-    city TEXT,
     created_at TIMESTAMP DEFAULT now()
 );
 
@@ -24,6 +23,10 @@ CREATE TABLE plates (
     material TEXT,
     prepared_by TEXT,
     is_possible_duplicate BOOLEAN DEFAULT false,
+    -- City is a property of the PLATE, not the order: one order can ship plates
+    -- to several cities. Types other than CARRO PARTICULAR/PÚBLICO are implicitly
+    -- COLOMBIA (see core.normalize._CITY_SPECIFIC_TYPES).
+    city TEXT,
     created_at TIMESTAMP DEFAULT now()
 );
 
