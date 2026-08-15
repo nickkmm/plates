@@ -23,7 +23,7 @@
     th { background:#f6f6f6; font-size:.78rem; }
     td input, td select { width:100%; box-sizing:border-box; }
     .plate-num { text-transform:uppercase; }
-    button { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; }
+    button, .btn-link { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
     .add { background:var(--blue); color:#fff; margin-top:.6rem; }
     .submit { background:var(--green); color:#fff; font-size:1.05rem; padding:.65rem 1.4rem; }
     .rm { background:#eee; color:#900; padding:.3rem .55rem; }
@@ -36,7 +36,7 @@
 <body>
   {% include "_nav.html" %}
   <h1>Registrar producción de placas</h1>
-  <p><a href="{{ url_for('ingest_pdf') }}" class="add" style="display:inline-block;text-decoration:none">Subir PDF</a></p>
+  <p><a href="{{ url_for('ingest_pdf') }}" class="btn-link add">Subir PDF</a></p>
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
   {% if notices %}
