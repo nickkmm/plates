@@ -1,0 +1,15 @@
+<style>
+  .tabs .logout { margin-left:auto; display:flex; align-items:center; }
+  .tabs .logout button {
+    background:none; border:0; color:#555; font-weight:600; font-family:inherit;
+    font-size:1rem; cursor:pointer; padding:.55rem 1rem; border-radius:8px;
+  }
+  .tabs .logout button:hover { background:#fdecec; color:#d33; }
+</style>
+<nav class="tabs">
+  <a href="{{ url_for('ingest') }}" class="{{ 'on' if request.endpoint in ('ingest','ingest_pdf') }}">Registrar</a>
+  <a href="{{ url_for('review') }}" class="{{ 'on' if request.endpoint=='review' }}">Revisión</a>
+  <a href="{{ url_for('inventory') }}" class="{{ 'on' if request.endpoint=='inventory' }}">Inventario</a>
+  <a href="{{ url_for('records') }}" class="{{ 'on' if request.endpoint in ('records','record_detail') }}">Registros</a>
+  <form method="post" action="{{ url_for('logout') }}" class="logout"><button type="submit" title="Cerrar sesión">Salir</button></form>
+</nav>

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Inventario</title>
+  <style>
+    :root { --green:#1a9c5b; --blue:#0b6bcb; --red:#d33; --ink:#222; }
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
+    h1 { font-size: 1.4rem; } h2 { font-size: 1.05rem; margin-top: 2rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:var(--blue); border-bottom:3px solid var(--blue); margin-bottom:-2px; }
+    .muted { color: #777; font-size: .9rem; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
+    .card { border: 1px solid #e2e2e2; border-radius: 12px; padding: 1rem 1.1rem; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+    .card h3 { margin: 0 0 .5rem; font-size: 1rem; }
+    .avail { font-size: 2rem; font-weight: 800; line-height: 1; }
+    .avail.neg { color: var(--red); } .avail.pos { color: var(--green); }
+    .sub { font-size: .8rem; color: #666; margin: .15rem 0 .8rem; }
+    .stats { display: flex; justify-content: space-between; font-size: .82rem; color: #444; margin-bottom: .5rem; }
+    .stats span b { display: block; font-size: .95rem; color: var(--ink); }
+    .bar { height: 9px; background: #eee; border-radius: 6px; overflow: hidden; }
+    .bar > i { display: block; height: 100%; background: var(--blue); }
+    .bar > i.over { background: var(--red); }
+    .pct { font-size: .75rem; color: #666; margin-top: .25rem; }
+    .warn { color: var(--red); font-size: .78rem; margin-top: .4rem; }
+    .card.counter { border-style: dashed; }
+    form.inline { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; border: 1px solid #e2e2e2; border-radius: 10px; padding: .8rem; }
+    form.inline label { font-size: .78rem; color: #555; display: flex; flex-direction: column; gap: .2rem; }
+    input, select { padding: .4rem; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; }
+    button { background: var(--green); color: #fff; border: 0; border-radius: 7px; padding: .5rem .9rem; font-size: .9rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  <h1>Inventario por categoría</h1>
+  <p class="muted">Disponible = Alistado − Consumido. La barra muestra cuánto del alistado ya se consumió.</p>
+
+  <div class="cards">
+    {% for r in rows %}
+      {% set pct = (100 * r.consumed / r.prepared) if r.prepared > 0 else 0 %}
+      <div class="card">
+        <h3>{{ r.category }}</h3>
+        <div class="avail {{ 'neg' if r.available < 0 else 'pos' }}">{{ r.available }}</div>
+        <div class="sub">disponible</div>
+        <div class="stats">
+          <span>Alistado<b>{{ r.prepared }}</b></span>
+          <span>Consumido<b>{{ r.consumed }}</b></span>
+          <span title="Placas anuladas (incluidas en el consumido)">Desperdicio<b>{{ r.wasted }}</b></span>
+        </div>
+        <div class="bar"><i class="{{ 'over' if pct > 100 else '' }}" style="width: {{ [pct, 100] | min }}%"></i></div>
+        <div class="pct">{{ pct | round(0) | int }}% consumido</div>
+        {% if r.available < 0 %}<div class="warn">⚠ Negativo — probablemente faltan alistamientos por cargar.</div>{% endif %}
+      </div>
+    {% endfor %}
+
+    <div class="card counter">
+      <h3>ORNAMENTAL</h3>
+      <div class="avail pos">{{ ornamental }}</div>
+      <div class="sub">placas hechas</div>
+    </div>
+  </div>
+
+  <h2>Registrar alistamiento (entrada de blancos / material)</h2>
+  <form class="inline" method="post" action="{{ url_for('inventory_alistado') }}">
+    <label>Categoría
+      <select name="category" required>
+        {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Cantidad <input type="number" name="quantity" min="1" required></label>
+    <label>Fecha <input type="date" name="prep_date"></label>
+    <label>Alistado por <input type="text" name="prepared_by" placeholder="opcional"></label>
+    <button type="submit">Agregar alistamiento</button>
+  </form>
+</body>
+</html>
