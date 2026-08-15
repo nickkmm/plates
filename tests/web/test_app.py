@@ -670,3 +670,70 @@ class TestIngestPostRoute:
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT plate_number FROM plates")
             assert cur.fetchall() == [("AAA300",)]  # only the filled-in line landed
+
+
+class TestIngestDuplicateWarning:
+    def test_plate_already_in_db_blocks_save_and_shows_warning_with_link(
+        self, authenticated_client, clean_db
+    ):
+        authenticated_client.post("/ingest", data={
+            "order_number": "4000", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["DUP001"], "plate_to": [""], "quantity": ["1"],
+        })
+        resp = authenticated_client.post("/ingest", data={
+            "order_number": "4001", "order_date": "2026-01-02",
+            "requested_by": "MARIA", "city": "",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["DUP001"], "plate_to": [""], "quantity": ["1"],
+        })
+        assert resp.status_code == 200
+        assert "ya existen".encode() in resp.data
+        assert b"4000" in resp.data  # points to the order where it already exists
+        assert b'value="MARIA"' in resp.data  # typed header data preserved
+
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '4001'")
+            assert cur.fetchone()[0] == 0  # second order was NOT saved
+
+    def test_confirm_duplicate_forces_the_save_through(self, authenticated_client, clean_db):
+        authenticated_client.post("/ingest", data={
+            "order_number": "4002", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["DUP002"], "plate_to": [""], "quantity": ["1"],
+        })
+        resp = authenticated_client.post("/ingest", data={
+            "order_number": "4003", "order_date": "2026-01-02",
+            "requested_by": "MARIA", "city": "",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["DUP002"], "plate_to": [""], "quantity": ["1"],
+            "confirm_duplicate": "1",
+        })
+        assert resp.status_code == 200
+        assert "Registrado".encode() in resp.data
+
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT is_possible_duplicate FROM plates p "
+                "JOIN production_orders o ON o.id = p.order_id WHERE o.order_number = '4003'"
+            )
+            assert cur.fetchall() == [(True,)]  # saved, and still flagged for the review queue
+
+    def test_plate_repeated_within_the_same_submission_blocks_save(
+        self, authenticated_client, clean_db
+    ):
+        resp = authenticated_client.post("/ingest", data={
+            "order_number": "4004", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["placa", "placa"], "plate_type": ["CARRO PARTICULAR", "CARRO PARTICULAR"],
+            "plate_number": ["DUP003", "DUP003"], "plate_to": ["", ""], "quantity": ["1", "1"],
+        })
+        assert resp.status_code == 200
+        assert "ya existen".encode() in resp.data
+        assert "mismo envío".encode() in resp.data  # no prior order to link to, just a same-batch repeat
+
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '4004'")
+            assert cur.fetchone()[0] == 0

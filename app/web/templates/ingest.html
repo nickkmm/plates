@@ -37,6 +37,29 @@
   <h1>Registrar producción de placas</h1>
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if duplicates %}
+  <div class="error">
+    <strong>Ojo: esta(s) placa(s) ya existen — no se guardó nada todavía.</strong>
+    <ul>
+      {% for plate_number, orders in duplicates.items() %}
+      <li>
+        <strong>{{ plate_number }}</strong>:
+        {% if orders %}
+          ya registrada en
+          {% for o in orders %}
+            pedido {{ o.order_number }} ({{ o.order_date }}, {{ o.requested_by }}, {{ o.plate_type }}, cant. {{ o.quantity }})
+            <a href="{{ url_for('record_detail', order_id=o.order_id) }}" target="_blank">ver pedido</a>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        {% else %}
+          aparece repetida dentro de este mismo envío (revisá las líneas de abajo).
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted">Si es un error de captura, corregí la placa abajo y guardá de nuevo.
+    Si es un caso real (p. ej. reposición), podés confirmar igual.</p>
+  </div>
+  {% endif %}
   {% if summary %}
   <div class="summary">
     <strong>Registrado ✓</strong>
@@ -56,10 +79,10 @@
     <fieldset>
       <legend>Datos de la orden</legend>
       <div class="header">
-        <label>Fecha<input type="date" name="order_date" value="{{ today }}" max="{{ today }}" required></label>
-        <label>N° de orden<input type="text" name="order_number" required placeholder="ej. 598"></label>
-        <label>Solicitado por<input type="text" name="requested_by" list="requesters" required placeholder="elegí o escribí"></label>
-        <label>Ciudad<input type="text" name="city" list="cities" placeholder="elegí o escribí"></label>
+        <label>Fecha<input type="date" name="order_date" value="{{ header.order_date if header else today }}" max="{{ today }}" required></label>
+        <label>N° de orden<input type="text" name="order_number" value="{{ header.order_number if header else '' }}" required placeholder="ej. 598"></label>
+        <label>Solicitado por<input type="text" name="requested_by" list="requesters" value="{{ header.requested_by if header else '' }}" required placeholder="elegí o escribí"></label>
+        <label>Ciudad<input type="text" name="city" list="cities" value="{{ header.city if header else '' }}" placeholder="elegí o escribí"></label>
       </div>
     </fieldset>
 
@@ -69,7 +92,29 @@
         <thead>
           <tr><th style="width:20%">Tipo de registro</th><th style="width:22%">Tipo de placa</th><th>Placa / Desde</th><th>Hasta</th><th style="width:12%">Cantidad</th><th style="width:5%"></th></tr>
         </thead>
-        <tbody id="lines"></tbody>
+        <tbody id="lines">
+          {% set line_labels = {'placa':'Placa','rango':'Rango','reposicion':'Reposición','anulada_orden':'Orden anulada','placa_anulada':'Placa anulada','muestra':'Muestra'} %}
+          {% for line in lines or [] %}
+          <tr class="line">
+            <td>
+              <select name="line_type" onchange="togglePlate(this)">
+                {% for lt, label in line_labels.items() %}
+                <option value="{{ lt }}" {% if line.line_type==lt %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <select name="plate_type" required onchange="updateHint(this)">
+                {% for c in categories %}<option value="{{ c }}" {% if line.plate_type==c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+              </select>
+            </td>
+            <td><input type="text" name="plate_number" class="plate-num" value="{{ line.plate_number or '' }}" {% if line.line_type in ['reposicion','anulada_orden'] %}readonly style="background:#f0f0f0"{% endif %}></td>
+            <td><input type="text" name="plate_to" class="plate-num" value="{{ line.plate_to or '' }}" {% if line.line_type!='rango' %}readonly style="background:#f0f0f0"{% endif %}></td>
+            <td><input type="number" name="quantity" value="{{ line.quantity or 1 }}" min="0" required></td>
+            <td><button type="button" class="rm" onclick="rmLine(this)">✕</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
       </table>
       <button type="button" class="add" onclick="addLine()">+ Agregar placa</button>
 
@@ -100,6 +145,9 @@
     </fieldset>
 
     <button type="submit" class="submit">Guardar orden</button>
+    {% if duplicates %}
+    <button type="submit" name="confirm_duplicate" value="1" class="submit" style="background:var(--red)">Guardar de todas formas</button>
+    {% endif %}
   </form>
 
   <script>
@@ -141,8 +189,16 @@
       btn.closest('tr').remove();                    // siempre borra la fila
       if (!tbody.querySelector('.line')) addLine();  // pero deja al menos una
     }
-    // Una fila al cargar.
-    document.addEventListener('DOMContentLoaded', addLine);
+    // Una fila en blanco al cargar, salvo que el servidor ya haya prellenado
+    // líneas (reintento tras un aviso de duplicado — no perder lo tipeado).
+    document.addEventListener('DOMContentLoaded', () => {
+      const existing = document.querySelectorAll('#lines .line');
+      if (!existing.length) { addLine(); return; }
+      existing.forEach(row => {
+        togglePlate(row.querySelector('select[name="line_type"]'));
+        updateHint(row.querySelector('select[name="plate_type"]'));
+      });
+    });
   </script>
 </body>
 </html>

@@ -37,6 +37,26 @@ def _is_alistado(row: ExtractedRow) -> bool:
     return "ALISTAM" in row.requested_by.upper() or "ALISTAM" in (row.prepared_by or "").upper()
 
 
+def find_duplicate_plate_numbers(rows: list[ExtractedRow]) -> set[str]:
+    """Read-only: which plate_numbers in this batch would be flagged
+    is_possible_duplicate if inserted right now (already in the DB, or
+    repeated within the batch itself). Mirrors process_rows' own detection
+    logic without writing anything — used by the /ingest form to warn
+    before saving, not just after.
+    """
+    normalized = [normalize_row(r) for r in rows]
+    plate_rows = [r for r in normalized if not _is_alistado(r)]
+    live_candidates = {
+        r.plate_number for r in plate_rows if is_real_plate(r.plate_number) and not r.is_voided
+    }
+    batch_counts = Counter(
+        r.plate_number for r in plate_rows if is_real_plate(r.plate_number) and not r.is_voided
+    )
+    with db.get_conn() as conn:
+        already_present = db.existing_plate_numbers(conn, live_candidates)
+    return {pn for pn in live_candidates if pn in already_present or batch_counts[pn] > 1}
+
+
 def process_rows(rows: list[ExtractedRow]) -> Summary:
     """Normalize, dedup, insert, and recalc inventory for a batch of rows.
 

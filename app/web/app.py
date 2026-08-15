@@ -25,7 +25,7 @@ from flask import Flask, redirect, render_template, request, session, url_for
 from app.core import db
 from app.core.models import ExtractedRow
 from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES, validate_plate
-from app.core.process import process_rows
+from app.core.process import find_duplicate_plate_numbers, process_rows
 from app.web import auth
 from app.web.auth import login_required
 
@@ -130,6 +130,20 @@ def _rows_from_form(form) -> list[ExtractedRow]:
     return rows
 
 
+def _sticky_lines_from_form(form) -> list[dict]:
+    """Re-derive the plate-line table as-typed, to redisplay the form without
+    losing work when a duplicate warning interrupts the save."""
+    return [
+        {"line_type": lt, "plate_type": pt, "plate_number": pn, "plate_to": pto, "quantity": qty}
+        for lt, pt, pn, pto, qty in zip(
+            form.getlist("line_type"), form.getlist("plate_type"),
+            form.getlist("plate_number"), form.getlist("plate_to"), form.getlist("quantity"),
+            strict=False,
+        )
+        if (pt or "").strip()
+    ]
+
+
 @app.get("/login")
 def login():
     if session.get("user"):
@@ -184,12 +198,29 @@ def ingest():
 def ingest_post():
     summary = None
     error = None
+    duplicates = None
+    header = None
+    lines = None
     try:
         rows = _rows_from_form(request.form)
         if not rows:
             error = "Agregá al menos una placa."
         else:
-            summary = process_rows(rows)
+            dup_plate_numbers = find_duplicate_plate_numbers(rows)
+            if dup_plate_numbers and not request.form.get("confirm_duplicate"):
+                with db.get_conn() as conn:
+                    duplicates = {
+                        pn: db.find_orders_for_plate(conn, pn) for pn in sorted(dup_plate_numbers)
+                    }
+                header = {
+                    "order_date": request.form.get("order_date", ""),
+                    "order_number": request.form.get("order_number", ""),
+                    "requested_by": request.form.get("requested_by", ""),
+                    "city": request.form.get("city", ""),
+                }
+                lines = _sticky_lines_from_form(request.form)
+            else:
+                summary = process_rows(rows)
     except Exception as e:  # surface validation/DB errors without crashing
         error = f"Error: {e}"
 
@@ -199,6 +230,7 @@ def ingest_post():
         "ingest.html", requesters=requesters, cities=cities,
         categories=FORM_PLATE_TYPES, today=_today_iso(),
         summary=summary.model_dump() if summary else None, error=error,
+        duplicates=duplicates, header=header, lines=lines,
     )
 
 
