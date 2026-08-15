@@ -164,7 +164,7 @@ def make_row(**overrides: object) -> ExtractedRow:
 class TestReviewRoute:
     def test_renders_flagged_rows(self, authenticated_client, db_conn):
         order_id = db.insert_order(db_conn, order_number="2100", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city=None)
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="REV111"),
                          is_possible_duplicate=True)
         db_conn.commit()
@@ -182,7 +182,7 @@ class TestReviewRoute:
 class TestReviewUpdateRoute:
     def test_updates_plate_clears_flag_and_redirects_to_review(self, authenticated_client, db_conn):
         order_id = db.insert_order(db_conn, order_number="2200", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city=None)
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="UPD111", quantity=1),
                          is_possible_duplicate=True)
         with db_conn.cursor() as cur:
@@ -206,7 +206,7 @@ class TestReviewUpdateRoute:
 
     def test_is_voided_checkbox_on_marks_voided(self, authenticated_client, db_conn):
         order_id = db.insert_order(db_conn, order_number="2201", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city=None)
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="UPD333"),
                          is_possible_duplicate=True)
         with db_conn.cursor() as cur:
@@ -227,7 +227,7 @@ class TestReviewUpdateRoute:
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
         order_id = db.insert_order(db_conn, order_number="2202", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city=None)
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="UPD444", quantity=5),
                          is_possible_duplicate=True)
@@ -250,7 +250,7 @@ class TestReviewUpdateRoute:
 class TestReviewResolveRoute:
     def test_clears_flag_without_other_changes_and_redirects(self, authenticated_client, db_conn):
         order_id = db.insert_order(db_conn, order_number="2300", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city=None)
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="RES111", quantity=3),
                          is_possible_duplicate=True)
         with db_conn.cursor() as cur:
@@ -273,7 +273,7 @@ class TestReviewResolveRoute:
 class TestReviewDeleteRoute:
     def test_deletes_plate_and_redirects(self, authenticated_client, db_conn):
         order_id = db.insert_order(db_conn, order_number="2400", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city=None)
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DEL111", quantity=7),
                          is_possible_duplicate=True)
@@ -302,7 +302,7 @@ class TestReviewDeleteRoute:
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
         order_id = db.insert_order(db_conn, order_number="2402", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city=None)
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DEL222", quantity=7),
                          is_possible_duplicate=True)
@@ -326,7 +326,7 @@ class TestReviewDeleteRoute:
         """Exercises db.delete_plate's sibling-clearing behavior through the
         actual route, not just the db.py function directly."""
         order_id = db.insert_order(db_conn, order_number="2401", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city=None)
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="SIB999"),
                          is_possible_duplicate=True)
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="SIB999"),
@@ -348,7 +348,7 @@ class TestInventoryRoute:
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=50, prepared_by=None)
         order_id = db.insert_order(db_conn, order_number="2500", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city=None)
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="ORNAMENTAL", quantity=3),
                          is_possible_duplicate=False)
         db.recalc_inventory(db_conn)
@@ -384,7 +384,7 @@ class TestInventoryAlistadoRoute:
 class TestRecordsRoute:
     def test_renders_recent_orders(self, authenticated_client, db_conn):
         db.insert_order(db_conn, order_number="2600", order_date=date(2026, 1, 1),
-                         requested_by="PEDRO", city="BOGOTA")
+                         requested_by="PEDRO")
         db_conn.commit()
 
         resp = authenticated_client.get("/records")
@@ -401,7 +401,7 @@ class TestRecordsRoute:
 class TestRecordDetailRoute:
     def test_existing_order_renders_its_plates(self, authenticated_client, db_conn):
         order_id = db.insert_order(db_conn, order_number="2700", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city="BOGOTA")
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DET111", quantity=2),
                          is_possible_duplicate=False)
@@ -421,7 +421,7 @@ class TestRecordDetailRoute:
 class TestRecordsDeleteRoute:
     def test_deletes_order_and_its_plates_and_redirects(self, authenticated_client, db_conn):
         order_id = db.insert_order(db_conn, order_number="2800", order_date=date(2026, 1, 1),
-                                    requested_by="PEDRO", city=None)
+                                    requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD111", quantity=8),
                          is_possible_duplicate=False)
@@ -446,12 +446,12 @@ class TestRecordsDeleteRoute:
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
         keep_order = db.insert_order(db_conn, order_number="2801", order_date=date(2026, 1, 1),
-                                      requested_by="PEDRO", city=None)
+                                      requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=keep_order,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD200", quantity=3),
                          is_possible_duplicate=False)
         delete_order = db.insert_order(db_conn, order_number="2802", order_date=date(2026, 1, 1),
-                                        requested_by="PEDRO", city=None)
+                                        requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=delete_order,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD201", quantity=8),
                          is_possible_duplicate=False)
@@ -472,18 +472,71 @@ class TestIngestPostRoute:
     def test_valid_single_plate_submission_inserts_and_shows_summary(self, authenticated_client, clean_db):
         resp = authenticated_client.post("/ingest", data={
             "order_number": "3000", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "BOGOTA",
+            "requested_by": "PEDRO",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["AAA111"], "plate_to": [""], "quantity": ["1"],
+            "city": ["BOGOTA"],
         })
         assert resp.status_code == 200
         assert "Registrado".encode() in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT order_number, requested_by, city FROM production_orders")
-            assert cur.fetchall() == [("3000", "PEDRO", "BOGOTA")]
-            cur.execute("SELECT plate_number, plate_type, quantity FROM plates")
-            assert cur.fetchall() == [("AAA111", "CARRO PARTICULAR", 1)]
+            cur.execute("SELECT order_number, requested_by FROM production_orders")
+            assert cur.fetchall() == [("3000", "PEDRO")]
+            cur.execute("SELECT plate_number, plate_type, quantity, city FROM plates")
+            assert cur.fetchall() == [("AAA111", "CARRO PARTICULAR", 1, "BOGOTA")]
+
+    def test_two_lines_in_one_order_keep_their_own_cities(self, authenticated_client, clean_db):
+        """The regression test for the original bug: city is per plate, so two
+        lines of one order must NOT collapse onto the first line's city."""
+        resp = authenticated_client.post("/ingest", data={
+            "order_number": "3010", "order_date": "2026-01-01",
+            "requested_by": "PEDRO",
+            "line_type": ["placa", "placa"],
+            "plate_type": ["CARRO PARTICULAR", "CARRO PARTICULAR"],
+            "plate_number": ["AAA111", "BBB222"], "plate_to": ["", ""],
+            "quantity": ["1", "1"],
+            "city": ["CALI", "PASTO"],
+        })
+        assert resp.status_code == 200
+        assert b"Registrado" in resp.data
+
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders")
+            assert cur.fetchone() == (1,)  # still ONE order
+            cur.execute("SELECT plate_number, city FROM plates ORDER BY id")
+            assert cur.fetchall() == [("AAA111", "CALI"), ("BBB222", "PASTO")]
+
+    def test_blank_city_on_a_moto_line_is_saved_as_colombia(self, authenticated_client, clean_db):
+        """MOTO PARTICULAR is nationwide, so a blank Ciudad means COLOMBIA."""
+        authenticated_client.post("/ingest", data={
+            "order_number": "3011", "order_date": "2026-01-01",
+            "requested_by": "PEDRO",
+            "line_type": ["placa", "placa"],
+            "plate_type": ["MOTO PARTICULAR", "CARRO PARTICULAR"],
+            "plate_number": ["ABC12D", "BBB222"], "plate_to": ["", ""],
+            "quantity": ["1", "1"],
+            "city": ["", ""],
+        })
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT plate_number, city FROM plates ORDER BY id")
+            # the carro line stays blank -- only nationwide types get the default
+            assert cur.fetchall() == [("ABC12D", "COLOMBIA"), ("BBB222", None)]
+
+    def test_lines_survive_a_post_that_omits_the_city_field_entirely(
+        self, authenticated_client, clean_db
+    ):
+        """City is optional, so a payload without it must still save the lines
+        (the per-line zips would otherwise silently truncate to nothing)."""
+        authenticated_client.post("/ingest", data={
+            "order_number": "3012", "order_date": "2026-01-01",
+            "requested_by": "PEDRO",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["AAA111"], "plate_to": [""], "quantity": ["1"],
+        })
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT plate_number, city FROM plates")
+            assert cur.fetchall() == [("AAA111", None)]
 
     def test_rango_line_type_inserts_desde_hasta(self, authenticated_client, clean_db):
         resp = authenticated_client.post("/ingest", data={
