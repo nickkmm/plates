@@ -415,9 +415,15 @@ def inventory_alistado():
 @app.get("/records")
 @login_required
 def records():
+    query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
-        rows = db.recent_orders(conn)
-    return render_template("records.html", rows=rows)
+        if query:
+            results = db.search_plates_by_number(conn, query)
+            rows = None
+        else:
+            results = None
+            rows = db.recent_orders(conn)
+    return render_template("records.html", rows=rows, query=query, results=results)
 
 
 @app.get("/records/<int:order_id>")

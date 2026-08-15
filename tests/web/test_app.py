@@ -397,6 +397,41 @@ class TestRecordsRoute:
         assert resp.status_code == 200
         assert "No hay órdenes registradas todavía".encode() in resp.data
 
+    def test_search_query_finds_a_plate_outside_the_recent_orders_page(
+        self, authenticated_client, db_conn
+    ):
+        """The plate lives in an order old enough that recent_orders() alone
+        wouldn't necessarily show it -- the search path is a separate query,
+        not a client-side filter of the 50 recent rows."""
+        order_id = db.insert_order(db_conn, order_number="2601", order_date=date(2020, 1, 1),
+                                    requested_by="OLD CLIENT")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SRC123"),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = authenticated_client.get("/records?q=SRC123")
+        assert resp.status_code == 200
+        assert b"SRC123" in resp.data
+        assert b"OLD CLIENT" in resp.data
+        # the plain recent-orders table must not render alongside search results
+        assert "resultado(s) para".encode() in resp.data
+
+    def test_search_with_no_match_shows_a_clear_message(self, authenticated_client, clean_db):
+        resp = authenticated_client.get("/records?q=ZZZ999")
+        assert resp.status_code == 200
+        assert "No se encontró ninguna placa".encode() in resp.data
+
+    def test_blank_query_falls_back_to_recent_orders(self, authenticated_client, db_conn):
+        db.insert_order(db_conn, order_number="2602", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        db_conn.commit()
+
+        resp = authenticated_client.get("/records?q=")
+        assert resp.status_code == 200
+        assert b"2602" in resp.data
+        assert "resultado(s) para".encode() not in resp.data
+
 
 class TestRecordDetailRoute:
     def test_existing_order_renders_its_plates(self, authenticated_client, db_conn):
