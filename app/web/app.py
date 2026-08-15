@@ -4,6 +4,9 @@ Routes:
   GET  /            -> redirect to /ingest
   GET  /ingest      -> the "Registrar" form (order header + plate lines)
   POST /ingest      -> build rows from the form, then the shared backend process_rows
+  GET  /ingest/pdf  -> upload form for the client-facing pedido PDF
+  POST /ingest/pdf  -> parse the PDF and RE-RENDER /ingest pre-filled for review
+                       (saves nothing; the person still presses "Guardar orden")
   GET  /review      -> table of rows flagged for review (real duplicate plates)
   GET  /inventory   -> per-category inventory cards
   GET/POST /login   -> session login page (open)
@@ -25,6 +28,7 @@ from flask import Flask, redirect, render_template, request, session, url_for
 from app.core import db
 from app.core.models import ExtractedRow
 from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES, validate_plate
+from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
 from app.core.process import find_duplicate_plate_numbers, process_rows
 from app.web import auth
 from app.web.auth import login_required
@@ -144,6 +148,64 @@ def _sticky_lines_from_form(form) -> list[dict]:
     ]
 
 
+def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]]:
+    """Turn a parsed PDF into (header, lines, notices) for the /ingest form.
+
+    Deliberately produces the exact same `header`/`lines` shapes the duplicate-
+    warning path builds (see `_sticky_lines_from_form`), so the review step is
+    the real form, pre-filled — not a second UI that could drift from it.
+
+    Anything the PDF left ambiguous is surfaced as a notice and left BLANK
+    rather than guessed, so a wrong value can't ride along unnoticed.
+    """
+    notices: list[str] = []
+    if not pedido.order_number:
+        notices.append("No se pudo leer el N° de orden de producción — completalo antes de guardar.")
+    if pedido.order_date is None:
+        notices.append("No se pudo leer la fecha del pedido — completala antes de guardar.")
+    elif pedido.order_date.isoformat() > _today_iso():
+        notices.append(
+            f"La fecha del PDF ({pedido.order_date.isoformat()}) es futura — corregila antes de guardar."
+        )
+    if not pedido.requested_by:
+        notices.append("No se pudo leer el cliente — completalo antes de guardar.")
+
+    no_type = [str(i) for i, line in enumerate(pedido.lines, start=1) if not line.plate_type]
+    if no_type:
+        notices.append(
+            f"El PDF no marca el tipo de placa en la(s) línea(s) {', '.join(no_type)} — "
+            "elegilo antes de guardar."
+        )
+
+    # The schema keeps ONE city per order (production_orders.city; plates have
+    # no city column), so a pedido listing several can't be stored as-is.
+    # Auto-fill only when it's unambiguous; otherwise leave it empty and say so.
+    cities = pedido.cities
+    if len(cities) > 1:
+        notices.append(
+            f"El PDF trae varias ciudades ({', '.join(cities)}) y solo se guarda una por orden — "
+            "elegí la que corresponda."
+        )
+
+    header = {
+        "order_date": pedido.order_date.isoformat() if pedido.order_date else "",
+        "order_number": pedido.order_number,
+        "requested_by": pedido.requested_by,
+        "city": cities[0] if len(cities) == 1 else "",
+    }
+    lines = [
+        {
+            "line_type": line.line_type,
+            "plate_type": line.plate_type,
+            "plate_number": line.plate_number,
+            "plate_to": line.plate_to,
+            "quantity": line.quantity,
+        }
+        for line in pedido.lines
+    ]
+    return header, lines, notices
+
+
 @app.get("/login")
 def login():
     if session.get("user"):
@@ -231,6 +293,43 @@ def ingest_post():
         categories=FORM_PLATE_TYPES, today=_today_iso(),
         summary=summary.model_dump() if summary else None, error=error,
         duplicates=duplicates, header=header, lines=lines,
+    )
+
+
+@app.route("/ingest/pdf", methods=["GET", "POST"])
+@login_required
+def ingest_pdf():
+    """Upload a pedido PDF (GET) and review the parse in the normal form (POST).
+
+    POST intentionally does NOT save: it renders `ingest.html` pre-filled, so
+    the person reviews/corrects and then submits to POST /ingest exactly like a
+    hand-typed order — including the duplicate-plate warning gate, for free.
+    """
+    if request.method == "GET":
+        return render_template("ingest_pdf.html")
+
+    upload = request.files.get("pdf")
+    if upload is None or not upload.filename:
+        return render_template("ingest_pdf.html", error="Elegí un archivo PDF para subir."), 400
+
+    try:
+        pedido = parse_pedido_pdf(upload.read())
+    except PdfExtractError as e:
+        return render_template("ingest_pdf.html", error=str(e)), 400
+    except Exception:  # never 500 on a bad upload — always offer manual entry
+        app.logger.exception("Unexpected failure parsing uploaded pedido PDF")
+        return render_template(
+            "ingest_pdf.html",
+            error="No se pudo procesar el PDF. Ingresá la orden manualmente.",
+        ), 400
+
+    header, lines, notices = _form_from_pedido(pedido)
+    with db.get_conn() as conn:
+        requesters, cities = _options(conn)
+    return render_template(
+        "ingest.html", requesters=requesters, cities=cities,
+        categories=FORM_PLATE_TYPES, today=_today_iso(),
+        header=header, lines=lines, notices=notices,
     )
 
 
