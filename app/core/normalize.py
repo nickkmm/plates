@@ -69,6 +69,10 @@ _REQUESTED_BY_MAP_RAW = {
     # SERGIO" vs 1 as "SERGIO MUVA"). SERGIO.M/SERGIO.N and the other qualified
     # PTO.V sub-points are still deliberately left separate, unconfirmed.
     "SERGIO MUVA": "MUVA SERGIO",
+    # Confirmed 2026-08-15: typo/variant of PTO.V, not a real separate sub-point
+    # (unlike PTO.V FABIO M / PTO.V.LUIS L / PTO.V STA ANITA / PTO.VHSA, which
+    # ARE real and stay separate).
+    "PTO.V VULKAN": "PTO.V",
 }
 
 _WHITESPACE = re.compile(r"\s+")
