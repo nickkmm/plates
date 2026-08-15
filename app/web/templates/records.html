@@ -22,13 +22,55 @@
     .actions a.ver:hover { background:#095bb0; }
     .actions button.del { background:#c33; color:#fff; }
     .actions button.del:hover { background:#b02a2a; }
+    .search { display:flex; gap:.5rem; margin-bottom:1.2rem; }
+    .search input { flex:1; max-width:320px; padding:.5rem .7rem; border:1px solid #ccc; border-radius:6px; font-size:.95rem; text-transform:uppercase; }
+    .search button { border:0; border-radius:6px; padding:.5rem 1rem; background:#0b6bcb; color:#fff; font-size:.9rem; cursor:pointer; }
+    .search a.clear { align-self:center; color:#777; font-size:.85rem; text-decoration:none; }
   </style>
 </head>
 <body>
   {% include "_nav.html" %}
-  <h1>Últimas órdenes registradas</h1>
-  <p class="muted">Las 50 más recientes (por orden de carga). Eliminar borra la orden y sus placas, y recalcula el inventario.</p>
+  <h1>{{ 'Búsqueda de placa' if query else 'Últimas órdenes registradas' }}</h1>
 
+  <form class="search" method="get" action="{{ url_for('records') }}">
+    <input type="text" name="q" value="{{ query or '' }}" placeholder="Buscar placa, ej. ARN911" autofocus>
+    <button type="submit">Buscar</button>
+    {% if query %}<a class="clear" href="{{ url_for('records') }}">✕ limpiar</a>{% endif %}
+  </form>
+
+  {% if query %}
+    {% if results %}
+    <p class="muted">{{ results|length }} resultado(s) para "{{ query }}" en toda la base.</p>
+    <table>
+      <thead>
+        <tr><th>Placa</th><th>Tipo</th><th>Ciudad</th><th>Cant.</th><th>Fecha</th><th>Orden</th><th>Solicitado</th><th>Estado</th><th>Acciones</th></tr>
+      </thead>
+      <tbody>
+        {% for p in results %}
+        <tr>
+          <td>{{ p.plate_number }}{% if p.plate_to %} — {{ p.plate_to }}{% endif %}</td>
+          <td>{{ p.plate_type }}</td>
+          <td>{{ p.city or '—' }}</td>
+          <td>{{ p.quantity }}</td>
+          <td>{{ p.order_date }}</td>
+          <td>{{ p.order_number }}</td>
+          <td>{{ p.requested_by }}</td>
+          <td>
+            {% if p.is_voided %}<span class="muted">anulada</span>
+            {% elif p.is_plate_annulled %}<span class="muted">placa anulada</span>
+            {% elif p.is_batch_replacement %}<span class="muted">reposición</span>
+            {% endif %}
+          </td>
+          <td class="actions"><a class="ver" href="{{ url_for('record_detail', order_id=p.order_id) }}">Ver pedido</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>No se encontró ninguna placa que coincida con "{{ query }}".</p>
+    {% endif %}
+  {% else %}
+  <p class="muted">Las 50 más recientes (por orden de carga). Eliminar borra la orden y sus placas, y recalcula el inventario.</p>
   {% if rows %}
   <table>
     <thead>
@@ -56,6 +98,7 @@
   </table>
   {% else %}
   <p>No hay órdenes registradas todavía.</p>
+  {% endif %}
   {% endif %}
 </body>
 </html>

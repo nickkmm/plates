@@ -16,7 +16,7 @@ from datetime import date
 import psycopg
 
 from app.core.models import ExtractedRow
-from app.core.normalize import INVENTORY_CATEGORIES, inventory_category
+from app.core.normalize import INVENTORY_CATEGORIES, clean_plate, inventory_category
 
 
 def get_conn() -> psycopg.Connection:
@@ -280,6 +280,36 @@ def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
             LIMIT %s
             """,
             (limit,),
+        )
+        assert cur.description is not None, "cur.description is always set after a successful SELECT"
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+
+
+def search_plates_by_number(conn: psycopg.Connection, query: str, limit: int = 200) -> list[dict]:
+    """Find plates anywhere in the DB by (partial) plate_number, not just the
+    recent-orders page -- lets the person check whether a plate was ever
+    made before without knowing which order to look under.
+
+    Matches against both plate_number and plate_to (a range's end), cleaned
+    the same way stored plate numbers are so 'hmf 922' finds 'HMF922'.
+    Partial match (ILIKE %query%) since the person may not remember it in
+    full. Most recent order first.
+    """
+    needle = f"%{clean_plate(query)}%"
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT p.id, p.plate_number, p.plate_to, p.plate_type, p.city, p.quantity,
+                   p.is_voided, p.is_batch_replacement, p.is_plate_annulled,
+                   o.id AS order_id, o.order_number, o.order_date, o.requested_by
+            FROM plates p
+            JOIN production_orders o ON o.id = p.order_id
+            WHERE p.plate_number ILIKE %s OR p.plate_to ILIKE %s
+            ORDER BY o.order_date DESC, p.id DESC
+            LIMIT %s
+            """,
+            (needle, needle, limit),
         )
         assert cur.description is not None, "cur.description is always set after a successful SELECT"
         cols = [d[0] for d in cur.description]

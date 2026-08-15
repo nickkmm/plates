@@ -304,6 +304,71 @@ class TestRecentOrders:
                             is_possible_duplicate=False)
         assert sorted(db.recent_orders(db_conn)[0]["cities"]) == ["CALI", "COLOMBIA"]
 
+
+class TestSearchPlatesByNumber:
+    """Finds a plate anywhere in the DB, not just the 50 most recent orders --
+    the point is checking whether a plate was ever made before."""
+
+    def test_exact_match(self, db_conn):
+        order_id = db.insert_order(db_conn, order_number="600", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="ARN911"),
+                         is_possible_duplicate=False)
+        results = db.search_plates_by_number(db_conn, "ARN911")
+        assert len(results) == 1
+        assert results[0]["plate_number"] == "ARN911"
+        assert results[0]["order_number"] == "600"
+
+    def test_partial_match(self, db_conn):
+        order_id = db.insert_order(db_conn, order_number="601", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="ARN911"),
+                         is_possible_duplicate=False)
+        assert [r["plate_number"] for r in db.search_plates_by_number(db_conn, "RN91")] == ["ARN911"]
+
+    def test_query_is_cleaned_like_a_stored_plate_number(self, db_conn):
+        """'arn 911' (lowercase, stray space) must still find 'ARN911'."""
+        order_id = db.insert_order(db_conn, order_number="602", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="ARN911"),
+                         is_possible_duplicate=False)
+        assert [r["plate_number"] for r in db.search_plates_by_number(db_conn, "arn 911")] == ["ARN911"]
+
+    def test_matches_plate_to_for_ranges(self, db_conn):
+        order_id = db.insert_order(db_conn, order_number="603", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(
+            db_conn, order_id=order_id,
+            row=make_row(plate_number="HMF900", plate_to="HMF930"),
+            is_possible_duplicate=False,
+        )
+        assert [r["plate_number"] for r in db.search_plates_by_number(db_conn, "HMF930")] == ["HMF900"]
+
+    def test_not_limited_to_the_50_most_recent_orders(self, db_conn):
+        """recent_orders() caps at 50; search must not inherit that limit --
+        it exists specifically to reach plates recent_orders can't show."""
+        for i in range(55):
+            order_id = db.insert_order(db_conn, order_number=str(700 + i), order_date=date(2026, 1, 1),
+                                        requested_by="PEDRO")
+            db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number=f"OLD{i:03d}"),
+                             is_possible_duplicate=False)
+        assert len(db.search_plates_by_number(db_conn, "OLD")) == 55
+
+    def test_no_match_returns_empty_list(self, db_conn):
+        assert db.search_plates_by_number(db_conn, "ZZZ999") == []
+
+    def test_most_recent_order_first(self, db_conn):
+        older = db.insert_order(db_conn, order_number="610", order_date=date(2026, 1, 1),
+                                 requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=older, row=make_row(plate_number="DUP001"),
+                         is_possible_duplicate=False)
+        newer = db.insert_order(db_conn, order_number="611", order_date=date(2026, 2, 1),
+                                 requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=newer, row=make_row(plate_number="DUP001"),
+                         is_possible_duplicate=False)
+        results = db.search_plates_by_number(db_conn, "DUP001")
+        assert [r["order_number"] for r in results] == ["611", "610"]
+
     def test_cities_is_a_single_element_list_for_a_one_city_order(self, db_conn):
         order_id = db.insert_order(db_conn, order_number="511", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
