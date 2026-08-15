@@ -249,7 +249,12 @@ def distinct_cities(conn: psycopg.Connection) -> list[str]:
 
 
 def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
-    """Most recently registered orders with a summary of their plates.
+    """Orders sorted by their real business date, most recent first.
+
+    Sorted by order_date, NOT created_at/insertion time -- a correction
+    entered today for an order dated months ago (e.g. fixing a duplicate)
+    must not jump to the top of "recent" and bury today's real activity.
+    created_at/id are only tiebreakers for same-day orders.
 
     `cities` is computed from the order's own plates (there is no order-level
     city column): a list, so a mixed carro+moto order legitimately reads
@@ -276,7 +281,7 @@ def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
             FROM production_orders o
             LEFT JOIN plates p ON p.order_id = o.id
             GROUP BY o.id
-            ORDER BY o.created_at DESC, o.id DESC
+            ORDER BY o.order_date DESC, o.created_at DESC, o.id DESC
             LIMIT %s
             """,
             (limit,),

@@ -304,6 +304,15 @@ class TestRecentOrders:
                             is_possible_duplicate=False)
         assert sorted(db.recent_orders(db_conn)[0]["cities"]) == ["CALI", "COLOMBIA"]
 
+    def test_sorted_by_order_date_not_by_when_it_was_inserted(self, db_conn):
+        """A correction entered today for a months-old order (e.g. fixing a
+        duplicate found during a review pass) must not jump to the top and
+        bury today's real activity -- insertion order (created_at/id) is
+        only a tiebreaker for orders sharing the same order_date."""
+        db.insert_order(db_conn, order_number="520", order_date=date(2026, 1, 1), requested_by="PEDRO")
+        db.insert_order(db_conn, order_number="521", order_date=date(2026, 6, 15), requested_by="PEDRO")
+        assert [r["order_number"] for r in db.recent_orders(db_conn)] == ["521", "520"]
+
 
 class TestSearchPlatesByNumber:
     """Finds a plate anywhere in the DB, not just the 50 most recent orders --
