@@ -1,0 +1,61 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # tests/conftest.py hardcodes DB_HOST=127.0.0.1 and DB_PORT=5433 (never
+    # overridable via env, on purpose — see the comment there). The Postgres
+    # service below MUST publish on host port 5433, or clean_db/db_conn tests
+    # will silently skip instead of running (conftest treats an unreachable
+    # DB as "skip", not "fail").
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: plates_user
+          POSTGRES_PASSWORD: plates_test_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U plates_user"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # conftest.py forces DB_HOST/DB_PORT/POSTGRES_DB itself; POSTGRES_USER
+      # defaults to plates_user if unset. POSTGRES_PASSWORD has no fallback
+      # in conftest.py (never a hardcoded secret), so it must be provided
+      # here and must match the postgres service's password above.
+      POSTGRES_USER: plates_user
+      POSTGRES_PASSWORD: plates_test_password
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # web.Dockerfile and pyproject.toml ([tool.mypy] python_version,
+      # [tool.ruff] target-version) both pin 3.11 — match that here.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint with ruff
+        run: ruff check app/
+
+      - name: Type-check with mypy
+        run: mypy app/
+
+      - name: Run tests with coverage
+        run: pytest --cov=app --cov-report=term-missing

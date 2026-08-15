@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Registros</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .muted { color:#777; font-size:.9rem; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { border:1px solid #e3e3e3; padding:.4rem .55rem; text-align:left; vertical-align:top; }
+    th { background:#f6f6f6; }
+    .plates { color:#444; font-size:.85rem; }
+    .actions { white-space:nowrap; }
+    .actions a.ver, .actions button { display:inline-block; border:0; border-radius:6px; padding:.38rem .8rem; font-size:.82rem; cursor:pointer; text-decoration:none; }
+    .actions a.ver { background:#0b6bcb; color:#fff; margin-right:.4rem; }
+    .actions a.ver:hover { background:#095bb0; }
+    .actions button.del { background:#c33; color:#fff; }
+    .actions button.del:hover { background:#b02a2a; }
+    .search { display:flex; gap:.5rem; margin-bottom:1.2rem; }
+    .search input { flex:1; max-width:320px; padding:.5rem .7rem; border:1px solid #ccc; border-radius:6px; font-size:.95rem; text-transform:uppercase; }
+    .search button { border:0; border-radius:6px; padding:.5rem 1rem; background:#0b6bcb; color:#fff; font-size:.9rem; cursor:pointer; }
+    .search a.clear { align-self:center; color:#777; font-size:.85rem; text-decoration:none; }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  <h1>{{ 'Búsqueda de placa' if query else 'Últimas órdenes registradas' }}</h1>
+
+  <form class="search" method="get" action="{{ url_for('records') }}">
+    <input type="text" name="q" value="{{ query or '' }}" placeholder="Buscar placa, ej. ARN911" autofocus>
+    <button type="submit">Buscar</button>
+    {% if query %}<a class="clear" href="{{ url_for('records') }}">✕ limpiar</a>{% endif %}
+  </form>
+
+  {% if query %}
+    {% if results %}
+    <p class="muted">{{ results|length }} resultado(s) para "{{ query }}" en toda la base.</p>
+    <table>
+      <thead>
+        <tr><th>Placa</th><th>Tipo</th><th>Ciudad</th><th>Cant.</th><th>Fecha</th><th>Orden</th><th>Solicitado</th><th>Estado</th><th>Acciones</th></tr>
+      </thead>
+      <tbody>
+        {% for p in results %}
+        <tr>
+          <td>{{ p.plate_number }}{% if p.plate_to %} — {{ p.plate_to }}{% endif %}</td>
+          <td>{{ p.plate_type }}</td>
+          <td>{{ p.city or '—' }}</td>
+          <td>{{ p.quantity }}</td>
+          <td>{{ p.order_date }}</td>
+          <td>{{ p.order_number }}</td>
+          <td>{{ p.requested_by }}</td>
+          <td>
+            {% if p.is_voided %}<span class="muted">anulada</span>
+            {% elif p.is_plate_annulled %}<span class="muted">placa anulada</span>
+            {% elif p.is_batch_replacement %}<span class="muted">reposición</span>
+            {% endif %}
+          </td>
+          <td class="actions"><a class="ver" href="{{ url_for('record_detail', order_id=p.order_id) }}">Ver pedido</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>No se encontró ninguna placa que coincida con "{{ query }}".</p>
+    {% endif %}
+  {% else %}
+  <p class="muted">Las 50 más recientes (por orden de carga). Eliminar borra la orden y sus placas, y recalcula el inventario.</p>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr><th>Fecha</th><th>Orden</th><th>Solicitado</th><th>Ciudad</th><th title="total de placas (suma de cantidades)">Placas</th><th>Acciones</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.order_date }}</td>
+        <td>{{ r.order_number }}</td>
+        <td>{{ r.requested_by }}</td>
+        <td>{{ r.cities|join(', ') if r.cities else '—' }}</td>
+        <td>{{ r.total_qty }}</td>
+        <td class="actions">
+          <a class="ver" href="{{ url_for('record_detail', order_id=r.id) }}">Ver</a>
+          <form method="post" action="{{ url_for('records_delete') }}" style="display:inline"
+                onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} ({{ r.total_qty }} placa(s))?');">
+            <input type="hidden" name="order_id" value="{{ r.id }}">
+            <button class="del" type="submit">Eliminar</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No hay órdenes registradas todavía.</p>
+  {% endif %}
+  {% endif %}
+</body>
+</html>

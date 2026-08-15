@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Registrar</title>
+  <style>
+    :root { --green:#1a9c5b; --blue:#0b6bcb; --red:#d33; --ink:#222; }
+    body { font-family: system-ui, sans-serif; max-width: 920px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
+    h1 { font-size: 1.4rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:var(--blue); border-bottom:3px solid var(--blue); margin-bottom:-2px; }
+    .muted { color:#777; font-size:.9rem; }
+    fieldset { border:1px solid #ddd; border-radius:10px; margin-bottom:1.2rem; padding:1rem; }
+    legend { font-weight:600; padding:0 .4rem; }
+    .header { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.8rem; }
+    label { font-size:.8rem; color:#555; display:flex; flex-direction:column; gap:.25rem; }
+    input, select { padding:.45rem; border:1px solid #ccc; border-radius:6px; font-size:.95rem; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { border:1px solid #e3e3e3; padding:.35rem .4rem; }
+    th { background:#f6f6f6; font-size:.78rem; }
+    td input, td select { width:100%; box-sizing:border-box; }
+    .plate-num { text-transform:uppercase; }
+    button, .btn-link { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
+    .add { background:var(--blue); color:#fff; margin-top:.6rem; }
+    .submit { background:var(--green); color:#fff; font-size:1.05rem; padding:.65rem 1.4rem; }
+    .rm { background:#eee; color:#900; padding:.3rem .55rem; }
+    .summary { background:#eefbf3; border:1px solid var(--green); border-radius:8px; padding:1rem; margin-bottom:1rem; }
+    .error { background:#fdecec; border:1px solid var(--red); border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
+    .notice { background:#fff8e6; border:1px solid #e0a800; border-radius:8px; padding:1rem; color:#6b4e00; margin-bottom:1rem; }
+    ul { margin:.3rem 0; }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  <h1>Registrar producción de placas</h1>
+  <p><a href="{{ url_for('ingest_pdf') }}" class="btn-link add">Subir PDF</a></p>
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if notices %}
+  <div class="notice">
+    <strong>Revisá esto antes de guardar — los datos vienen del PDF, todavía no se guardó nada.</strong>
+    <ul>{% for n in notices %}<li>{{ n }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  {% if duplicates %}
+  <div class="error">
+    <strong>Ojo: esta(s) placa(s) ya existen — no se guardó nada todavía.</strong>
+    <ul>
+      {% for plate_number, orders in duplicates.items() %}
+      <li>
+        <strong>{{ plate_number }}</strong>:
+        {% if orders %}
+          ya registrada en
+          {% for o in orders %}
+            pedido {{ o.order_number }} ({{ o.order_date }}, {{ o.requested_by }}, {{ o.plate_type }}, cant. {{ o.quantity }})
+            <a href="{{ url_for('record_detail', order_id=o.order_id) }}" target="_blank">ver pedido</a>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        {% else %}
+          aparece repetida dentro de este mismo envío (revisá las líneas de abajo).
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted">Si es un error de captura, corregí la placa abajo y guardá de nuevo.
+    Si es un caso real (p. ej. reposición), podés confirmar igual.</p>
+  </div>
+  {% endif %}
+  {% if summary %}
+  <div class="summary">
+    <strong>Registrado ✓</strong>
+    <ul>
+      <li>Órdenes: {{ summary.orders_inserted }} · Placas: {{ summary.plates_inserted }}</li>
+      <li>Reposiciones: {{ summary.batch_replacements }} · Órdenes anuladas: {{ summary.voided }} · Placas anuladas: {{ summary.plate_annulled }} · Posibles duplicados: {{ summary.possible_duplicates }}</li>
+    </ul>
+    {% if summary.possible_duplicates %}<p class="muted">Revisá los duplicados en <a href="{{ url_for('review') }}">Revisión</a>.</p>{% endif %}
+  </div>
+  {% endif %}
+
+  <!-- datalists: permiten elegir de lo existente O escribir uno nuevo -->
+  <datalist id="requesters">{% for r in requesters %}<option value="{{ r }}">{% endfor %}</datalist>
+  <datalist id="cities">{% for c in cities %}<option value="{{ c }}">{% endfor %}</datalist>
+
+  <form method="post" action="{{ url_for('ingest') }}">
+    <fieldset>
+      <legend>Datos de la orden</legend>
+      <div class="header">
+        <label>Fecha<input type="date" name="order_date" value="{{ header.order_date if header else today }}" max="{{ today }}" required></label>
+        <label>N° de orden<input type="text" name="order_number" value="{{ header.order_number if header else '' }}" required placeholder="ej. 598"></label>
+        <label>Solicitado por<input type="text" name="requested_by" list="requesters" value="{{ header.requested_by if header else '' }}" required placeholder="elegí o escribí"></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Placas</legend>
+      <table>
+        <thead>
+          <tr><th style="width:18%">Tipo de registro</th><th style="width:20%">Tipo de placa</th><th>Placa / Desde</th><th>Hasta</th><th style="width:16%">Ciudad</th><th style="width:10%">Cantidad</th><th style="width:5%"></th></tr>
+        </thead>
+        <tbody id="lines">
+          {% set line_labels = {'placa':'Placa','rango':'Rango','reposicion':'Reposición','anulada_orden':'Orden anulada','placa_anulada':'Placa anulada','muestra':'Muestra'} %}
+          {% for line in lines or [] %}
+          <tr class="line">
+            <td>
+              <select name="line_type" onchange="togglePlate(this)">
+                {% for lt, label in line_labels.items() %}
+                <option value="{{ lt }}" {% if line.line_type==lt %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <select name="plate_type" required onchange="updateHint(this)">
+                {# Sin tipo (el PDF no marcó ninguna casilla): opción vacía + `required`
+                   obligan a elegirlo, en vez de dejar pasar el primero de la lista. #}
+                {% if not line.plate_type %}<option value="" selected>— elegí el tipo —</option>{% endif %}
+                {% for c in categories %}<option value="{{ c }}" {% if line.plate_type==c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+              </select>
+            </td>
+            <td><input type="text" name="plate_number" class="plate-num" value="{{ line.plate_number or '' }}" {% if line.line_type in ['reposicion','anulada_orden'] %}readonly style="background:#f0f0f0"{% endif %}></td>
+            <td><input type="text" name="plate_to" class="plate-num" value="{{ line.plate_to or '' }}" {% if line.line_type!='rango' %}readonly style="background:#f0f0f0"{% endif %}></td>
+            <td><input type="text" name="city" list="cities" value="{{ line.city or '' }}"></td>
+            <td><input type="number" name="quantity" value="{{ line.quantity or 1 }}" min="0" required></td>
+            <td><button type="button" class="rm" onclick="rmLine(this)">✕</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="button" class="add" onclick="addLine()">+ Agregar placa</button>
+
+      <!-- Plantilla de fila: se clona desde acá, así nunca depende de filas existentes. -->
+      <template id="lineTpl">
+        <tr class="line">
+          <td>
+            <select name="line_type" onchange="togglePlate(this)">
+              <option value="placa">Placa</option>
+              <option value="rango">Rango</option>
+              <option value="reposicion">Reposición</option>
+              <option value="anulada_orden">Orden anulada</option>
+              <option value="placa_anulada">Placa anulada</option>
+              <option value="muestra">Muestra</option>
+            </select>
+          </td>
+          <td>
+            <select name="plate_type" required onchange="updateHint(this)">
+              {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            </select>
+          </td>
+          <td><input type="text" name="plate_number" class="plate-num"></td>
+          <td><input type="text" name="plate_to" class="plate-num" readonly style="background:#f0f0f0"></td>
+          <td><input type="text" name="city" list="cities"></td>
+          <td><input type="number" name="quantity" value="1" min="0" required></td>
+          <td><button type="button" class="rm" onclick="rmLine(this)">✕</button></td>
+        </tr>
+      </template>
+    </fieldset>
+
+    <button type="submit" class="submit">Guardar orden</button>
+    {% if duplicates %}
+    <button type="submit" name="confirm_duplicate" value="1" class="submit" style="background:var(--red)">Guardar de todas formas</button>
+    {% endif %}
+  </form>
+
+  <script>
+    // Patrón del formato por tipo (placeholder): A=letra, 0=número.
+    const HINTS = {
+      'MOTO PARTICULAR': 'AAA00A',
+      'CARRO PARTICULAR': 'AAA000',
+      'CARRO PÚBLICO': 'AAA000',
+      'MOTO CARRO PARTICULAR': '000AAA',
+      'MOTO CARRO PÚBLICO': '000AAA',
+      'REMOLQUE': 'R00000 o S00000',
+      'ORNAMENTAL': 'AAA000',
+    };
+    function updateHint(typeSel) {
+      const tr = typeSel.closest('tr');
+      const h = HINTS[typeSel.value] || '';
+      tr.querySelector('input[name="plate_number"]').placeholder = h;
+      tr.querySelector('input[name="plate_to"]').placeholder = h;
+    }
+    // Habilita "Desde" (placa) y "Hasta" según el tipo. readonly (no disabled)
+    // para que el campo igual se envíe y no desalinee las columnas.
+    function setRO(inp, ro) { inp.readOnly = ro; if (ro) inp.value=''; inp.style.background = ro ? '#f0f0f0' : ''; }
+    function togglePlate(sel) {
+      const tr = sel.closest('tr');
+      const v = sel.value;
+      setRO(tr.querySelector('input[name="plate_number"]'), v === 'reposicion' || v === 'anulada_orden');
+      setRO(tr.querySelector('input[name="plate_to"]'), v !== 'rango');
+    }
+    function addLine() {
+      const tbody = document.getElementById('lines');
+      const frag = document.getElementById('lineTpl').content.cloneNode(true);
+      const row = frag.querySelector('.line');
+      tbody.appendChild(row);
+      togglePlate(row.querySelector('select[name="line_type"]'));
+      updateHint(row.querySelector('select[name="plate_type"]'));
+    }
+    function rmLine(btn) {
+      const tbody = document.getElementById('lines');
+      btn.closest('tr').remove();                    // siempre borra la fila
+      if (!tbody.querySelector('.line')) addLine();  // pero deja al menos una
+    }
+    // Una fila en blanco al cargar, salvo que el servidor ya haya prellenado
+    // líneas (reintento tras un aviso de duplicado — no perder lo tipeado).
+    document.addEventListener('DOMContentLoaded', () => {
+      const existing = document.querySelectorAll('#lines .line');
+      if (!existing.length) { addLine(); return; }
+      existing.forEach(row => {
+        togglePlate(row.querySelector('select[name="line_type"]'));
+        updateHint(row.querySelector('select[name="plate_type"]'));
+      });
+    });
+  </script>
+</body>
+</html>

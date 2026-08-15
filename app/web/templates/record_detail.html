@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Orden {{ order.order_number }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 820px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.3rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .meta { background:#f7f7f7; border:1px solid #e3e3e3; border-radius:8px; padding:.8rem 1rem; margin-bottom:1rem; font-size:.95rem; }
+    .meta b { color:#000; }
+    table { border-collapse:collapse; width:100%; font-size:.92rem; }
+    th, td { border:1px solid #e3e3e3; padding:.45rem .6rem; text-align:left; }
+    th { background:#f6f6f6; }
+    td.r, th.r { text-align:right; }
+    .tag { font-size:.8rem; color:#b50; }
+    .muted { color:#777; }
+    a.back { display:inline-block; margin-top:1.2rem; background:#0b6bcb; color:#fff; text-decoration:none; padding:.5rem .95rem; border-radius:7px; font-size:.9rem; }
+    a.back:hover { background:#095bb0; }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+
+  <h1>Orden {{ order.order_number }}</h1>
+  <div class="meta">
+    <b>Fecha:</b> {{ order.order_date }} &nbsp;·&nbsp;
+    <b>Solicitado por:</b> {{ order.requested_by }}
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Tipo</th><th>Placa</th><th>Ciudad</th><th class="r">Cantidad</th></tr>
+    </thead>
+    <tbody>
+      {% for p in plates %}
+      <tr>
+        <td>{{ p.plate_type }}</td>
+        <td>
+          {% if p.plate_number and p.plate_to %}{{ p.plate_number }} – {{ p.plate_to }} <span class="muted">(rango)</span>
+          {% elif p.plate_number %}{{ p.plate_number }}
+          {% elif p.is_batch_replacement %}<span class="tag">reposición</span>
+          {% elif p.is_voided %}<span class="tag">orden anulada</span>
+          {% else %}<span class="muted">sin placa</span>{% endif %}
+          {% if p.is_plate_annulled %}<span class="tag">· placa anulada</span>{% endif %}
+        </td>
+        <td>{{ p.city or '—' }}</td>
+        <td class="r">{{ p.quantity }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><td colspan="3" class="r"><b>Total placas</b></td><td class="r"><b>{{ plates | sum(attribute='quantity') }}</b></td></tr>
+    </tfoot>
+  </table>
+
+  <a class="back" href="{{ url_for('records') }}">← Volver a Registros</a>
+</body>
+</html>
