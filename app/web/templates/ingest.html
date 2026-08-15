@@ -36,8 +36,7 @@
 <body>
   {% include "_nav.html" %}
   <h1>Registrar producción de placas</h1>
-  <p class="muted">¿Tenés el PDF del pedido? <a href="{{ url_for('ingest_pdf') }}">Subilo y se llena solo</a> —
-  después revisás acá mismo antes de guardar.</p>
+  <p><a href="{{ url_for('ingest_pdf') }}" class="add" style="display:inline-block;text-decoration:none">Subir PDF</a></p>
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
   {% if notices %}
