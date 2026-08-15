@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16
+    container_name: plates-db-1
     restart: unless-stopped
     env_file: .env
     volumes:
@@ -27,7 +28,15 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DB_HOST: db
+      # NOT "db" -- on the VPS, `web` also joins the shared `edge` network so
+      # nginx can reach it, and the `informes` stack's own compose service is
+      # ALSO named "db" (its MySQL). Docker's embedded DNS resolves the plain
+      # "db" hostname ambiguously across both networks a multi-network
+      # container is attached to, and picked informes' MySQL instead of our
+      # own Postgres (found in production: every DB-touching route 500'd,
+      # connecting to the wrong container). The container_name below is
+      # unique across both stacks, so it can't collide.
+      DB_HOST: plates-db-1
       DB_PORT: "5432"
     ports:
       # Localhost only — for local dev and on-VPS debugging. In production the
