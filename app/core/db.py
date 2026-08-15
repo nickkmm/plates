@@ -47,6 +47,29 @@ def existing_plate_numbers(conn: psycopg.Connection, candidates: Iterable[str]) 
         return {r[0] for r in cur.fetchall()}
 
 
+def find_orders_for_plate(conn: psycopg.Connection, plate_number: str) -> list[dict]:
+    """Existing live (non-voided) orders that already used this plate_number.
+
+    Used by the /ingest form to show the data-entry person exactly where a
+    plate they're about to save already appears, before it's saved again.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT o.id AS order_id, o.order_number, o.order_date, o.requested_by,
+                   p.plate_type, p.quantity
+            FROM plates p
+            JOIN production_orders o ON o.id = p.order_id
+            WHERE p.plate_number = %s AND p.is_voided = false
+            ORDER BY o.order_date
+            """,
+            (plate_number,),
+        )
+        assert cur.description is not None, "cur.description is always set after a successful SELECT"
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+
+
 def insert_order(conn: psycopg.Connection, *, order_number: str, order_date: date, requested_by: str,
                  city: str | None) -> int:
     """Insert one production_orders row and return its id."""

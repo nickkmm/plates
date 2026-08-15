@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date
 
 from app.core.models import ExtractedRow
-from app.core.process import process_rows
+from app.core.process import find_duplicate_plate_numbers, process_rows
 
 
 def make_row(**overrides: object) -> ExtractedRow:
@@ -209,6 +209,46 @@ class TestDuplicateDetection:
         ]
         summary = process_rows(rows)
         assert summary.possible_duplicates == 0
+
+
+class TestFindDuplicatePlateNumbers:
+    """Read-only pre-check used by /ingest to warn before saving -- must agree
+    with process_rows' own is_possible_duplicate logic without writing anything."""
+
+    def test_empty_when_nothing_conflicts(self, db_conn):
+        rows = [make_row(order_number="900", plate_number="FRESH1", plate_type="CARRO PARTICULAR")]
+        assert find_duplicate_plate_numbers(rows) == set()
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM plates")
+            assert cur.fetchone() == (0,)  # read-only: nothing got inserted
+
+    def test_flags_plate_already_in_db(self, db_conn):
+        process_rows([make_row(order_number="901", plate_number="OLD001", plate_type="CARRO PARTICULAR")])
+        rows = [make_row(order_number="902", plate_number="OLD001", plate_type="CARRO PARTICULAR")]
+        assert find_duplicate_plate_numbers(rows) == {"OLD001"}
+
+    def test_flags_plate_repeated_within_the_same_batch(self, db_conn):
+        rows = [
+            make_row(order_number="903", plate_number="NEW777", plate_type="CARRO PARTICULAR"),
+            make_row(order_number="904", plate_number="NEW777", plate_type="CARRO PARTICULAR"),
+        ]
+        assert find_duplicate_plate_numbers(rows) == {"NEW777"}
+
+    def test_sample_tokens_never_flagged(self, db_conn):
+        rows = [
+            make_row(order_number="905", plate_number="MUESTRA", plate_type="CARRO PARTICULAR"),
+            make_row(order_number="906", plate_number="MUESTRA", plate_type="CARRO PARTICULAR"),
+        ]
+        assert find_duplicate_plate_numbers(rows) == set()
+
+    def test_voided_row_not_flagged_and_does_not_taint_a_live_match(self, db_conn):
+        rows = [
+            make_row(order_number="907", plate_number="VOID001", plate_type="CARRO PARTICULAR",
+                      is_voided=True),
+            make_row(order_number="908", plate_number="VOID001", plate_type="CARRO PARTICULAR"),
+        ]
+        assert find_duplicate_plate_numbers(rows) == set()
 
 
 class TestSummaryCounters:
