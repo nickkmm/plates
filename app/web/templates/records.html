@@ -40,7 +40,7 @@
         <td>{{ r.order_date }}</td>
         <td>{{ r.order_number }}</td>
         <td>{{ r.requested_by }}</td>
-        <td>{{ r.city or '—' }}</td>
+        <td>{{ r.cities|join(', ') if r.cities else '—' }}</td>
         <td>{{ r.total_qty }}</td>
         <td class="actions">
           <a class="ver" href="{{ url_for('record_detail', order_id=r.id) }}">Ver</a>

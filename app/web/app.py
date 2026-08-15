@@ -73,6 +73,15 @@ def _options(conn):
     return db.distinct_requested_by(conn), db.distinct_cities(conn)
 
 
+def _padded(values: list[str], size: int) -> list[str]:
+    """Pad a per-line field list to `size` with blanks.
+
+    The line zips are strict=False, so a request that omits an optional per-line
+    field (city) would otherwise truncate the zip and silently drop plate lines.
+    """
+    return values + [""] * (size - len(values))
+
+
 def _rows_from_form(form) -> list[ExtractedRow]:
     """Build ExtractedRow(s) from the order header + repeated plate lines.
 
@@ -82,11 +91,13 @@ def _rows_from_form(form) -> list[ExtractedRow]:
       reposicion     -> big non-consecutive lot (no plate, no range)
       anulada_orden  -> voided order (NOT counted in inventory)
       muestra        -> sample (plate_number = MUESTRA)
+
+    Ciudad is per LINE, not per order: one order can ship plates to several
+    cities, so each line carries its own (no header field, no inheritance).
     """
     order_number = form["order_number"].strip()
     order_date = form["order_date"]
     requested_by = form["requested_by"].strip()
-    city = (form.get("city") or "").strip() or None
 
     # Order-level validations.
     if any(ch.isdigit() for ch in requested_by):
@@ -95,9 +106,10 @@ def _rows_from_form(form) -> list[ExtractedRow]:
         raise ValueError(f"La fecha {order_date} es futura. Corregí la fecha.")
 
     rows: list[ExtractedRow] = []
-    for lt, pt, pn, pto, qty in zip(
+    for lt, pt, pn, pto, qty, ct in zip(
         form.getlist("line_type"), form.getlist("plate_type"),
-        form.getlist("plate_number"), form.getlist("plate_to"), form.getlist("quantity"), strict=False,
+        form.getlist("plate_number"), form.getlist("plate_to"), form.getlist("quantity"),
+        _padded(form.getlist("city"), len(form.getlist("plate_type"))), strict=False,
     ):
         if not (pt or "").strip():
             continue  # skip empty line
@@ -127,7 +139,8 @@ def _rows_from_form(form) -> list[ExtractedRow]:
                 plate_number = validate_plate(plate_number, ptype)
         rows.append(ExtractedRow(
             order_number=order_number, order_date=order_date, requested_by=requested_by,
-            city=city, plate_type=pt.strip(), plate_number=plate_number, plate_to=plate_to,
+            city=(ct or "").strip() or None,
+            plate_type=pt.strip(), plate_number=plate_number, plate_to=plate_to,
             quantity=int(qty or 1), is_batch_replacement=is_batch, is_voided=is_voided,
             is_plate_annulled=is_plate_annulled,
         ))
@@ -138,10 +151,12 @@ def _sticky_lines_from_form(form) -> list[dict]:
     """Re-derive the plate-line table as-typed, to redisplay the form without
     losing work when a duplicate warning interrupts the save."""
     return [
-        {"line_type": lt, "plate_type": pt, "plate_number": pn, "plate_to": pto, "quantity": qty}
-        for lt, pt, pn, pto, qty in zip(
+        {"line_type": lt, "plate_type": pt, "plate_number": pn, "plate_to": pto,
+         "quantity": qty, "city": ct}
+        for lt, pt, pn, pto, qty, ct in zip(
             form.getlist("line_type"), form.getlist("plate_type"),
             form.getlist("plate_number"), form.getlist("plate_to"), form.getlist("quantity"),
+            _padded(form.getlist("city"), len(form.getlist("plate_type"))),
             strict=False,
         )
         if (pt or "").strip()
@@ -177,21 +192,12 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
             "elegilo antes de guardar."
         )
 
-    # The schema keeps ONE city per order (production_orders.city; plates have
-    # no city column), so a pedido listing several can't be stored as-is.
-    # Auto-fill only when it's unambiguous; otherwise leave it empty and say so.
-    cities = pedido.cities
-    if len(cities) > 1:
-        notices.append(
-            f"El PDF trae varias ciudades ({', '.join(cities)}) y solo se guarda una por orden — "
-            "elegí la que corresponda."
-        )
-
+    # City is stored per plate, so a pedido listing several cities needs no
+    # disambiguation: each line just carries its own, exactly as the PDF has it.
     header = {
         "order_date": pedido.order_date.isoformat() if pedido.order_date else "",
         "order_number": pedido.order_number,
         "requested_by": pedido.requested_by,
-        "city": cities[0] if len(cities) == 1 else "",
     }
     lines = [
         {
@@ -200,6 +206,7 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
             "plate_number": line.plate_number,
             "plate_to": line.plate_to,
             "quantity": line.quantity,
+            "city": line.city or "",
         }
         for line in pedido.lines
     ]
@@ -278,7 +285,6 @@ def ingest_post():
                     "order_date": request.form.get("order_date", ""),
                     "order_number": request.form.get("order_number", ""),
                     "requested_by": request.form.get("requested_by", ""),
-                    "city": request.form.get("city", ""),
                 }
                 lines = _sticky_lines_from_form(request.form)
             else:

@@ -117,19 +117,29 @@ class TestParsedReview:
 
 
 class TestNotices:
-    def test_several_cities_leaves_the_field_blank_and_says_why(
-        self, authenticated_client, clean_db
-    ):
-        """production_orders stores ONE city (plates have no city column), so a
-        multi-city pedido can't be auto-filled — it must be flagged, not guessed."""
+    def test_several_cities_are_assigned_per_line(self, authenticated_client, clean_db):
+        """City is stored per PLATE, so a multi-city pedido needs no
+        disambiguation: every line just carries its own city, and nothing about
+        it is flagged as ambiguous."""
         resp = upload(authenticated_client, build_pedido_pdf(lines=[
             {"item": "1", "placa": "AAA111", "ciudad": "PALMIRA", "tipo": "PARTICULAR"},
             {"item": "2", "placa": "BBB222", "ciudad": "CALI", "tipo": "PARTICULAR"},
         ]))
         html = resp.get_data(as_text=True)
-        assert "varias ciudades" in html
-        assert "PALMIRA, CALI" in html
-        assert 'name="city" list="cities" value=""' in html
+
+        # each line's own city is pre-filled on that line
+        assert 'name="city" list="cities" value="PALMIRA"' in html
+        assert 'name="city" list="cities" value="CALI"' in html
+        # ...and the old blocking notice is gone for good
+        assert "varias ciudades" not in html
+        assert "solo se guarda una por orden" not in html
+
+    def test_no_order_level_city_field_is_rendered(self, authenticated_client, clean_db):
+        """The header city input is gone; city inputs only exist inside lines."""
+        resp = upload(authenticated_client, build_pedido_pdf())
+        html = resp.get_data(as_text=True)
+        assert 'name="city" list="cities" placeholder="elegí o escribí"' not in html
+        assert "<label>Ciudad" not in html
 
     def test_unmarked_plate_type_is_flagged_and_left_unselected(
         self, authenticated_client, clean_db
@@ -198,26 +208,55 @@ class TestSavingWhatThePdfProduced:
             "order_date": header["order_date"],
             "order_number": header["order_number"],
             "requested_by": header["requested_by"],
-            "city": header["city"],
             "line_type": [line["line_type"] for line in lines],
             "plate_type": [line["plate_type"] for line in lines],
             "plate_number": [line["plate_number"] or "" for line in lines],
             "plate_to": [line["plate_to"] or "" for line in lines],
             "quantity": [str(line["quantity"]) for line in lines],
+            "city": [line["city"] for line in lines],
         })
         assert resp.status_code == 200
         assert "Registrado" in resp.get_data(as_text=True)
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT order_number, requested_by, city FROM production_orders")
-            assert cur.fetchall() == [("9001", "CLIENTE DEMO", "CIUDAD DEMO")]
-            cur.execute("SELECT plate_number, plate_to, plate_type, quantity FROM plates ORDER BY id")
+            cur.execute("SELECT order_number, requested_by FROM production_orders")
+            assert cur.fetchall() == [("9001", "CLIENTE DEMO")]
+            cur.execute(
+                "SELECT plate_number, plate_to, plate_type, quantity, city FROM plates ORDER BY id"
+            )
+            # Only the público line names a city in the fixture. The two MOTO
+            # lines are nationwide, so their blank city becomes COLOMBIA; the
+            # CARRO PARTICULAR line is city-specific, so its blank stays blank.
             assert cur.fetchall() == [
-                ("ABC12D", None, "MOTO PARTICULAR", 1),
-                ("EFG34H", None, "MOTO PARTICULAR", 1),
-                ("PUB100", None, "CARRO PÚBLICO", 2),
-                ("RNG001", "RNG009", "CARRO PARTICULAR", 9),
+                ("ABC12D", None, "MOTO PARTICULAR", 1, "COLOMBIA"),
+                ("EFG34H", None, "MOTO PARTICULAR", 1, "COLOMBIA"),
+                ("PUB100", None, "CARRO PÚBLICO", 2, "CIUDAD DEMO"),
+                ("RNG001", "RNG009", "CARRO PARTICULAR", 9, None),
             ]
+
+    def test_each_line_saves_its_own_city_end_to_end(self, authenticated_client, db_conn):
+        """A multi-city pedido must land as one order with per-plate cities."""
+        pdf = build_pedido_pdf(lines=[
+            {"item": "1", "placa": "AAA111", "ciudad": "PALMIRA", "tipo": "PARTICULAR"},
+            {"item": "2", "placa": "BBB222", "ciudad": "CALI", "tipo": "PARTICULAR"},
+        ])
+        _header, lines, _ = _form_from_pedido(parse_pedido_pdf(pdf))
+
+        authenticated_client.post("/ingest", data={
+            "order_date": "2026-01-01", "order_number": "9002", "requested_by": "CLIENTE DEMO",
+            "line_type": [line["line_type"] for line in lines],
+            "plate_type": [line["plate_type"] for line in lines],
+            "plate_number": [line["plate_number"] or "" for line in lines],
+            "plate_to": [line["plate_to"] or "" for line in lines],
+            "quantity": [str(line["quantity"]) for line in lines],
+            "city": [line["city"] for line in lines],
+        })
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders")
+            assert cur.fetchone() == (1,)
+            cur.execute("SELECT plate_number, city FROM plates ORDER BY id")
+            assert cur.fetchall() == [("AAA111", "PALMIRA"), ("BBB222", "CALI")]
 
 
 class TestManualFlowUnchanged:
