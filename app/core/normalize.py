@@ -221,6 +221,15 @@ def validate_plate(value: str, plate_type: str) -> str:
     return cleaned
 
 
+# Only these two types have genuinely city-specific plates. Every other type in
+# PLATE_TYPES is implicitly nationwide ("COLOMBIA") — which is exactly why CIUDAD
+# is blank for most of them in the historical ledger (88% blank for MOTO
+# PARTICULAR). Used as an inference-on-blank rule ONLY: a row of another type
+# that does carry a real city keeps it untouched.
+_CITY_SPECIFIC_TYPES = ("CARRO PARTICULAR", "CARRO PÚBLICO")
+_IMPLICIT_CITY = "COLOMBIA"
+
+
 def normalize_city(value: str | None) -> str | None:
     """Uppercase + single-space the city so 'Cali' and 'CALI' collapse into one.
 
@@ -317,5 +326,12 @@ def normalize_row(row: ExtractedRow) -> ExtractedRow:
     # If the annulment was written in the CIUDAD cell, that's not a real city.
     if city_folded and "ANULAD" in city_folded:
         data["city"] = None
+
+    # Types other than CARRO PARTICULAR/PÚBLICO are nationwide, so a blank CIUDAD
+    # means COLOMBIA rather than "unknown". Inference on blank only — a row of one
+    # of those types that DOES name a real city (FLORENCIA, GRANADA, ...) keeps it.
+    # Evaluated last, so it also covers a city cell emptied by the ANULAD rule above.
+    if data["plate_type"] not in _CITY_SPECIFIC_TYPES and not data["city"]:
+        data["city"] = _IMPLICIT_CITY
 
     return ExtractedRow(**data)

@@ -29,13 +29,12 @@
   <h1>Orden {{ order.order_number }}</h1>
   <div class="meta">
     <b>Fecha:</b> {{ order.order_date }} &nbsp;·&nbsp;
-    <b>Solicitado por:</b> {{ order.requested_by }} &nbsp;·&nbsp;
-    <b>Ciudad:</b> {{ order.city or '—' }}
+    <b>Solicitado por:</b> {{ order.requested_by }}
   </div>
 
   <table>
     <thead>
-      <tr><th>Tipo</th><th>Placa</th><th class="r">Cantidad</th></tr>
+      <tr><th>Tipo</th><th>Placa</th><th>Ciudad</th><th class="r">Cantidad</th></tr>
     </thead>
     <tbody>
       {% for p in plates %}
@@ -49,12 +48,13 @@
           {% else %}<span class="muted">sin placa</span>{% endif %}
           {% if p.is_plate_annulled %}<span class="tag">· placa anulada</span>{% endif %}
         </td>
+        <td>{{ p.city or '—' }}</td>
         <td class="r">{{ p.quantity }}</td>
       </tr>
       {% endfor %}
     </tbody>
     <tfoot>
-      <tr><td colspan="2" class="r"><b>Total placas</b></td><td class="r"><b>{{ plates | sum(attribute='quantity') }}</b></td></tr>
+      <tr><td colspan="3" class="r"><b>Total placas</b></td><td class="r"><b>{{ plates | sum(attribute='quantity') }}</b></td></tr>
     </tfoot>
   </table>
 

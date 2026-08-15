@@ -106,7 +106,6 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
                 order_number=order_number,
                 order_date=head.order_date,
                 requested_by=head.requested_by,
-                city=head.city,
             )
             summary.orders_inserted += 1
 

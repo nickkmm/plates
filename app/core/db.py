@@ -57,7 +57,7 @@ def find_orders_for_plate(conn: psycopg.Connection, plate_number: str) -> list[d
         cur.execute(
             """
             SELECT o.id AS order_id, o.order_number, o.order_date, o.requested_by,
-                   p.plate_type, p.quantity
+                   p.plate_type, p.quantity, p.city
             FROM plates p
             JOIN production_orders o ON o.id = p.order_id
             WHERE p.plate_number = %s AND p.is_voided = false
@@ -70,17 +70,21 @@ def find_orders_for_plate(conn: psycopg.Connection, plate_number: str) -> list[d
         return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
 
 
-def insert_order(conn: psycopg.Connection, *, order_number: str, order_date: date, requested_by: str,
-                 city: str | None) -> int:
-    """Insert one production_orders row and return its id."""
+def insert_order(conn: psycopg.Connection, *, order_number: str, order_date: date,
+                 requested_by: str) -> int:
+    """Insert one production_orders row and return its id.
+
+    No city here on purpose: city belongs to the PLATE (one order can ship plates
+    to several cities). The Registros list derives an order's cities from them.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO production_orders (order_number, order_date, requested_by, city)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO production_orders (order_number, order_date, requested_by)
+            VALUES (%s, %s, %s)
             RETURNING id
             """,
-            (order_number, order_date, requested_by, city),
+            (order_number, order_date, requested_by),
         )
         row = cur.fetchone()
         assert row is not None, "RETURNING id on a successful INSERT always yields a row"
@@ -95,9 +99,10 @@ def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
             """
             INSERT INTO plates (
                 order_id, plate_type, plate_number, plate_to, is_batch_replacement,
-                is_voided, is_plate_annulled, quantity, material, prepared_by, is_possible_duplicate
+                is_voided, is_plate_annulled, quantity, material, prepared_by,
+                is_possible_duplicate, city
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 order_id,
@@ -111,6 +116,7 @@ def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
                 row.material,
                 row.prepared_by,
                 is_possible_duplicate,
+                row.city,
             ),
         )
 
@@ -233,7 +239,7 @@ def distinct_cities(conn: psycopg.Connection) -> list[str]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT city FROM production_orders
+            SELECT city FROM plates
             WHERE city IS NOT NULL AND city <> ''
             GROUP BY city ORDER BY count(*) DESC, city
             """
@@ -243,11 +249,20 @@ def distinct_cities(conn: psycopg.Connection) -> list[str]:
 
 
 def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
-    """Most recently registered orders with a summary of their plates."""
+    """Most recently registered orders with a summary of their plates.
+
+    `cities` is computed from the order's own plates (there is no order-level
+    city column): a list, so a mixed carro+moto order legitimately reads
+    e.g. ['CALI', 'COLOMBIA']. The template decides how to render it.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT o.id, o.order_number, o.order_date, o.requested_by, o.city,
+            SELECT o.id, o.order_number, o.order_date, o.requested_by,
+                   COALESCE(
+                       array_agg(DISTINCT p.city) FILTER (WHERE p.city IS NOT NULL),
+                       '{}'
+                   ) AS cities,
                    count(p.id) AS n_plates,
                    COALESCE(SUM(p.quantity), 0) AS total_qty,
                    string_agg(
@@ -275,7 +290,7 @@ def order_detail(conn: psycopg.Connection, order_id: int) -> tuple[dict | None, 
     """Return (order dict, list of its plate dicts) for the detail view."""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, order_number, order_date, requested_by, city "
+            "SELECT id, order_number, order_date, requested_by "
             "FROM production_orders WHERE id = %s",
             (order_id,),
         )
@@ -287,7 +302,7 @@ def order_detail(conn: psycopg.Connection, order_id: int) -> tuple[dict | None, 
         cur.execute(
             """
             SELECT plate_type, plate_number, plate_to, quantity,
-                   is_batch_replacement, is_voided, is_plate_annulled
+                   is_batch_replacement, is_voided, is_plate_annulled, city
             FROM plates WHERE order_id = %s ORDER BY id
             """,
             (order_id,),
@@ -311,7 +326,7 @@ def review_rows(conn: psycopg.Connection) -> list[dict]:
         cur.execute(
             """
             SELECT p.id, o.order_number, o.order_date, o.requested_by,
-                   p.plate_type, p.plate_number, p.quantity, p.is_voided
+                   p.plate_type, p.plate_number, p.quantity, p.is_voided, p.city
             FROM plates p
             JOIN production_orders o ON o.id = p.order_id
             WHERE p.is_possible_duplicate = true
