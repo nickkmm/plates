@@ -55,3 +55,8 @@ disallow_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "pandas.*"
 ignore_missing_imports = true
+
+# Neither ships type information (no py.typed, no stubs on PyPI).
+[[tool.mypy.overrides]]
+module = ["pdfplumber.*", "reportlab.*"]
+ignore_missing_imports = true

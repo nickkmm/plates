@@ -29,14 +29,23 @@
     .rm { background:#eee; color:#900; padding:.3rem .55rem; }
     .summary { background:#eefbf3; border:1px solid var(--green); border-radius:8px; padding:1rem; margin-bottom:1rem; }
     .error { background:#fdecec; border:1px solid var(--red); border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
+    .notice { background:#fff8e6; border:1px solid #e0a800; border-radius:8px; padding:1rem; color:#6b4e00; margin-bottom:1rem; }
     ul { margin:.3rem 0; }
   </style>
 </head>
 <body>
   {% include "_nav.html" %}
   <h1>Registrar producción de placas</h1>
+  <p class="muted">¿Tenés el PDF del pedido? <a href="{{ url_for('ingest_pdf') }}">Subilo y se llena solo</a> —
+  después revisás acá mismo antes de guardar.</p>
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if notices %}
+  <div class="notice">
+    <strong>Revisá esto antes de guardar — los datos vienen del PDF, todavía no se guardó nada.</strong>
+    <ul>{% for n in notices %}<li>{{ n }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
   {% if duplicates %}
   <div class="error">
     <strong>Ojo: esta(s) placa(s) ya existen — no se guardó nada todavía.</strong>
@@ -105,6 +114,9 @@
             </td>
             <td>
               <select name="plate_type" required onchange="updateHint(this)">
+                {# Sin tipo (el PDF no marcó ninguna casilla): opción vacía + `required`
+                   obligan a elegirlo, en vez de dejar pasar el primero de la lista. #}
+                {% if not line.plate_type %}<option value="" selected>— elegí el tipo —</option>{% endif %}
                 {% for c in categories %}<option value="{{ c }}" {% if line.plate_type==c %}selected{% endif %}>{{ c }}</option>{% endfor %}
               </select>
             </td>

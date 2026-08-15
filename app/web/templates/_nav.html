@@ -7,7 +7,7 @@
   .tabs .logout button:hover { background:#fdecec; color:#d33; }
 </style>
 <nav class="tabs">
-  <a href="{{ url_for('ingest') }}" class="{{ 'on' if request.endpoint=='ingest' }}">Registrar</a>
+  <a href="{{ url_for('ingest') }}" class="{{ 'on' if request.endpoint in ('ingest','ingest_pdf') }}">Registrar</a>
   <a href="{{ url_for('review') }}" class="{{ 'on' if request.endpoint=='review' }}">Revisión</a>
   <a href="{{ url_for('inventory') }}" class="{{ 'on' if request.endpoint=='inventory' }}">Inventario</a>
   <a href="{{ url_for('records') }}" class="{{ 'on' if request.endpoint in ('records','record_detail') }}">Registros</a>
