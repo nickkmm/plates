@@ -22,6 +22,10 @@
     .submit { background:var(--green); color:#fff; font-size:1.05rem; padding:.65rem 1.4rem; }
     .error { background:#fdecec; border:1px solid var(--red); border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
     ol { color:#555; font-size:.9rem; line-height:1.5; }
+    .progress-wrap { display:none; margin-top:1rem; }
+    .progress-track { background:#eee; border-radius:8px; overflow:hidden; height:22px; }
+    .progress-bar { background:var(--blue); height:100%; width:0%; transition:width .15s linear; }
+    .progress-text { margin-top:.4rem; }
   </style>
 </head>
 <body>
@@ -30,7 +34,7 @@
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
-  <form method="post" action="{{ url_for('ingest_pdf') }}" enctype="multipart/form-data">
+  <form id="pdfForm" method="post" action="{{ url_for('ingest_pdf') }}" enctype="multipart/form-data">
     <fieldset>
       <legend>Archivo</legend>
       <label>PDF del pedido
@@ -42,11 +46,59 @@
     <button type="submit" class="submit">Leer PDF</button>
   </form>
 
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+    <p class="muted progress-text" id="progressText"></p>
+  </div>
+
   <ol>
     <li>Subís el PDF y el sistema lee la orden y las placas.</li>
     <li>Se abre el formulario de siempre, ya lleno, para que <strong>revises y corrijas</strong>.</li>
     <li>Recién ahí, con "Guardar orden", se registra. Nada se guarda antes de que revises.</li>
   </ol>
   <p><a href="{{ url_for('ingest') }}" class="btn-link add">Ingresar manualmente</a></p>
+
+  <script>
+    (function () {
+      var form = document.getElementById("pdfForm");
+      var wrap = document.getElementById("progressWrap");
+      var bar = document.getElementById("progressBar");
+      var text = document.getElementById("progressText");
+      var submitBtn = form.querySelector("button[type=submit]");
+
+      form.addEventListener("submit", function (e) {
+        var fileInput = form.querySelector("input[type=file]");
+        if (!fileInput.files.length) return;  // let native validation handle it
+        e.preventDefault();
+
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", form.action, true);
+        xhr.upload.addEventListener("progress", function (ev) {
+          if (!ev.lengthComputable) return;
+          var pct = Math.round((ev.loaded / ev.total) * 100);
+          bar.style.width = pct + "%";
+          text.textContent = pct < 100
+            ? "Subiendo... " + pct + "% (puede tardar según tu conexión)"
+            : "Archivo recibido, leyendo el PDF...";
+        });
+        xhr.onload = function () {
+          document.open();
+          document.write(xhr.responseText);
+          document.close();
+        };
+        xhr.onerror = function () {
+          wrap.style.display = "none";
+          submitBtn.disabled = false;
+          alert("Error de red subiendo el archivo. Intentá de nuevo.");
+        };
+
+        wrap.style.display = "block";
+        bar.style.width = "0%";
+        text.textContent = "Subiendo... 0%";
+        submitBtn.disabled = true;
+        xhr.send(new FormData(form));
+      });
+    })();
+  </script>
 </body>
 </html>
