@@ -98,20 +98,31 @@ def is_safe_next(target: str | None) -> bool:
     return not parsed.scheme and not parsed.netloc
 
 
+def _redirect_to_login():
+    """Bounce to /login (preserving the requested path as ?next=), clearing
+    whatever's in the session first. Used for both "never logged in" and "the
+    session predates a session-shape change" (e.g. a cookie from before roles
+    existed, which has 'user' but no 'role') -- either way the person just
+    needs to log in fresh, not see a dead-end error."""
+    session.clear()
+    next_url = request.full_path
+    if next_url.endswith("?"):
+        next_url = next_url[:-1]
+    return redirect(url_for("login", next=next_url))
+
+
 def login_required(view):
-    """Redirect to /login when unauthenticated; 403 when authenticated but not
-    a full-access role (admin/producción). This is the DEFAULT for every route
-    -- use @consulta_allowed instead only for the handful of read-only lookup
-    routes the 'consulta' role (PTO.V) may reach. Never apply @consulta_allowed
-    to anything that writes."""
+    """Redirect to /login when unauthenticated (or on a stale pre-roles
+    session); 403 when authenticated with a real role that just isn't
+    full-access. This is the DEFAULT for every route -- use @consulta_allowed
+    instead only for the handful of read-only lookup routes the 'consulta'
+    role (PTO.V) may reach. Never apply @consulta_allowed to anything that
+    writes."""
 
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not session.get("user"):
-            next_url = request.full_path
-            if next_url.endswith("?"):
-                next_url = next_url[:-1]
-            return redirect(url_for("login", next=next_url))
+        if not session.get("user") or "role" not in session:
+            return _redirect_to_login()
         if session.get("role") not in FULL_ACCESS_ROLES:
             abort(403)
         return view(*args, **kwargs)
@@ -126,11 +137,8 @@ def consulta_allowed(view):
 
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not session.get("user"):
-            next_url = request.full_path
-            if next_url.endswith("?"):
-                next_url = next_url[:-1]
-            return redirect(url_for("login", next=next_url))
+        if not session.get("user") or "role" not in session:
+            return _redirect_to_login()
         return view(*args, **kwargs)
 
     return wrapped
