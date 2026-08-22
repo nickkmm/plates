@@ -95,6 +95,23 @@ class TestLogin:
         resp = client.post("/login", data={"username": "ghost", "password": "whatever"})
         assert resp.status_code == 401
 
+    def test_login_stores_admin_role_in_session_for_user_with_no_auth_roles_entry(
+        self, client, test_credentials
+    ):
+        """test_credentials' username has no AUTH_ROLES entry (see
+        tests/conftest.py) -- role_for() must default it to admin, and
+        login_post must persist that into the session."""
+        username, password = test_credentials
+        client.post("/login", data={"username": username, "password": password})
+        with client.session_transaction() as sess:
+            assert sess["role"] == "admin"
+
+    def test_login_stores_configured_role_in_session(self, client, consulta_credentials):
+        username, password = consulta_credentials
+        client.post("/login", data={"username": username, "password": password})
+        with client.session_transaction() as sess:
+            assert sess["role"] == "consulta"
+
 
 class TestLogout:
     def test_logout_clears_session(self, client, test_credentials):
@@ -952,3 +969,77 @@ class TestIngestDuplicateWarning:
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '4004'")
             assert cur.fetchone()[0] == 0
+
+
+class TestConsultaRole:
+    """The read-only 'consulta' role (see app.web.auth.consulta_allowed) may
+    only reach the small consult-only allowlist -- /records and
+    /records/<id> -- and must be default-denied (403) everywhere else that
+    writes or otherwise isn't a pure lookup. These tests never touch the DB
+    for the 403 assertions: the role check in login_required/consulta_allowed
+    runs before any view body, so an empty/garbage POST body is enough to
+    prove the request never reached the handler.
+    """
+
+    def test_records_returns_200(self, consulta_client, db_conn):
+        db.insert_order(db_conn, order_number="5000", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        db_conn.commit()
+
+        resp = consulta_client.get("/records")
+        assert resp.status_code == 200
+        assert b"5000" in resp.data
+
+    def test_record_detail_returns_200(self, consulta_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="5001", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="CNS111"),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = consulta_client.get(f"/records/{order_id}")
+        assert resp.status_code == 200
+        assert b"CNS111" in resp.data
+
+    def test_ingest_get_is_forbidden(self, consulta_client):
+        resp = consulta_client.get("/ingest")
+        assert resp.status_code == 403
+
+    def test_ingest_post_is_forbidden(self, consulta_client):
+        resp = consulta_client.post("/ingest", data={})
+        assert resp.status_code == 403
+
+    def test_ingest_pdf_is_forbidden(self, consulta_client):
+        resp = consulta_client.get("/ingest/pdf")
+        assert resp.status_code == 403
+
+    def test_review_is_forbidden(self, consulta_client):
+        resp = consulta_client.get("/review")
+        assert resp.status_code == 403
+
+    def test_review_update_is_forbidden(self, consulta_client):
+        resp = consulta_client.post("/review/update", data={})
+        assert resp.status_code == 403
+
+    def test_inventory_is_forbidden(self, consulta_client):
+        resp = consulta_client.get("/inventory")
+        assert resp.status_code == 403
+
+    def test_inventory_alistado_is_forbidden(self, consulta_client):
+        resp = consulta_client.post("/inventory/alistado", data={})
+        assert resp.status_code == 403
+
+    def test_records_delete_is_forbidden(self, consulta_client):
+        resp = consulta_client.post("/records/delete", data={})
+        assert resp.status_code == 403
+
+    def test_admin_client_is_unaffected_full_access_regression_guard(
+        self, authenticated_client, clean_db
+    ):
+        """The existing admin-role fixture must still get through everywhere
+        -- the role gate must not accidentally narrow full access."""
+        assert authenticated_client.get("/ingest").status_code == 200
+        assert authenticated_client.get("/review").status_code == 200
+        assert authenticated_client.get("/inventory").status_code == 200
+        assert authenticated_client.get("/records").status_code == 200
