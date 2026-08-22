@@ -10,6 +10,11 @@ Generate a hash for a user with:
     python -m app.web.hash_password 'the-password'
 
 Sessions are signed with SECRET_KEY (configured in app.py).
+
+Roles come from a SEPARATE env var, AUTH_ROLES (see load_roles() for why it
+isn't folded into AUTH_USERS). Any username with no AUTH_ROLES entry defaults
+to ROLE_ADMIN, so the existing single-role production setup (zero AUTH_ROLES
+configured) keeps working unchanged.
 """
 
 from __future__ import annotations
@@ -18,8 +23,13 @@ import os
 from functools import wraps
 from urllib.parse import urlparse
 
-from flask import redirect, request, session, url_for
+from flask import abort, redirect, request, session, url_for
 from werkzeug.security import check_password_hash
+
+ROLE_ADMIN = "admin"
+ROLE_PRODUCCION = "produccion"
+ROLE_CONSULTA = "consulta"
+FULL_ACCESS_ROLES = {ROLE_ADMIN, ROLE_PRODUCCION}
 
 
 def load_users() -> dict[str, str]:
@@ -42,6 +52,33 @@ def load_users() -> dict[str, str]:
     return users
 
 
+def load_roles() -> dict[str, str]:
+    """Parse AUTH_ROLES into {username: role}.
+
+    Separate env var from AUTH_USERS on purpose: AUTH_USERS values are werkzeug
+    hashes that themselves contain ':' (e.g. 'pbkdf2:sha256:600000$salt$hash'),
+    so a third ':role' suffix on that line would be ambiguous to parse. Any
+    username with no entry here defaults to ROLE_ADMIN -- this keeps the
+    existing single-role production setup working unchanged with zero AUTH_ROLES
+    configured.
+    """
+    raw = os.environ.get("AUTH_ROLES", "")
+    roles: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry or ":" not in entry:
+            continue
+        username, role = entry.split(":", 1)
+        username, role = username.strip(), role.strip()
+        if username and role:
+            roles[username] = role
+    return roles
+
+
+def role_for(username: str) -> str:
+    return load_roles().get(username, ROLE_ADMIN)
+
+
 def verify_credentials(username: str, password: str) -> bool:
     """True if username exists and the password matches its stored hash."""
     pw_hash = load_users().get(username)
@@ -62,8 +99,30 @@ def is_safe_next(target: str | None) -> bool:
 
 
 def login_required(view):
-    """Redirect to /login (preserving the requested path as ?next=) when the
-    current session has no authenticated user."""
+    """Redirect to /login when unauthenticated; 403 when authenticated but not
+    a full-access role (admin/producción). This is the DEFAULT for every route
+    -- use @consulta_allowed instead only for the handful of read-only lookup
+    routes the 'consulta' role (PTO.V) may reach. Never apply @consulta_allowed
+    to anything that writes."""
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user"):
+            next_url = request.full_path
+            if next_url.endswith("?"):
+                next_url = next_url[:-1]
+            return redirect(url_for("login", next=next_url))
+        if session.get("role") not in FULL_ACCESS_ROLES:
+            abort(403)
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def consulta_allowed(view):
+    """Like login_required, but lets EVERY authenticated role through (including
+    'consulta'). Only for routes that purely read/look things up -- nothing
+    behind this decorator may write to the database."""
 
     @wraps(view)
     def wrapped(*args, **kwargs):

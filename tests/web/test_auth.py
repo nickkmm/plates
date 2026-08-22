@@ -97,6 +97,62 @@ class TestVerifyCredentials:
 # --------------------------------------------------------------------------
 
 
+class TestLoadRoles:
+    def test_parses_multiple_roles(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ROLES", "alice:admin,bob:consulta")
+        roles = auth.load_roles()
+        assert roles == {"alice": "admin", "bob": "consulta"}
+
+    def test_ignores_blank_entries(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ROLES", "alice:consulta,,   ,bob:produccion")
+        roles = auth.load_roles()
+        assert roles == {"alice": "consulta", "bob": "produccion"}
+
+    def test_ignores_malformed_entry_without_colon(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ROLES", "alice:consulta,malformed,bob:admin")
+        roles = auth.load_roles()
+        assert roles == {"alice": "consulta", "bob": "admin"}
+
+    def test_ignores_entry_with_empty_username(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ROLES", ":consulta,bob:admin")
+        roles = auth.load_roles()
+        assert roles == {"bob": "admin"}
+
+    def test_ignores_entry_with_empty_role(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ROLES", "alice:,bob:admin")
+        roles = auth.load_roles()
+        assert roles == {"bob": "admin"}
+
+    def test_unset_env_var_returns_empty_dict(self, monkeypatch):
+        monkeypatch.delenv("AUTH_ROLES", raising=False)
+        assert auth.load_roles() == {}
+
+    def test_strips_whitespace_around_username_and_role(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ROLES", " alice : consulta ")
+        roles = auth.load_roles()
+        assert roles == {"alice": "consulta"}
+
+
+class TestRoleFor:
+    def test_username_with_no_auth_roles_entry_defaults_to_admin(self, monkeypatch):
+        """Backward-compat: production currently has zero AUTH_ROLES set, so
+        every existing user must keep behaving as admin (full access)."""
+        monkeypatch.delenv("AUTH_ROLES", raising=False)
+        assert auth.role_for("ptov") == auth.ROLE_ADMIN
+
+    def test_username_absent_from_a_nonempty_auth_roles_still_defaults_to_admin(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ROLES", "bob:consulta")
+        assert auth.role_for("alice") == auth.ROLE_ADMIN
+
+    def test_username_configured_as_consulta(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ROLES", "ptov:consulta")
+        assert auth.role_for("ptov") == auth.ROLE_CONSULTA
+
+    def test_username_configured_as_produccion(self, monkeypatch):
+        monkeypatch.setenv("AUTH_ROLES", "worker:produccion")
+        assert auth.role_for("worker") == auth.ROLE_PRODUCCION
+
+
 class TestIsSafeNext:
     def test_none_is_unsafe(self):
         assert auth.is_safe_next(None) is False
