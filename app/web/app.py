@@ -27,7 +27,7 @@ from flask import Flask, redirect, render_template, request, session, url_for
 
 from app.core import db
 from app.core.models import ExtractedRow
-from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES, validate_plate
+from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES, clean_plate, is_real_plate, validate_plate
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
 from app.core.process import find_duplicate_plate_numbers, process_rows
 from app.web import auth
@@ -423,7 +423,7 @@ def records():
         else:
             results = None
             rows = db.recent_orders(conn)
-    return render_template("records.html", rows=rows, query=query, results=results)
+    return render_template("records.html", rows=rows, query=query, results=results, pdf_results=None)
 
 
 @app.get("/records/<int:order_id>")
@@ -434,6 +434,46 @@ def record_detail(order_id):
     if not order:
         return redirect(url_for("records"))
     return render_template("record_detail.html", order=order, plates=plates)
+
+
+@app.post("/records/search-pdf")
+@login_required
+def records_search_pdf():
+    """Upload a pedido PDF to check its plates against the DB. Consult only:
+    this NEVER inserts/updates/deletes anything, unlike /ingest/pdf which leads
+    toward saving. Works even if the PDF's header (order number/date/client) is
+    unreadable -- unlike /ingest/pdf's flow, only the plate lines matter here."""
+    upload = request.files.get("pdf")
+    if upload is None or not upload.filename:
+        return render_template("records.html", rows=None, query=None,
+                               pdf_error="Elegí un archivo PDF para buscar."), 400
+
+    try:
+        pedido = parse_pedido_pdf(upload.read())
+    except PdfExtractError as e:
+        return render_template("records.html", rows=None, query=None, pdf_error=str(e)), 400
+    except Exception:
+        app.logger.exception("Unexpected failure parsing uploaded pedido PDF for search")
+        return render_template("records.html", rows=None, query=None,
+                               pdf_error="No se pudo procesar el PDF."), 400
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for line in pedido.lines:
+        for raw in (line.plate_number, line.plate_to):
+            if raw and is_real_plate(raw):
+                cleaned = clean_plate(raw)
+                if cleaned not in seen:
+                    seen.add(cleaned)
+                    candidates.append(cleaned)
+
+    with db.get_conn() as conn:
+        pdf_results = [
+            {"plate_number": pn, "matches": db.find_orders_for_plate(conn, pn)}
+            for pn in candidates
+        ]
+    return render_template("records.html", rows=None, query=None,
+                           pdf_results=pdf_results, pdf_filename=upload.filename)
 
 
 @app.post("/records/delete")
