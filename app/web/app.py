@@ -431,9 +431,50 @@ def records():
 def record_detail(order_id):
     with db.get_conn() as conn:
         order, plates = db.order_detail(conn, order_id)
+        cities = db.distinct_cities(conn)
     if not order:
         return redirect(url_for("records"))
-    return render_template("record_detail.html", order=order, plates=plates)
+    return render_template("record_detail.html", order=order, plates=plates,
+                           cities=cities, categories=FORM_PLATE_TYPES)
+
+
+@app.post("/records/plate/update")
+@login_required
+def record_plate_update():
+    order_id = int(request.form["order_id"])
+    plate_id = int(request.form["plate_id"])
+    plate_type = (request.form.get("plate_type") or "").strip()
+    plate_number = (request.form.get("plate_number") or "").strip() or None
+    plate_to = (request.form.get("plate_to") or "").strip() or None
+    city = (request.form.get("city") or "").strip() or None
+    quantity = int(request.form.get("quantity") or 0)
+    is_voided = request.form.get("is_voided") == "on"
+    is_plate_annulled = request.form.get("is_plate_annulled") == "on"
+
+    error = None
+    try:
+        if plate_number:
+            plate_number = validate_plate(plate_number, plate_type)
+        if plate_to:
+            plate_to = validate_plate(plate_to, plate_type)
+        with db.get_conn() as conn:
+            db.update_plate_full(
+                conn, plate_id, plate_type=plate_type, plate_number=plate_number,
+                plate_to=plate_to, city=city, quantity=quantity,
+                is_voided=is_voided, is_plate_annulled=is_plate_annulled,
+            )
+            db.recalc_inventory(conn)
+            conn.commit()
+    except Exception as e:
+        error = f"Error: {e}"
+
+    if error:
+        with db.get_conn() as conn:
+            order, plates = db.order_detail(conn, order_id)
+            cities = db.distinct_cities(conn)
+        return render_template("record_detail.html", order=order, plates=plates,
+                               cities=cities, categories=FORM_PLATE_TYPES, error=error), 400
+    return redirect(url_for("record_detail", order_id=order_id))
 
 
 @app.post("/records/delete")
