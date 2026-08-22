@@ -430,9 +430,6 @@ def records():
     return render_template("records.html", rows=rows, query=query, results=results, pdf_results=None)
 
 
-# NOTE: /records/search-pdf (a PDF-based consult-only search, added
-# separately) must also use @consulta_allowed, not @login_required -- it's a
-# pure lookup route, no writes.
 @app.get("/records/<int:order_id>")
 @consulta_allowed
 def record_detail(order_id):
@@ -485,7 +482,7 @@ def record_plate_update():
 
 
 @app.post("/records/search-pdf")
-@login_required
+@consulta_allowed
 def records_search_pdf():
     """Upload a pedido PDF to check its plates against the DB. Consult only:
     this NEVER inserts/updates/deletes anything, unlike /ingest/pdf which leads

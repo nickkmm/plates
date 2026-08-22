@@ -176,3 +176,14 @@ class TestGracefulFailure:
         resp = upload(authenticated_client, build_pedido_pdf(lines=[{"item": "1"}]))
         assert resp.status_code == 400
         assert resp.status_code != 500
+
+
+class TestConsultaRoleAllowed:
+    """Reconciliation guard: this route is the third member of the consult-only
+    allowlist (alongside /records and /records/<id>) mentioned in
+    app.web.auth's docs -- the 'consulta' role (PTO.V) must be able to reach
+    it, unlike every write route."""
+
+    def test_consulta_role_can_search_by_pdf(self, consulta_client):
+        resp = upload(consulta_client, build_pedido_pdf())
+        assert resp.status_code == 200

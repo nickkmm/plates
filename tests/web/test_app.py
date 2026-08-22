@@ -1034,6 +1034,14 @@ class TestConsultaRole:
         resp = consulta_client.post("/records/delete", data={})
         assert resp.status_code == 403
 
+    def test_record_plate_update_is_forbidden(self, consulta_client):
+        """Reconciliation guard: /records/plate/update (edit a plate from the
+        Registro detail page) is a write route added alongside this role
+        system -- it must stay on the default-deny @login_required, not the
+        consult-only allowlist."""
+        resp = consulta_client.post("/records/plate/update", data={})
+        assert resp.status_code == 403
+
     def test_admin_client_is_unaffected_full_access_regression_guard(
         self, authenticated_client, clean_db
     ):
