@@ -112,6 +112,22 @@ class TestLogin:
         with client.session_transaction() as sess:
             assert sess["role"] == "consulta"
 
+    def test_consulta_role_lands_on_records_not_ingest(self, client, consulta_credentials):
+        """Regression guard: login (and '/') used to always redirect to
+        /ingest regardless of role -- for 'consulta' that route 403s, so the
+        person landed straight on an error page right after logging in. The
+        default landing page must be role-aware."""
+        username, password = consulta_credentials
+        resp = client.post("/login", data={"username": username, "password": password})
+        assert resp.status_code == 302
+        assert urlparse(resp.headers["Location"]).path == "/records"
+
+    def test_root_redirects_consulta_role_to_records(self, client, consulta_credentials):
+        username, password = consulta_credentials
+        client.post("/login", data={"username": username, "password": password})
+        resp = client.get("/")
+        assert urlparse(resp.headers["Location"]).path == "/records"
+
 
 class TestLogout:
     def test_logout_clears_session(self, client, test_credentials):
