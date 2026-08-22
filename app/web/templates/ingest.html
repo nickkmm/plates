@@ -25,6 +25,8 @@
     .plate-num { text-transform:uppercase; }
     button, .btn-link { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
     .add { background:var(--blue); color:#fff; margin-top:.6rem; }
+    .ver-btn { display:inline-block; background:var(--blue); color:#fff; text-decoration:none; padding:.2rem .55rem; border-radius:5px; font-size:.85rem; }
+    .ver-btn:hover { background:#095bb0; }
     .submit { background:var(--green); color:#fff; font-size:1.05rem; padding:.65rem 1.4rem; }
     .rm { background:#eee; color:#900; padding:.3rem .55rem; }
     .summary { background:#eefbf3; border:1px solid var(--green); border-radius:8px; padding:1rem; margin-bottom:1rem; }
@@ -56,7 +58,7 @@
           ya registrada en
           {% for o in orders %}
             pedido {{ o.order_number }} ({{ o.order_date }}, {{ o.requested_by }}, {{ o.plate_type }}, cant. {{ o.quantity }})
-            <a href="{{ url_for('record_detail', order_id=o.order_id) }}" target="_blank">ver pedido</a>{% if not loop.last %}, {% endif %}
+            <a class="ver-btn" href="{{ url_for('record_detail', order_id=o.order_id) }}" target="_blank">ver pedido</a>{% if not loop.last %}, {% endif %}
           {% endfor %}
         {% else %}
           aparece repetida dentro de este mismo envío (revisá las líneas de abajo).

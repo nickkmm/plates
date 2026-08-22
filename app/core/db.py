@@ -348,6 +348,17 @@ def order_detail(conn: psycopg.Connection, order_id: int) -> tuple[dict | None, 
     return order, plates
 
 
+def update_order(conn: psycopg.Connection, order_id: int, *, order_number: str, order_date: date | str,
+                 requested_by: str) -> None:
+    """Edit an order's header fields (date/number/solicitado por)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE production_orders SET order_number = %s, order_date = %s, requested_by = %s "
+            "WHERE id = %s",
+            (order_number, order_date, requested_by, order_id),
+        )
+
+
 def delete_order(conn: psycopg.Connection, order_id: int) -> None:
     """Delete an order and all its plates (plates first, for the FK)."""
     with conn.cursor() as cur:
