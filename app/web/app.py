@@ -216,10 +216,23 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
     return header, lines, notices
 
 
+def _landing_url() -> str:
+    """Where a logged-in user lands with no specific ?next= target.
+
+    Full-access roles start at Registrar (today's default). The read-only
+    'consulta' role can't reach /ingest at all, so sending it there would
+    just bounce into a 403 -- send it to Registros instead, the one place it
+    can actually use.
+    """
+    if session.get("role") == auth.ROLE_CONSULTA:
+        return url_for("records")
+    return url_for("ingest")
+
+
 @app.get("/login")
 def login():
     if session.get("user"):
-        return redirect(url_for("ingest"))
+        return redirect(_landing_url())
     next_url = request.args.get("next", "")
     return render_template("login.html", next=next_url if auth.is_safe_next(next_url) else "")
 
@@ -234,7 +247,7 @@ def login_post():
         session["user"] = username
         session["role"] = auth.role_for(username)
         session.permanent = True
-        return redirect(next_url if auth.is_safe_next(next_url) else url_for("ingest"))
+        return redirect(next_url if auth.is_safe_next(next_url) else _landing_url())
     return (
         render_template(
             "login.html",
@@ -252,9 +265,9 @@ def logout():
 
 
 @app.get("/")
-@login_required
+@consulta_allowed
 def index():
-    return redirect(url_for("ingest"))
+    return redirect(_landing_url())
 
 
 @app.get("/ingest")
