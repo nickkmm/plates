@@ -452,6 +452,133 @@ class TestRecordDetailRoute:
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/records"
 
+    def test_plates_are_rendered_as_editable_inline_forms(self, authenticated_client, db_conn):
+        """Smoke test for the inline-edit table: each plate row must expose a
+        hidden plate_id and an editable plate_number input, so the page really
+        offers editing rather than just read-only display."""
+        order_id = db.insert_order(db_conn, order_number="2701", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT111", quantity=2),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = authenticated_client.get(f"/records/{order_id}")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert 'name="plate_number"' in html
+        assert 'name="plate_id"' in html
+
+
+class TestRecordPlateUpdateRoute:
+    def test_get_and_post_require_login(self, client):
+        resp = client.post("/records/plate/update", data={"order_id": "1", "plate_id": "1"})
+        assert resp.status_code == 302
+        assert urlparse(resp.headers["Location"]).path == "/login"
+
+        resp = client.get("/records/plate/update")
+        # GET isn't a registered method for this route, but it must still
+        # never leak past auth into a 200 -- login_required (via 302) or the
+        # framework's own 405 are both acceptable, a 200 is not.
+        assert resp.status_code != 200
+
+    def test_successful_edit_updates_all_fields_and_redirects(self, authenticated_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="2900", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT200",
+                                      quantity=1, city="CALI"),
+                         is_possible_duplicate=False)
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'EDT200'")
+            plate_id = cur.fetchone()[0]
+        db_conn.commit()
+
+        resp = authenticated_client.post("/records/plate/update", data={
+            "order_id": str(order_id), "plate_id": str(plate_id),
+            "plate_type": "MOTO PARTICULAR", "plate_number": "abc12d", "plate_to": "abc13d",
+            "city": "MEDELLIN", "quantity": "9", "is_voided": "on", "is_plate_annulled": "on",
+        })
+        assert resp.status_code == 302
+        assert urlparse(resp.headers["Location"]).path == f"/records/{order_id}"
+
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "SELECT plate_type, plate_number, plate_to, city, quantity, is_voided, "
+                "is_plate_annulled FROM plates WHERE id = %s", (plate_id,),
+            )
+            assert cur.fetchone() == (
+                "MOTO PARTICULAR", "ABC12D", "ABC13D", "MEDELLIN", 9, True, True,
+            )
+
+    def test_clears_is_possible_duplicate_flag(self, authenticated_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="2901", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT201", quantity=1),
+                         is_possible_duplicate=True)
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'EDT201'")
+            plate_id = cur.fetchone()[0]
+        db_conn.commit()
+
+        authenticated_client.post("/records/plate/update", data={
+            "order_id": str(order_id), "plate_id": str(plate_id),
+            "plate_type": "CARRO PARTICULAR", "plate_number": "EDT201", "quantity": "1",
+        })
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT is_possible_duplicate FROM plates WHERE id = %s", (plate_id,))
+            assert cur.fetchone() == (False,)
+
+    def test_recalculates_inventory_after_quantity_change(self, authenticated_client, db_conn):
+        db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
+                                     quantity=100, prepared_by=None)
+        order_id = db.insert_order(db_conn, order_number="2902", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT202", quantity=5),
+                         is_possible_duplicate=False)
+        db.recalc_inventory(db_conn)
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'EDT202'")
+            plate_id = cur.fetchone()[0]
+        db_conn.commit()
+
+        authenticated_client.post("/records/plate/update", data={
+            "order_id": str(order_id), "plate_id": str(plate_id),
+            "plate_type": "CARRO PARTICULAR", "plate_number": "EDT202", "quantity": "20",
+        })
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
+            assert cur.fetchone() == (20,)
+
+    def test_invalid_plate_number_rerenders_with_error_and_does_not_save(
+        self, authenticated_client, db_conn
+    ):
+        order_id = db.insert_order(db_conn, order_number="2903", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT203", quantity=1),
+                         is_possible_duplicate=False)
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'EDT203'")
+            plate_id = cur.fetchone()[0]
+        db_conn.commit()
+
+        resp = authenticated_client.post("/records/plate/update", data={
+            "order_id": str(order_id), "plate_id": str(plate_id),
+            # CARRO PARTICULAR requires AAA000 -- all-digits doesn't match.
+            "plate_type": "CARRO PARTICULAR", "plate_number": "123456", "quantity": "1",
+        })
+        assert resp.status_code == 400
+        assert b"Error" in resp.data
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT plate_number, quantity FROM plates WHERE id = %s", (plate_id,))
+            assert cur.fetchone() == ("EDT203", 1)
+
 
 class TestRecordsDeleteRoute:
     def test_deletes_order_and_its_plates_and_redirects(self, authenticated_client, db_conn):

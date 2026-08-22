@@ -336,7 +336,7 @@ def order_detail(conn: psycopg.Connection, order_id: int) -> tuple[dict | None, 
         order = dict(zip([d[0] for d in cur.description], row, strict=False))
         cur.execute(
             """
-            SELECT plate_type, plate_number, plate_to, quantity,
+            SELECT id, plate_type, plate_number, plate_to, quantity,
                    is_batch_replacement, is_voided, is_plate_annulled, city
             FROM plates WHERE order_id = %s ORDER BY id
             """,
@@ -385,6 +385,30 @@ def update_plate(conn: psycopg.Connection, plate_id: int, *, plate_type: str,
             WHERE id = %s
             """,
             (plate_type, plate_number, quantity, is_voided, plate_id),
+        )
+
+
+def update_plate_full(conn: psycopg.Connection, plate_id: int, *, plate_type: str,
+                      plate_number: str | None, plate_to: str | None, city: str | None,
+                      quantity: int, is_voided: bool, is_plate_annulled: bool) -> None:
+    """Edit every plate-level field from the Registro detail page.
+
+    Wider than update_plate (which only covers the flagged-duplicate review
+    form's fields): this also lets a range end, city, and the "placa anulada"
+    waste flag be corrected after the order was already saved. Clears
+    is_possible_duplicate too, same "editing counts as reviewed" convention.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE plates
+            SET plate_type = %s, plate_number = %s, plate_to = %s, city = %s,
+                quantity = %s, is_voided = %s, is_plate_annulled = %s,
+                is_possible_duplicate = false
+            WHERE id = %s
+            """,
+            (plate_type, plate_number, plate_to, city, quantity, is_voided,
+             is_plate_annulled, plate_id),
         )
 
 
