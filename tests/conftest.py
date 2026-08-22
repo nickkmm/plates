@@ -30,8 +30,20 @@ from werkzeug.security import generate_password_hash
 TEST_USERNAME = "testuser"
 TEST_PASSWORD = "testpass123"
 
+# A second user with the read-only 'consulta' role, for testing the
+# default-deny role restrictions (see app.web.auth.consulta_allowed).
+# TEST_USERNAME deliberately gets NO entry in AUTH_ROLES below -- it must
+# keep defaulting to admin (full access), matching production today, where
+# AUTH_ROLES is entirely unset.
+CONSULTA_USERNAME = "consultauser"
+CONSULTA_PASSWORD = "consultapass123"
+
 os.environ["SECRET_KEY"] = "test-secret-key-do-not-use-in-production"
-os.environ["AUTH_USERS"] = f"{TEST_USERNAME}:{generate_password_hash(TEST_PASSWORD)}"
+os.environ["AUTH_USERS"] = (
+    f"{TEST_USERNAME}:{generate_password_hash(TEST_PASSWORD)},"
+    f"{CONSULTA_USERNAME}:{generate_password_hash(CONSULTA_PASSWORD)}"
+)
+os.environ["AUTH_ROLES"] = f"{CONSULTA_USERNAME}:consulta"
 
 # --- Test database ----------------------------------------------------------
 # Point at a SEPARATE database (`plates_test`) on the same already-running
@@ -178,3 +190,10 @@ def db_conn(clean_db: None):
 def test_credentials() -> tuple[str, str]:
     """The (username, password) pair baked into AUTH_USERS for this test run."""
     return TEST_USERNAME, TEST_PASSWORD
+
+
+@pytest.fixture
+def consulta_credentials() -> tuple[str, str]:
+    """The (username, password) pair for the read-only 'consulta'-role test
+    user, baked into AUTH_USERS/AUTH_ROLES for this test run."""
+    return CONSULTA_USERNAME, CONSULTA_PASSWORD
