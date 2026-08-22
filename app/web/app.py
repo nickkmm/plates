@@ -30,7 +30,14 @@ from flask import Flask, redirect, render_template, request, session, url_for
 
 from app.core import db
 from app.core.models import ExtractedRow
-from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES, clean_plate, is_real_plate, validate_plate
+from app.core.normalize import (
+    INVENTORY_CATEGORIES,
+    PLATE_TYPES,
+    clean_plate,
+    is_real_plate,
+    normalize_row,
+    validate_plate,
+)
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
 from app.core.process import find_duplicate_plate_numbers, process_rows
 from app.web import auth
@@ -85,6 +92,15 @@ def _padded(values: list[str], size: int) -> list[str]:
     return values + [""] * (size - len(values))
 
 
+def _validate_order_header(*, requested_by: str, order_date: str) -> None:
+    """Order-level validations shared by every door that saves a header
+    (brand-new /ingest, and editing an existing order's header)."""
+    if any(ch.isdigit() for ch in requested_by):
+        raise ValueError("'Solicitado por' no debería contener números (parece una placa). Revisá ese campo.")
+    if order_date and order_date > _today_iso():
+        raise ValueError(f"La fecha {order_date} es futura. Corregí la fecha.")
+
+
 def _rows_from_form(form) -> list[ExtractedRow]:
     """Build ExtractedRow(s) from the order header + repeated plate lines.
 
@@ -101,12 +117,7 @@ def _rows_from_form(form) -> list[ExtractedRow]:
     order_number = form["order_number"].strip()
     order_date = form["order_date"]
     requested_by = form["requested_by"].strip()
-
-    # Order-level validations.
-    if any(ch.isdigit() for ch in requested_by):
-        raise ValueError("'Solicitado por' no debería contener números (parece una placa). Revisá ese campo.")
-    if order_date and order_date > _today_iso():
-        raise ValueError(f"La fecha {order_date} es futura. Corregí la fecha.")
+    _validate_order_header(requested_by=requested_by, order_date=order_date)
 
     rows: list[ExtractedRow] = []
     for lt, pt, pn, pto, qty, ct in zip(
@@ -164,6 +175,48 @@ def _sticky_lines_from_form(form) -> list[dict]:
         )
         if (pt or "").strip()
     ]
+
+
+def _edit_rows_from_form(form, *, order_number: str, order_date: str,
+                         requested_by: str, order_voided: bool) -> list[tuple[int | None, ExtractedRow]]:
+    """Parse the Registro edit form's plate rows into (plate_id, ExtractedRow)
+    pairs -- a None plate_id means a newly-added row (INSERT), otherwise it's
+    an existing plate being saved (UPDATE). The caller infers deletes from
+    which existing ids are simply absent here (removed client-side before
+    saving).
+
+    is_voided means "the whole order was voided" -- a single header-level
+    checkbox (order_voided), applied uniformly to every row here -- not a
+    per-plate choice; the schema just happens to store it on `plates` rather
+    than `production_orders`. is_plate_annulled stays genuinely per-plate
+    (one specific blank was lost during production).
+    """
+    plate_types = form.getlist("plate_type")
+    n = len(plate_types)
+    rows: list[tuple[int | None, ExtractedRow]] = []
+    for pid, pt, pn, pto, ct, qty, annulled in zip(
+        _padded(form.getlist("plate_id"), n), plate_types,
+        form.getlist("plate_number"), form.getlist("plate_to"),
+        _padded(form.getlist("city"), n), form.getlist("quantity"),
+        form.getlist("is_plate_annulled"), strict=False,
+    ):
+        if not (pt or "").strip():
+            continue  # skip empty line
+        ptype = pt.strip()
+        plate_number = (pn or "").strip() or None
+        plate_to = (pto or "").strip() or None
+        if plate_number:
+            plate_number = validate_plate(plate_number, ptype)
+        if plate_to:
+            plate_to = validate_plate(plate_to, ptype)
+        row = ExtractedRow(
+            order_number=order_number, order_date=order_date, requested_by=requested_by,
+            city=(ct or "").strip() or None, plate_type=ptype,
+            plate_number=plate_number, plate_to=plate_to, quantity=int(qty or 1),
+            is_voided=order_voided, is_plate_annulled=annulled == "on",
+        )
+        rows.append((int(pid) if pid else None, row))
+    return rows
 
 
 def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]]:
@@ -443,54 +496,88 @@ def records():
     return render_template("records.html", rows=rows, query=query, results=results, pdf_results=None)
 
 
+def _order_voided(plates: list[dict]) -> bool:
+    """Whether the ORDER is voided -- stored per-plate in the schema, but
+    meant as one whole-order fact (an 'anulada_orden' line always applies to
+    every plate at once), so the UI shows/edits it once at the header."""
+    return any(p["is_voided"] for p in plates)
+
+
 @app.get("/records/<int:order_id>")
 @consulta_allowed
 def record_detail(order_id):
     with db.get_conn() as conn:
         order, plates = db.order_detail(conn, order_id)
-        cities = db.distinct_cities(conn)
+        requesters, cities = _options(conn)
     if not order:
         return redirect(url_for("records"))
     return render_template("record_detail.html", order=order, plates=plates,
-                           cities=cities, categories=FORM_PLATE_TYPES)
+                           cities=cities, requesters=requesters, categories=FORM_PLATE_TYPES,
+                           today=_today_iso(), order_voided=_order_voided(plates))
 
 
-@app.post("/records/plate/update")
+def _record_detail_error(order_id: int, error: str):
+    """Re-render the Registro detail page with a validation error, instead of
+    losing the person's edits on a bad plate number. Shared by record_save."""
+    with db.get_conn() as conn:
+        order, plates = db.order_detail(conn, order_id)
+        requesters, cities = _options(conn)
+    return render_template("record_detail.html", order=order, plates=plates,
+                           cities=cities, requesters=requesters, categories=FORM_PLATE_TYPES,
+                           today=_today_iso(), order_voided=_order_voided(plates), error=error), 400
+
+
+@app.post("/records/<int:order_id>/save")
 @login_required
-def record_plate_update():
-    order_id = int(request.form["order_id"])
-    plate_id = int(request.form["plate_id"])
-    plate_type = (request.form.get("plate_type") or "").strip()
-    plate_number = (request.form.get("plate_number") or "").strip() or None
-    plate_to = (request.form.get("plate_to") or "").strip() or None
-    city = (request.form.get("city") or "").strip() or None
-    quantity = int(request.form.get("quantity") or 0)
-    is_voided = request.form.get("is_voided") == "on"
-    is_plate_annulled = request.form.get("is_plate_annulled") == "on"
+def record_save(order_id):
+    """Save every change made on the Registro detail page in one shot: the
+    order header (date/number/solicitado por/anulada), edits to existing
+    plates, any new plate rows added, and the removal of any row the person
+    deleted client-side -- one form, one button, same shape as /ingest's
+    "Guardar orden" rather than a separate save per row."""
+    order_number = (request.form.get("order_number") or "").strip()
+    order_date = request.form.get("order_date") or ""
+    requested_by = (request.form.get("requested_by") or "").strip()
+    order_voided = request.form.get("order_voided") == "on"
 
-    error = None
     try:
-        if plate_number:
-            plate_number = validate_plate(plate_number, plate_type)
-        if plate_to:
-            plate_to = validate_plate(plate_to, plate_type)
+        _validate_order_header(requested_by=requested_by, order_date=order_date)
+        edits = _edit_rows_from_form(request.form, order_number=order_number,
+                                     order_date=order_date, requested_by=requested_by,
+                                     order_voided=order_voided)
         with db.get_conn() as conn:
-            db.update_plate_full(
-                conn, plate_id, plate_type=plate_type, plate_number=plate_number,
-                plate_to=plate_to, city=city, quantity=quantity,
-                is_voided=is_voided, is_plate_annulled=is_plate_annulled,
-            )
+            existing_order, existing_plates = db.order_detail(conn, order_id)
+            if not existing_order:
+                return redirect(url_for("records"))
+
+            db.update_order(conn, order_id, order_number=order_number,
+                            order_date=order_date, requested_by=requested_by)
+
+            submitted_ids = {pid for pid, _row in edits if pid is not None}
+            existing_ids = {p["id"] for p in existing_plates}
+            for removed_id in existing_ids - submitted_ids:
+                db.delete_plate(conn, removed_id)
+
+            for plate_id, row in edits:
+                normalized = normalize_row(row)
+                if plate_id is not None:
+                    db.update_plate_full(
+                        conn, plate_id, plate_type=normalized.plate_type,
+                        plate_number=normalized.plate_number, plate_to=normalized.plate_to,
+                        city=normalized.city, quantity=normalized.quantity,
+                        is_voided=normalized.is_voided, is_plate_annulled=normalized.is_plate_annulled,
+                    )
+                else:
+                    is_dup = bool(
+                        is_real_plate(normalized.plate_number) and not normalized.is_voided
+                        and db.existing_plate_numbers(conn, [normalized.plate_number])
+                    )
+                    db.insert_plate(conn, order_id=order_id, row=normalized, is_possible_duplicate=is_dup)
+
             db.recalc_inventory(conn)
             conn.commit()
     except Exception as e:
-        error = f"Error: {e}"
-
-    if error:
-        with db.get_conn() as conn:
-            order, plates = db.order_detail(conn, order_id)
-            cities = db.distinct_cities(conn)
-        return render_template("record_detail.html", order=order, plates=plates,
-                               cities=cities, categories=FORM_PLATE_TYPES, error=error), 400
+        return _record_detail_error(order_id, f"Error: {e}")
     return redirect(url_for("record_detail", order_id=order_id))
 
 

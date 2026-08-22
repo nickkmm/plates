@@ -17,9 +17,9 @@
     th { background:#f6f6f6; }
     .plates { color:#444; font-size:.85rem; }
     .actions { white-space:nowrap; }
-    .actions a.ver, .actions button { display:inline-block; border:0; border-radius:6px; padding:.38rem .8rem; font-size:.82rem; cursor:pointer; text-decoration:none; }
-    .actions a.ver { background:#0b6bcb; color:#fff; margin-right:.4rem; }
-    .actions a.ver:hover { background:#095bb0; }
+    a.ver, .actions button { display:inline-block; border:0; border-radius:6px; padding:.38rem .8rem; font-size:.82rem; cursor:pointer; text-decoration:none; }
+    a.ver { background:#0b6bcb; color:#fff; margin-right:.4rem; }
+    a.ver:hover { background:#095bb0; }
     .actions button.del { background:#c33; color:#fff; }
     .actions button.del:hover { background:#b02a2a; }
     .search { display:flex; gap:.5rem; margin-bottom:1.2rem; }
@@ -60,7 +60,7 @@
               <span style="color:#b50">Ya existe</span> —
               {% for o in r.matches %}
                 pedido {{ o.order_number }} ({{ o.order_date }}, {{ o.requested_by }})
-                <a href="{{ url_for('record_detail', order_id=o.order_id) }}">ver pedido</a>{% if not loop.last %}, {% endif %}
+                <a class="ver" href="{{ url_for('record_detail', order_id=o.order_id) }}">ver pedido</a>{% if not loop.last %}, {% endif %}
               {% endfor %}
             {% else %}
               <span style="color:#1a9c5b">No encontrada</span>
@@ -107,7 +107,7 @@
     <p>No se encontró ninguna placa que coincida con "{{ query }}".</p>
     {% endif %}
   {% else %}
-  <p class="muted">Las 50 más recientes (por orden de carga). Eliminar borra la orden y sus placas, y recalcula el inventario.</p>
+  <p class="muted">Las 50 más recientes (por orden de carga).{% if session.get('role') != 'consulta' %} Eliminar borra la orden y sus placas, y recalcula el inventario.{% endif %}</p>
   {% if rows %}
   <table>
     <thead>
@@ -123,11 +123,13 @@
         <td>{{ r.total_qty }}</td>
         <td class="actions">
           <a class="ver" href="{{ url_for('record_detail', order_id=r.id) }}">Ver</a>
+          {% if session.get('role') != 'consulta' %}
           <form method="post" action="{{ url_for('records_delete') }}" style="display:inline"
                 onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} ({{ r.total_qty }} placa(s))?');">
             <input type="hidden" name="order_id" value="{{ r.id }}">
             <button class="del" type="submit">Eliminar</button>
           </form>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

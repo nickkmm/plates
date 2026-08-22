@@ -501,116 +501,320 @@ class TestRecordDetailRoute:
         html = resp.data.decode()
         assert 'name="plate_number"' in html
         assert 'name="plate_id"' in html
+        assert f'action="/records/{order_id}/save"' in html
+        assert 'name="order_number"' in html  # header is editable too
+        assert "+ Agregar placa" in html
+        assert "Guardar cambios" in html
+
+    def test_consulta_role_sees_a_read_only_table_not_the_edit_form(self, consulta_client, db_conn):
+        """Regression guard: /records/<id>/save already 403s for 'consulta'
+        (see TestConsultaRole), but the page itself used to render the same
+        editable inputs and 'Guardar' button to every role regardless -- so a
+        consulta user saw something that looked editable but wasn't, which is
+        exactly the confusing behavior reported. No form, no inputs, no save
+        button; the plate's data must still be visible as plain text."""
+        order_id = db.insert_order(db_conn, order_number="2702", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="ROT111", quantity=2),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = consulta_client.get(f"/records/{order_id}")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "ROT111" in html
+        assert 'name="plate_number"' not in html
+        assert 'name="plate_id"' not in html
+        assert "Guardar" not in html
+        assert f'action="/records/{order_id}/save"' not in html
+        assert "Agregar" not in html
+        assert "<form" not in html.split("</nav>")[1]  # no form anywhere past the nav bar
 
 
-class TestRecordPlateUpdateRoute:
+class TestRecordSaveRoute:
     def test_get_and_post_require_login(self, client):
-        resp = client.post("/records/plate/update", data={"order_id": "1", "plate_id": "1"})
+        resp = client.post("/records/1/save", data={})
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/login"
 
-        resp = client.get("/records/plate/update")
-        # GET isn't a registered method for this route, but it must still
-        # never leak past auth into a 200 -- login_required (via 302) or the
-        # framework's own 405 are both acceptable, a 200 is not.
+        resp = client.get("/records/1/save")
         assert resp.status_code != 200
 
-    def test_successful_edit_updates_all_fields_and_redirects(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="2900", order_date=date(2026, 1, 1),
+    def test_updates_the_order_header(self, authenticated_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="3000", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
-                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT200",
-                                      quantity=1, city="CALI"),
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV100", quantity=1),
                          is_possible_duplicate=False)
         with db_conn.cursor() as cur:
-            cur.execute("SELECT id FROM plates WHERE plate_number = 'EDT200'")
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV100'")
             plate_id = cur.fetchone()[0]
         db_conn.commit()
 
-        resp = authenticated_client.post("/records/plate/update", data={
-            "order_id": str(order_id), "plate_id": str(plate_id),
-            "plate_type": "MOTO PARTICULAR", "plate_number": "abc12d", "plate_to": "abc13d",
-            "city": "MEDELLIN", "quantity": "9", "is_voided": "on", "is_plate_annulled": "on",
+        resp = authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3000-B", "order_date": "2026-02-02", "requested_by": "MARIA",
+            "plate_id": [str(plate_id)], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["SAV100"], "plate_to": [""], "city": [""],
+            "quantity": ["1"], "is_plate_annulled": [""],
         })
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == f"/records/{order_id}"
 
         with db_conn.cursor() as cur:
             cur.execute(
-                "SELECT plate_type, plate_number, plate_to, city, quantity, is_voided, "
-                "is_plate_annulled FROM plates WHERE id = %s", (plate_id,),
+                "SELECT order_number, order_date, requested_by FROM production_orders WHERE id = %s",
+                (order_id,),
             )
-            assert cur.fetchone() == (
-                "MOTO PARTICULAR", "ABC12D", "ABC13D", "MEDELLIN", 9, True, True,
-            )
+            assert cur.fetchone() == ("3000-B", date(2026, 2, 2), "MARIA")
 
-    def test_clears_is_possible_duplicate_flag(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="2901", order_date=date(2026, 1, 1),
+    def test_edits_an_existing_plate_in_place(self, authenticated_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="3001", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
-                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT201", quantity=1),
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV200", quantity=1),
                          is_possible_duplicate=True)
         with db_conn.cursor() as cur:
-            cur.execute("SELECT id FROM plates WHERE plate_number = 'EDT201'")
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV200'")
             plate_id = cur.fetchone()[0]
         db_conn.commit()
 
-        authenticated_client.post("/records/plate/update", data={
-            "order_id": str(order_id), "plate_id": str(plate_id),
-            "plate_type": "CARRO PARTICULAR", "plate_number": "EDT201", "quantity": "1",
+        authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3001", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": [str(plate_id)], "plate_type": ["MOTO PARTICULAR"],
+            "plate_number": ["abc12d"], "plate_to": [""], "city": ["CALI"],
+            "quantity": ["7"], "is_plate_annulled": [""],
         })
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT is_possible_duplicate FROM plates WHERE id = %s", (plate_id,))
-            assert cur.fetchone() == (False,)
+            cur.execute(
+                "SELECT plate_type, plate_number, city, quantity, is_possible_duplicate "
+                "FROM plates WHERE id = %s", (plate_id,),
+            )
+            assert cur.fetchone() == ("MOTO PARTICULAR", "ABC12D", "CALI", 7, False)
+            # still just the one plate under this order -- an update, not a duplicate insert
+            cur.execute("SELECT count(*) FROM plates WHERE order_id = %s", (order_id,))
+            assert cur.fetchone()[0] == 1
 
-    def test_recalculates_inventory_after_quantity_change(self, authenticated_client, db_conn):
-        db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
-                                     quantity=100, prepared_by=None)
-        order_id = db.insert_order(db_conn, order_number="2902", order_date=date(2026, 1, 1),
+    def test_order_voided_checkbox_applies_to_every_plate_in_the_order(self, authenticated_client, db_conn):
+        """order_voided is ONE header-level checkbox, not a per-plate field --
+        the 'anulada' word on the schema's plates.is_voided column really
+        means 'the whole order was voided', so checking it must flip every
+        plate row in this order, including one that keeps a real plate_number
+        (the plate was made, then the order got voided after the fact)."""
+        order_id = db.insert_order(db_conn, order_number="3002", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
-                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT202", quantity=5),
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV300", quantity=1),
                          is_possible_duplicate=False)
-        db.recalc_inventory(db_conn)
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV301", quantity=1),
+                         is_possible_duplicate=False)
         with db_conn.cursor() as cur:
-            cur.execute("SELECT id FROM plates WHERE plate_number = 'EDT202'")
-            plate_id = cur.fetchone()[0]
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV300'")
+            id_300 = cur.fetchone()[0]
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV301'")
+            id_301 = cur.fetchone()[0]
         db_conn.commit()
 
-        authenticated_client.post("/records/plate/update", data={
-            "order_id": str(order_id), "plate_id": str(plate_id),
-            "plate_type": "CARRO PARTICULAR", "plate_number": "EDT202", "quantity": "20",
+        authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3002", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "order_voided": "on",
+            "plate_id": [str(id_300), str(id_301)],
+            "plate_type": ["CARRO PARTICULAR", "CARRO PARTICULAR"],
+            "plate_number": ["SAV300", "SAV301"], "plate_to": ["", ""], "city": ["", ""],
+            "quantity": ["1", "1"], "is_plate_annulled": ["", ""],
+        })
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT plate_number, is_voided FROM plates WHERE order_id = %s ORDER BY id",
+                        (order_id,))
+            assert cur.fetchall() == [("SAV300", True), ("SAV301", True)]
+
+    def test_order_detail_page_reflects_the_current_voided_state(self, authenticated_client, db_conn):
+        """The header checkbox must come back checked on reload, computed
+        from the order's actual plates -- not just remembered from the form."""
+        order_id = db.insert_order(db_conn, order_number="3002b", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV302",
+                                      quantity=1, is_voided=True),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = authenticated_client.get(f"/records/{order_id}")
+        html = resp.data.decode()
+        assert '<input type="checkbox" name="order_voided" checked>' in html
+
+    def test_adds_a_new_plate_row_in_the_same_submit(self, authenticated_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="3003", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV400", quantity=1),
+                         is_possible_duplicate=False)
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV400'")
+            existing_id = cur.fetchone()[0]
+        db_conn.commit()
+
+        resp = authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3003", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": [str(existing_id), ""],
+            "plate_type": ["CARRO PARTICULAR", "MOTO PARTICULAR"],
+            "plate_number": ["SAV400", "add50d"], "plate_to": ["", ""],
+            "city": ["", ""], "quantity": ["1", "3"], "is_plate_annulled": ["", ""],
+        })
+        assert resp.status_code == 302
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM plates WHERE order_id = %s", (order_id,))
+            assert cur.fetchone()[0] == 2
+            cur.execute("SELECT plate_type, quantity, order_id FROM plates WHERE plate_number = 'ADD50D'")
+            assert cur.fetchone() == ("MOTO PARTICULAR", 3, order_id)
+
+    def test_removing_a_row_from_the_submit_deletes_it(self, authenticated_client, db_conn):
+        """The form has no explicit delete button/route -- removing a row
+        client-side (JS) before submitting is what deletes it: its plate_id is
+        simply absent from the next save."""
+        order_id = db.insert_order(db_conn, order_number="3004", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV500", quantity=1),
+                         is_possible_duplicate=False)
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV600", quantity=1),
+                         is_possible_duplicate=False)
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV500'")
+            keep_id = cur.fetchone()[0]
+        db_conn.commit()
+
+        # Only SAV500 is submitted -- SAV600's row was removed in the browser.
+        authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3004", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": [str(keep_id)], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["SAV500"], "plate_to": [""], "city": [""],
+            "quantity": ["1"], "is_plate_annulled": [""],
+        })
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT plate_number FROM plates WHERE order_id = %s", (order_id,))
+            assert [r[0] for r in cur.fetchall()] == ["SAV500"]
+
+    def test_removing_every_row_deletes_all_plates_but_keeps_the_order(self, authenticated_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="3005", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV700", quantity=1),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3005", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": [], "plate_type": [], "plate_number": [], "plate_to": [],
+            "city": [], "quantity": [], "is_plate_annulled": [],
+        })
+        assert resp.status_code == 302
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM plates WHERE order_id = %s", (order_id,))
+            assert cur.fetchone()[0] == 0
+            cur.execute("SELECT count(*) FROM production_orders WHERE id = %s", (order_id,))
+            assert cur.fetchone()[0] == 1  # the order itself survives, just empty
+
+    def test_new_row_is_flagged_a_possible_duplicate_against_a_live_plate(self, authenticated_client, db_conn):
+        db.insert_order(db_conn, order_number="3006", order_date=date(2026, 1, 1), requested_by="PEDRO")
+        db.insert_plate(
+            db_conn,
+            order_id=db.insert_order(db_conn, order_number="3007", order_date=date(2026, 1, 1),
+                                      requested_by="PEDRO"),
+            row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV800", quantity=1),
+            is_possible_duplicate=False,
+        )
+        other_order_id = db.insert_order(db_conn, order_number="3008", order_date=date(2026, 1, 1),
+                                          requested_by="MARIA")
+        db_conn.commit()
+
+        authenticated_client.post(f"/records/{other_order_id}/save", data={
+            "order_number": "3008", "order_date": "2026-01-01", "requested_by": "MARIA",
+            "plate_id": [""], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["sav800"], "plate_to": [""], "city": [""],
+            "quantity": ["1"], "is_plate_annulled": [""],
+        })
+
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "SELECT is_possible_duplicate FROM plates WHERE order_id = %s AND plate_number = 'SAV800'",
+                (other_order_id,),
+            )
+            assert cur.fetchone() == (True,)
+
+    def test_recalculates_inventory_after_saving(self, authenticated_client, db_conn):
+        db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
+                                     quantity=100, prepared_by=None)
+        order_id = db.insert_order(db_conn, order_number="3009", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db_conn.commit()
+
+        authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3009", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": [""], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["sav900"], "plate_to": [""], "city": [""],
+            "quantity": ["15"], "is_plate_annulled": [""],
         })
 
         with db_conn.cursor() as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
-            assert cur.fetchone() == (20,)
+            assert cur.fetchone() == (15,)
 
-    def test_invalid_plate_number_rerenders_with_error_and_does_not_save(
-        self, authenticated_client, db_conn
-    ):
-        order_id = db.insert_order(db_conn, order_number="2903", order_date=date(2026, 1, 1),
+    def test_invalid_plate_number_rerenders_with_error_and_saves_nothing(self, authenticated_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="3010", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
-                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT203", quantity=1),
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV111", quantity=1),
                          is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
-            cur.execute("SELECT id FROM plates WHERE plate_number = 'EDT203'")
-            plate_id = cur.fetchone()[0]
         db_conn.commit()
 
-        resp = authenticated_client.post("/records/plate/update", data={
-            "order_id": str(order_id), "plate_id": str(plate_id),
+        resp = authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "SHOULD-NOT-STICK", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": [""], "plate_type": ["CARRO PARTICULAR"],
             # CARRO PARTICULAR requires AAA000 -- all-digits doesn't match.
-            "plate_type": "CARRO PARTICULAR", "plate_number": "123456", "quantity": "1",
+            "plate_number": ["123456"], "plate_to": [""], "city": [""],
+            "quantity": ["1"], "is_plate_annulled": [""],
         })
         assert resp.status_code == 400
         assert b"Error" in resp.data
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT plate_number, quantity FROM plates WHERE id = %s", (plate_id,))
-            assert cur.fetchone() == ("EDT203", 1)
+            # the whole save is one transaction: the header edit didn't stick
+            # either, and the original plate is untouched.
+            cur.execute("SELECT order_number FROM production_orders WHERE id = %s", (order_id,))
+            assert cur.fetchone() == ("3010",)
+            cur.execute("SELECT count(*) FROM plates WHERE order_id = %s", (order_id,))
+            assert cur.fetchone()[0] == 1
+
+    def test_future_date_is_rejected(self, authenticated_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="3011", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db_conn.commit()
+
+        resp = authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3011", "order_date": "2999-01-01", "requested_by": "PEDRO",
+            "plate_id": [], "plate_type": [], "plate_number": [], "plate_to": [],
+            "city": [], "quantity": [], "is_plate_annulled": [],
+        })
+        assert resp.status_code == 400
+        assert "futura" in resp.get_data(as_text=True)
+
+    def test_nonexistent_order_redirects_to_records(self, authenticated_client, clean_db):
+        resp = authenticated_client.post("/records/999999/save", data={
+            "order_number": "X", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": [], "plate_type": [], "plate_number": [], "plate_to": [],
+            "city": [], "quantity": [], "is_plate_annulled": [],
+        })
+        assert resp.status_code == 302
+        assert urlparse(resp.headers["Location"]).path == "/records"
+
 
 
 class TestRecordsDeleteRoute:
@@ -1018,6 +1222,22 @@ class TestConsultaRole:
         assert resp.status_code == 200
         assert b"CNS111" in resp.data
 
+    def test_recent_orders_list_hides_the_delete_button(self, consulta_client, db_conn):
+        """/records/delete already 403s for 'consulta' (see below), but the
+        recent-orders list used to show the 'Eliminar' button to every role
+        regardless -- same class of bug as the plate-edit form: it looked
+        available even though clicking it would just 403."""
+        db.insert_order(db_conn, order_number="5002", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        db_conn.commit()
+
+        resp = consulta_client.get("/records")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "5002" in html
+        assert "Eliminar" not in html
+        assert 'action="/records/delete"' not in html
+
     def test_ingest_get_is_forbidden(self, consulta_client):
         resp = consulta_client.get("/ingest")
         assert resp.status_code == 403
@@ -1050,12 +1270,11 @@ class TestConsultaRole:
         resp = consulta_client.post("/records/delete", data={})
         assert resp.status_code == 403
 
-    def test_record_plate_update_is_forbidden(self, consulta_client):
-        """Reconciliation guard: /records/plate/update (edit a plate from the
-        Registro detail page) is a write route added alongside this role
-        system -- it must stay on the default-deny @login_required, not the
-        consult-only allowlist."""
-        resp = consulta_client.post("/records/plate/update", data={})
+    def test_record_save_is_forbidden(self, consulta_client):
+        """Reconciliation guard: /records/<id>/save (the consolidated
+        edit-order-in-one-shot route) is a write route -- it must stay on the
+        default-deny @login_required, not the consult-only allowlist."""
+        resp = consulta_client.post("/records/1/save", data={})
         assert resp.status_code == 403
 
     def test_admin_client_is_unaffected_full_access_regression_guard(

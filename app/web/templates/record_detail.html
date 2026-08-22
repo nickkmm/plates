@@ -5,77 +5,171 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Plates — Orden {{ order.order_number }}</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    :root { --green:#1a9c5b; --blue:#0b6bcb; --red:#d33; --ink:#222; }
+    body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
     h1 { font-size: 1.3rem; }
     .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
     .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
     .tabs a:hover { background:#f3f6fb; }
-    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .tabs a.on { color:var(--blue); border-bottom:3px solid var(--blue); margin-bottom:-2px; }
     .meta { background:#f7f7f7; border:1px solid #e3e3e3; border-radius:8px; padding:.8rem 1rem; margin-bottom:1rem; font-size:.95rem; }
     .meta b { color:#000; }
-    .error { background:#fdecec; border:1px solid #d33; border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
+    .error { background:#fdecec; border:1px solid var(--red); border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
+    fieldset { border:1px solid #ddd; border-radius:10px; margin-bottom:1.2rem; padding:1rem; }
+    legend { font-weight:600; padding:0 .4rem; }
+    .header { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.8rem; align-items:end; }
+    label { font-size:.8rem; color:#555; display:flex; flex-direction:column; gap:.25rem; }
+    label.check { flex-direction:row; align-items:center; gap:.4rem; font-size:.9rem; }
+    label.check input { width:auto; }
     table { border-collapse:collapse; width:100%; font-size:.9rem; }
     th, td { border:1px solid #e3e3e3; padding:.4rem .5rem; text-align:left; vertical-align:middle; }
-    th { background:#f6f6f6; }
+    th { background:#f6f6f6; font-size:.78rem; }
     td.r, th.r { text-align:right; }
-    input[type=text], input[type=number], select { width:100%; box-sizing:border-box; padding:.3rem; border:1px solid #ccc; border-radius:5px; font-size:.9rem; }
+    td.c { text-align:center; }
+    input, select { padding:.3rem; border:1px solid #ccc; border-radius:5px; font-size:.9rem; box-sizing:border-box; width:100%; }
     input[type=number] { width:5.5rem; }
+    input[type=checkbox] { width:auto; }
     .plate-num { text-transform:uppercase; }
     .tag { font-size:.8rem; color:#b50; }
     .muted { color:#777; }
-    button { border:0; border-radius:5px; padding:.4rem .7rem; font-size:.85rem; cursor:pointer; }
-    .save { background:#1a5; color:#fff; }
-    a.back { display:inline-block; margin-top:1.2rem; background:#0b6bcb; color:#fff; text-decoration:none; padding:.5rem .95rem; border-radius:7px; font-size:.9rem; }
+    button, .btn-link { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
+    .add { background:var(--blue); color:#fff; margin-top:.6rem; }
+    .save-row { display:flex; justify-content:flex-end; align-items:center; gap:.7rem; margin-top:.8rem; }
+    .submit { background:var(--green); color:#fff; font-size:1.05rem; padding:.65rem 1.4rem; }
+    .rm { background:#eee; color:#900; padding:.3rem .55rem; font-size:.85rem; }
+    a.back { display:inline-block; background:var(--blue); color:#fff; text-decoration:none; padding:.5rem .95rem; border-radius:7px; font-size:.9rem; }
+    .no-form-back { margin-top:1.2rem; }
     a.back:hover { background:#095bb0; }
   </style>
 </head>
 <body>
   {% include "_nav.html" %}
 
+  {% set can_edit = session.get('role') != 'consulta' %}
   <datalist id="cities">{% for c in cities %}<option value="{{ c }}">{% endfor %}</datalist>
+  {% if can_edit %}<datalist id="requesters">{% for r in requesters %}<option value="{{ r }}">{% endfor %}</datalist>{% endif %}
 
   <h1>Orden {{ order.order_number }}</h1>
-  <div class="meta">
-    <b>Fecha:</b> {{ order.order_date }} &nbsp;·&nbsp;
-    <b>Solicitado por:</b> {{ order.requested_by }}
-  </div>
-
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
+  {% if can_edit %}
+  <form method="post" action="{{ url_for('record_save', order_id=order.id) }}">
+    <fieldset>
+      <legend>Datos de la orden</legend>
+      <div class="header">
+        <label>Fecha<input type="date" name="order_date" value="{{ order.order_date }}" max="{{ today }}" required></label>
+        <label>N° de orden<input type="text" name="order_number" value="{{ order.order_number }}" required></label>
+        <label>Solicitado por<input type="text" name="requested_by" list="requesters" value="{{ order.requested_by }}" required></label>
+        <label class="check"><input type="checkbox" name="order_voided" {{ 'checked' if order_voided else '' }}> Orden anulada</label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Placas</legend>
+      <table>
+        <thead>
+          <tr>
+            <th>Tipo</th><th>Placa</th><th>Hasta</th><th>Ciudad</th><th class="r">Cantidad</th>
+            <th>Placa anulada</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="lines">
+          {% for p in plates %}
+          <tr class="line">
+            <input type="hidden" name="plate_id" value="{{ p.id }}">
+            <td>
+              <select name="plate_type">
+                {% for c in categories %}<option value="{{ c }}" {% if p.plate_type==c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+              </select>
+            </td>
+            <td><input type="text" name="plate_number" class="plate-num" value="{{ p.plate_number or '' }}"></td>
+            <td><input type="text" name="plate_to" class="plate-num" value="{{ p.plate_to or '' }}"></td>
+            <td><input type="text" name="city" list="cities" value="{{ p.city or '' }}"></td>
+            <td class="r"><input type="number" name="quantity" value="{{ p.quantity }}" min="0"></td>
+            <td class="c">
+              <input type="hidden" name="is_plate_annulled" value="{{ 'on' if p.is_plate_annulled else '' }}">
+              <input type="checkbox" {{ 'checked' if p.is_plate_annulled else '' }}
+                     onchange="this.previousElementSibling.value = this.checked ? 'on' : ''">
+            </td>
+            <td><button type="button" class="rm" onclick="rmLine(this, true)">✕</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="button" class="add" onclick="addLine()">+ Agregar placa</button>
+
+      <!-- Plantilla de fila nueva: se clona desde acá, plate_id vacío = INSERT. -->
+      <template id="lineTpl">
+        <tr class="line">
+          <input type="hidden" name="plate_id" value="">
+          <td>
+            <select name="plate_type" required>
+              <option value="" selected>— elegí el tipo —</option>
+              {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            </select>
+          </td>
+          <td><input type="text" name="plate_number" class="plate-num"></td>
+          <td><input type="text" name="plate_to" class="plate-num"></td>
+          <td><input type="text" name="city" list="cities"></td>
+          <td class="r"><input type="number" name="quantity" value="1" min="0"></td>
+          <td class="c">
+            <input type="hidden" name="is_plate_annulled" value="">
+            <input type="checkbox" onchange="this.previousElementSibling.value = this.checked ? 'on' : ''">
+          </td>
+          <td><button type="button" class="rm" onclick="rmLine(this, false)">✕</button></td>
+        </tr>
+      </template>
+    </fieldset>
+
+    <div class="save-row">
+      <a class="back" href="{{ url_for('records') }}">← Volver a Registros</a>
+      <button type="submit" class="submit">Guardar cambios</button>
+    </div>
+  </form>
+
+  <script>
+    function addLine() {
+      const tbody = document.getElementById('lines');
+      const frag = document.getElementById('lineTpl').content.cloneNode(true);
+      tbody.appendChild(frag);
+    }
+    // isExisting=true -> ya estaba guardada: confirmar, porque al guardar se elimina de verdad.
+    // isExisting=false -> fila recién agregada y todavía sin guardar: se borra sin preguntar.
+    function rmLine(btn, isExisting) {
+      if (isExisting && !confirm('¿Quitar esta placa? Se eliminará al guardar los cambios.')) return;
+      btn.closest('tr').remove();
+    }
+  </script>
+  {% else %}
+  <div class="meta">
+    <b>Fecha:</b> {{ order.order_date }} &nbsp;·&nbsp;
+    <b>Solicitado por:</b> {{ order.requested_by }} &nbsp;·&nbsp;
+    <b>Orden anulada:</b> {{ 'Sí' if order_voided else 'No' }}
+  </div>
   <table>
     <thead>
       <tr>
         <th>Tipo</th><th>Placa</th><th>Hasta</th><th>Ciudad</th><th class="r">Cantidad</th>
-        <th>Orden anulada</th><th>Placa anulada</th><th></th>
+        <th>Placa anulada</th>
       </tr>
     </thead>
     <tbody>
       {% for p in plates %}
       <tr>
-        <form method="post" action="{{ url_for('record_plate_update') }}">
-        <input type="hidden" name="plate_id" value="{{ p.id }}">
-        <input type="hidden" name="order_id" value="{{ order.id }}">
-        <td>
-          <select name="plate_type">
-            {% for c in categories %}<option value="{{ c }}" {% if p.plate_type==c %}selected{% endif %}>{{ c }}</option>{% endfor %}
-          </select>
-        </td>
-        <td><input type="text" name="plate_number" class="plate-num" value="{{ p.plate_number or '' }}"></td>
-        <td><input type="text" name="plate_to" class="plate-num" value="{{ p.plate_to or '' }}"></td>
-        <td><input type="text" name="city" list="cities" value="{{ p.city or '' }}"></td>
-        <td class="r"><input type="number" name="quantity" value="{{ p.quantity }}" min="0"></td>
-        <td style="text-align:center"><input type="checkbox" name="is_voided" {{ 'checked' if p.is_voided else '' }}></td>
-        <td style="text-align:center"><input type="checkbox" name="is_plate_annulled" {{ 'checked' if p.is_plate_annulled else '' }}></td>
-        <td><button class="save" type="submit">Guardar</button></td>
-        </form>
+        <td>{{ p.plate_type }}</td>
+        <td>{{ p.plate_number or '—' }}</td>
+        <td>{{ p.plate_to or '—' }}</td>
+        <td>{{ p.city or '—' }}</td>
+        <td class="r">{{ p.quantity }}</td>
+        <td class="c">{{ 'Sí' if p.is_plate_annulled else '—' }}</td>
       </tr>
       {% endfor %}
     </tbody>
     <tfoot>
-      <tr><td colspan="4" class="r"><b>Total placas</b></td><td class="r"><b>{{ plates | sum(attribute='quantity') }}</b></td><td colspan="3"></td></tr>
+      <tr><td colspan="4" class="r"><b>Total placas</b></td><td class="r"><b>{{ plates | sum(attribute='quantity') }}</b></td><td></td></tr>
     </tfoot>
   </table>
-
-  <a class="back" href="{{ url_for('records') }}">← Volver a Registros</a>
+  <a class="back no-form-back" href="{{ url_for('records') }}">← Volver a Registros</a>
+  {% endif %}
 </body>
 </html>
