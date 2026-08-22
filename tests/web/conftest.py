@@ -31,3 +31,17 @@ def authenticated_client(client, test_credentials):
     username, password = test_credentials
     client.post("/login", data={"username": username, "password": password})
     return client
+
+
+@pytest.fixture
+def consulta_client(client, consulta_credentials):
+    """A test client logged in as the read-only 'consulta'-role test user (see
+    tests/conftest.py's CONSULTA_USERNAME/CONSULTA_PASSWORD and AUTH_ROLES).
+
+    Used to assert the default-deny role restrictions: full-access-only
+    routes must 403 for this client while the small consult-only allowlist
+    (/records, /records/<id>) still returns 200.
+    """
+    username, password = consulta_credentials
+    client.post("/login", data={"username": username, "password": password})
+    return client

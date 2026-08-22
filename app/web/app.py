@@ -14,7 +14,10 @@ Routes:
   GET  /healthz     -> liveness probe (open)
 
 All routes except /login, /logout and /healthz require an authenticated
-session (see app.web.auth.login_required).
+session. Most also require a full-access role (admin/producción); see
+app.web.auth.login_required. A small allowlist of read-only lookup routes
+(/records, /records/<id>) instead accepts any authenticated role, including
+the read-only 'consulta' role -- see app.web.auth.consulta_allowed.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES, validate_plate
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
 from app.core.process import find_duplicate_plate_numbers, process_rows
 from app.web import auth
-from app.web.auth import login_required
+from app.web.auth import consulta_allowed, login_required
 
 app = Flask(__name__)
 
@@ -229,6 +232,7 @@ def login_post():
     if auth.verify_credentials(username, password):
         session.clear()
         session["user"] = username
+        session["role"] = auth.role_for(username)
         session.permanent = True
         return redirect(next_url if auth.is_safe_next(next_url) else url_for("ingest"))
     return (
@@ -413,7 +417,7 @@ def inventory_alistado():
 
 
 @app.get("/records")
-@login_required
+@consulta_allowed
 def records():
     query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
@@ -426,8 +430,11 @@ def records():
     return render_template("records.html", rows=rows, query=query, results=results)
 
 
+# NOTE: /records/search-pdf (a PDF-based consult-only search, added
+# separately) must also use @consulta_allowed, not @login_required -- it's a
+# pure lookup route, no writes.
 @app.get("/records/<int:order_id>")
-@login_required
+@consulta_allowed
 def record_detail(order_id):
     with db.get_conn() as conn:
         order, plates = db.order_detail(conn, order_id)
