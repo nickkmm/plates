@@ -129,6 +129,49 @@ class TestLogin:
         assert urlparse(resp.headers["Location"]).path == "/records"
 
 
+class TestStaleSessionPredatingRoles:
+    """Regression guard for a real production incident (2026-08-22): a session
+    cookie created before roles existed has 'user' but no 'role' key. Both
+    decorators used to treat that as "logged in, role is None, None isn't a
+    full-access role" -> a dead-end 403 with no way to recover short of
+    manually clearing cookies. It must instead be treated like "not logged
+    in" -- bounce to /login so a fresh login (which does set 'role') fixes
+    it themselves."""
+
+    def test_full_access_route_redirects_to_login_instead_of_403(self, client):
+        with client.session_transaction() as sess:
+            sess["user"] = "someone"  # no "role" key -- simulates a pre-roles cookie
+        resp = client.get("/ingest")
+        assert resp.status_code == 302
+        assert urlparse(resp.headers["Location"]).path == "/login"
+
+    def test_consulta_allowed_route_also_redirects_to_login(self, client):
+        with client.session_transaction() as sess:
+            sess["user"] = "someone"
+        resp = client.get("/records")
+        assert resp.status_code == 302
+        assert urlparse(resp.headers["Location"]).path == "/login"
+
+    def test_the_stale_session_is_cleared(self, client):
+        with client.session_transaction() as sess:
+            sess["user"] = "someone"
+        client.get("/ingest")
+        with client.session_transaction() as sess:
+            assert "user" not in sess
+
+    def test_a_fresh_login_recovers_full_access(self, client, test_credentials):
+        """The whole point: logging out/in again (not clearing cookies by
+        hand) is enough to fix it, since a real login always sets 'role'."""
+        with client.session_transaction() as sess:
+            sess["user"] = "someone"
+        client.get("/ingest")  # bounced, session cleared
+
+        username, password = test_credentials
+        client.post("/login", data={"username": username, "password": password})
+        resp = client.get("/ingest")
+        assert resp.status_code == 200
+
+
 class TestLogout:
     def test_logout_clears_session(self, client, test_credentials):
         username, password = test_credentials
