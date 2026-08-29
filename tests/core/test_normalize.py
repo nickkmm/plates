@@ -187,6 +187,13 @@ class TestValidatePlate:
     def test_moto_particular_valid_lowercase(self):
         assert validate_plate("kwd91g", "MOTO PARTICULAR") == "KWD91G"
 
+    def test_moto_particular_valid_without_trailing_letter(self):
+        """Very old moto plates were issued as AAA00, with no trailing letter."""
+        assert validate_plate("KWD91", "MOTO PARTICULAR") == "KWD91"
+
+    def test_moto_particular_valid_without_trailing_letter_lowercase(self):
+        assert validate_plate("kwd91", "MOTO PARTICULAR") == "KWD91"
+
     def test_carro_particular_valid(self):
         assert validate_plate("HMF922", "CARRO PARTICULAR") == "HMF922"
 
