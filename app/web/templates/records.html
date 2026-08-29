@@ -107,7 +107,7 @@
     <p>No se encontró ninguna placa que coincida con "{{ query }}".</p>
     {% endif %}
   {% else %}
-  <p class="muted">Las 50 más recientes (por orden de carga).{% if session.get('role') != 'consulta' %} Eliminar borra la orden y sus placas, y recalcula el inventario.{% endif %}</p>
+  <p class="muted">Las 50 más recientes (por orden de carga).{% if session.get('role') in full_access_roles %} Eliminar borra la orden y sus placas, y recalcula el inventario.{% endif %}</p>
   {% if rows %}
   <table>
     <thead>
@@ -123,7 +123,7 @@
         <td>{{ r.total_qty }}</td>
         <td class="actions">
           <a class="ver" href="{{ url_for('record_detail', order_id=r.id) }}">Ver</a>
-          {% if session.get('role') != 'consulta' %}
+          {% if session.get('role') in full_access_roles %}
           <form method="post" action="{{ url_for('records_delete') }}" style="display:inline"
                 onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} ({{ r.total_qty }} placa(s))?');">
             <input type="hidden" name="order_id" value="{{ r.id }}">
