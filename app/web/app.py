@@ -65,6 +65,14 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
 )
 
+@app.context_processor
+def _inject_full_access_roles() -> dict:
+    """Expose auth.FULL_ACCESS_ROLES to templates, so they gate edit/delete UI
+    on role membership (not a hardcoded '!= consulta') -- keeps templates in
+    sync automatically if a role's access level ever changes again."""
+    return {"full_access_roles": auth.FULL_ACCESS_ROLES}
+
+
 # Plate TYPES are what the user picks per plate (granular, 5). Inventory
 # CATEGORIES are the 3 materials those types discount from (público merged).
 FORM_PLATE_TYPES = list(PLATE_TYPES)
@@ -272,12 +280,12 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
 def _landing_url() -> str:
     """Where a logged-in user lands with no specific ?next= target.
 
-    Full-access roles start at Registrar (today's default). The read-only
-    'consulta' role can't reach /ingest at all, so sending it there would
-    just bounce into a 403 -- send it to Registros instead, the one place it
-    can actually use.
+    Full-access roles start at Registrar (today's default). Every other role
+    (read-only: 'consulta', 'produccion') can't reach /ingest at all, so
+    sending it there would just bounce into a 403 -- send it to Registros
+    instead, the one place it can actually use.
     """
-    if session.get("role") == auth.ROLE_CONSULTA:
+    if session.get("role") not in auth.FULL_ACCESS_ROLES:
         return url_for("records")
     return url_for("ingest")
 
