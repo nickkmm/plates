@@ -164,7 +164,7 @@ def inventory_category(plate_type: str | None) -> str | None:
 
 # Plate format per TYPE (Colombian plates).
 PLATE_PATTERNS = {
-    "MOTO PARTICULAR": re.compile(r"[A-Z]{3}\d{2}[A-Z]"),       # AAA00A  e.g. KWD91G
+    "MOTO PARTICULAR": re.compile(r"[A-Z]{3}\d{2}[A-Z]?"),       # AAA00A or AAA00 (old motos had no trailing letter)
     "CARRO PARTICULAR": re.compile(r"[A-Z]{3}\d{3}"),            # AAA000  e.g. HMF922
     "CARRO PÚBLICO": re.compile(r"[A-Z]{3}\d{3}"),               # AAA000
     "MOTO CARRO PARTICULAR": re.compile(r"\d{3}[A-Z]{3}"),       # 000AAA  e.g. 923NAA
@@ -174,7 +174,7 @@ PLATE_PATTERNS = {
 }
 
 _PLATE_DESC = {
-    "MOTO PARTICULAR": "3 letras, 2 números y 1 letra (ej. KWD91G)",
+    "MOTO PARTICULAR": "3 letras y 2 números, con o sin 1 letra al final (ej. KWD91G o KWD91)",
     "CARRO PARTICULAR": "3 letras y 3 números (ej. HMF922)",
     "CARRO PÚBLICO": "3 letras y 3 números (ej. HMF922)",
     "MOTO CARRO PARTICULAR": "3 números y 3 letras (ej. 923NAA)",
