@@ -38,12 +38,22 @@ TEST_PASSWORD = "testpass123"
 CONSULTA_USERNAME = "consultauser"
 CONSULTA_PASSWORD = "consultapass123"
 
+# A third user with the 'produccion' role -- also read-only today (demoted
+# from its original full-access grant once real usage showed it should only
+# ever look things up), but kept as its own role/test user in case it
+# diverges from 'consulta' again later.
+PRODUCCION_USERNAME = "produccionuser"
+PRODUCCION_PASSWORD = "produccionpass123"
+
 os.environ["SECRET_KEY"] = "test-secret-key-do-not-use-in-production"
 os.environ["AUTH_USERS"] = (
     f"{TEST_USERNAME}:{generate_password_hash(TEST_PASSWORD)},"
-    f"{CONSULTA_USERNAME}:{generate_password_hash(CONSULTA_PASSWORD)}"
+    f"{CONSULTA_USERNAME}:{generate_password_hash(CONSULTA_PASSWORD)},"
+    f"{PRODUCCION_USERNAME}:{generate_password_hash(PRODUCCION_PASSWORD)}"
 )
-os.environ["AUTH_ROLES"] = f"{CONSULTA_USERNAME}:consulta"
+os.environ["AUTH_ROLES"] = (
+    f"{CONSULTA_USERNAME}:consulta,{PRODUCCION_USERNAME}:produccion"
+)
 
 # --- Test database ----------------------------------------------------------
 # Point at a SEPARATE database (`plates_test`) on the same already-running
@@ -197,3 +207,10 @@ def consulta_credentials() -> tuple[str, str]:
     """The (username, password) pair for the read-only 'consulta'-role test
     user, baked into AUTH_USERS/AUTH_ROLES for this test run."""
     return CONSULTA_USERNAME, CONSULTA_PASSWORD
+
+
+@pytest.fixture
+def produccion_credentials() -> tuple[str, str]:
+    """The (username, password) pair for the read-only 'produccion'-role test
+    user, baked into AUTH_USERS/AUTH_ROLES for this test run."""
+    return PRODUCCION_USERNAME, PRODUCCION_PASSWORD

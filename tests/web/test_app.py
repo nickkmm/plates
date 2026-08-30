@@ -1329,3 +1329,77 @@ class TestConsultaRole:
         assert authenticated_client.get("/review").status_code == 200
         assert authenticated_client.get("/inventory").status_code == 200
         assert authenticated_client.get("/records").status_code == 200
+
+
+class TestProduccionRole:
+    """'produccion' started as a full-access role and was demoted to
+    read-only -- same access level as 'consulta' -- once real usage showed it
+    should only ever look things up (see auth.FULL_ACCESS_ROLES). Mirrors
+    TestConsultaRole to guard against the two roles drifting apart again."""
+
+    def test_records_returns_200(self, produccion_client, db_conn):
+        db.insert_order(db_conn, order_number="5100", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        db_conn.commit()
+
+        resp = produccion_client.get("/records")
+        assert resp.status_code == 200
+        assert b"5100" in resp.data
+
+    def test_recent_orders_list_hides_the_delete_button(self, produccion_client, db_conn):
+        db.insert_order(db_conn, order_number="5101", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        db_conn.commit()
+
+        resp = produccion_client.get("/records")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "5101" in html
+        assert "Eliminar" not in html
+        assert 'action="/records/delete"' not in html
+
+    def test_record_detail_shows_a_read_only_table_not_the_edit_form(self, produccion_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="5102", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="PRD111"),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = produccion_client.get(f"/records/{order_id}")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "PRD111" in html
+        assert 'name="plate_number"' not in html
+        assert f'action="/records/{order_id}/save"' not in html
+
+    def test_ingest_get_is_forbidden(self, produccion_client):
+        resp = produccion_client.get("/ingest")
+        assert resp.status_code == 403
+
+    def test_ingest_post_is_forbidden(self, produccion_client):
+        resp = produccion_client.post("/ingest", data={})
+        assert resp.status_code == 403
+
+    def test_review_is_forbidden(self, produccion_client):
+        resp = produccion_client.get("/review")
+        assert resp.status_code == 403
+
+    def test_inventory_is_forbidden(self, produccion_client):
+        resp = produccion_client.get("/inventory")
+        assert resp.status_code == 403
+
+    def test_records_delete_is_forbidden(self, produccion_client):
+        resp = produccion_client.post("/records/delete", data={})
+        assert resp.status_code == 403
+
+    def test_record_save_is_forbidden(self, produccion_client):
+        resp = produccion_client.post("/records/1/save", data={})
+        assert resp.status_code == 403
+
+    def test_nav_hides_full_access_only_links(self, produccion_client):
+        resp = produccion_client.get("/records")
+        html = resp.data.decode()
+        assert 'href="/ingest"' not in html
+        assert 'href="/review"' not in html
+        assert 'href="/inventory"' not in html

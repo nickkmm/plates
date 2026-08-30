@@ -45,3 +45,13 @@ def consulta_client(client, consulta_credentials):
     username, password = consulta_credentials
     client.post("/login", data={"username": username, "password": password})
     return client
+
+
+@pytest.fixture
+def produccion_client(client, produccion_credentials):
+    """A test client logged in as the 'produccion'-role test user -- read-only
+    today, same access level as 'consulta' (see tests/conftest.py's
+    PRODUCCION_USERNAME/PRODUCCION_PASSWORD and AUTH_ROLES)."""
+    username, password = produccion_credentials
+    client.post("/login", data={"username": username, "password": password})
+    return client

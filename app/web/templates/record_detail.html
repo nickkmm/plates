@@ -45,7 +45,7 @@
 <body>
   {% include "_nav.html" %}
 
-  {% set can_edit = session.get('role') != 'consulta' %}
+  {% set can_edit = session.get('role') in full_access_roles %}
   <datalist id="cities">{% for c in cities %}<option value="{{ c }}">{% endfor %}</datalist>
   {% if can_edit %}<datalist id="requesters">{% for r in requesters %}<option value="{{ r }}">{% endfor %}</datalist>{% endif %}
 

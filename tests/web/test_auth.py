@@ -153,6 +153,20 @@ class TestRoleFor:
         assert auth.role_for("worker") == auth.ROLE_PRODUCCION
 
 
+class TestFullAccessRoles:
+    def test_produccion_is_not_full_access(self):
+        """'produccion' was demoted to read-only (same as 'consulta') once
+        real usage showed it should only ever look things up -- regression
+        guard against it silently regaining full access."""
+        assert auth.ROLE_PRODUCCION not in auth.FULL_ACCESS_ROLES
+
+    def test_admin_is_full_access(self):
+        assert auth.ROLE_ADMIN in auth.FULL_ACCESS_ROLES
+
+    def test_consulta_is_not_full_access(self):
+        assert auth.ROLE_CONSULTA not in auth.FULL_ACCESS_ROLES
+
+
 class TestIsSafeNext:
     def test_none_is_unsafe(self):
         assert auth.is_safe_next(None) is False
