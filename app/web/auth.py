@@ -29,7 +29,11 @@ from werkzeug.security import check_password_hash
 ROLE_ADMIN = "admin"
 ROLE_PRODUCCION = "produccion"
 ROLE_CONSULTA = "consulta"
-FULL_ACCESS_ROLES = {ROLE_ADMIN, ROLE_PRODUCCION}
+# 'produccion' started as a full-access role and was demoted to read-only
+# (same as 'consulta') once real usage clarified it should only ever look
+# things up. Kept as its own role (rather than just aliased to 'consulta')
+# in case it needs to diverge again later.
+FULL_ACCESS_ROLES = {ROLE_ADMIN}
 
 
 def load_users() -> dict[str, str]:
