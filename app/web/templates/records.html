@@ -7,6 +7,7 @@
   <style>
     body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
     h1 { font-size: 1.4rem; }
+    h2 { font-size: 1.05rem; margin-top: 2rem; }
     .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
     .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
     .tabs a:hover { background:#f3f6fb; }
@@ -31,10 +32,10 @@
 </head>
 <body>
   {% include "_nav.html" %}
-  <h1>{{ 'Búsqueda de placa' if query else 'Últimas órdenes registradas' }}</h1>
+  <h1>{{ 'Búsqueda' if query else 'Últimas órdenes registradas' }}</h1>
 
   <form class="search" method="get" action="{{ url_for('records') }}">
-    <input type="text" name="q" value="{{ query or '' }}" placeholder="Buscar placa, ej. ARN911" autofocus>
+    <input type="text" name="q" value="{{ query or '' }}" placeholder="Buscar placa u orden, ej. ARN911 o 1234" autofocus>
     <button type="submit">Buscar</button>
     {% if query %}<a class="clear" href="{{ url_for('records') }}">✕ limpiar</a>{% endif %}
   </form>
@@ -76,7 +77,13 @@
   {% endif %}
 
   {% if query %}
+    {% if order_matches %}
+    <h2>Coincidencias por número de orden</h2>
+    <p class="muted">{{ order_matches|length }} orden(es) cuyo número coincide con "{{ query }}".</p>
+    {% with rows = order_matches %}{% include "_orders_table.html" %}{% endwith %}
+    {% endif %}
     {% if results %}
+    {% if order_matches %}<h2>Coincidencias por placa</h2>{% endif %}
     <p class="muted">{{ results|length }} resultado(s) para "{{ query }}" en toda la base.</p>
     <table>
       <thead>
@@ -103,38 +110,14 @@
         {% endfor %}
       </tbody>
     </table>
-    {% else %}
-    <p>No se encontró ninguna placa que coincida con "{{ query }}".</p>
+    {% endif %}
+    {% if not order_matches and not results %}
+    <p>No se encontró ninguna placa ni orden que coincida con "{{ query }}".</p>
     {% endif %}
   {% else %}
   <p class="muted">Las 50 más recientes (por orden de carga).{% if session.get('role') in full_access_roles %} Eliminar borra la orden y sus placas, y recalcula el inventario.{% endif %}</p>
   {% if rows %}
-  <table>
-    <thead>
-      <tr><th>Fecha</th><th>Orden</th><th>Solicitado</th><th>Ciudad</th><th title="total de placas (suma de cantidades)">Placas</th><th>Acciones</th></tr>
-    </thead>
-    <tbody>
-      {% for r in rows %}
-      <tr>
-        <td>{{ r.order_date }}</td>
-        <td>{{ r.order_number }}</td>
-        <td>{{ r.requested_by }}</td>
-        <td>{{ r.cities|join(', ') if r.cities else '—' }}</td>
-        <td>{{ r.total_qty }}</td>
-        <td class="actions">
-          <a class="ver" href="{{ url_for('record_detail', order_id=r.id) }}">Ver</a>
-          {% if session.get('role') in full_access_roles %}
-          <form method="post" action="{{ url_for('records_delete') }}" style="display:inline"
-                onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} ({{ r.total_qty }} placa(s))?');">
-            <input type="hidden" name="order_id" value="{{ r.id }}">
-            <button class="del" type="submit">Eliminar</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {% include "_orders_table.html" %}
   {% else %}
   <p>No hay órdenes registradas todavía.</p>
   {% endif %}
