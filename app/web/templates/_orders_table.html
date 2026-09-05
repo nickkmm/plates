@@ -1,0 +1,26 @@
+<table>
+  <thead>
+    <tr><th>Fecha</th><th>Orden</th><th>Solicitado</th><th>Ciudad</th><th title="total de placas (suma de cantidades)">Placas</th><th>Acciones</th></tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.order_date }}</td>
+      <td>{{ r.order_number }}</td>
+      <td>{{ r.requested_by }}</td>
+      <td>{{ r.cities|join(', ') if r.cities else '—' }}</td>
+      <td>{{ r.total_qty }}</td>
+      <td class="actions">
+        <a class="ver" href="{{ url_for('record_detail', order_id=r.id) }}">Ver</a>
+        {% if session.get('role') in full_access_roles %}
+        <form method="post" action="{{ url_for('records_delete') }}" style="display:inline"
+              onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} ({{ r.total_qty }} placa(s))?');">
+          <input type="hidden" name="order_id" value="{{ r.id }}">
+          <button class="del" type="submit">Eliminar</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

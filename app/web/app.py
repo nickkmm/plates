@@ -530,11 +530,14 @@ def records():
     with db.get_conn() as conn:
         if query:
             results = db.search_plates_by_number(conn, query)
+            order_matches = db.search_orders_by_number(conn, query)
             rows = None
         else:
             results = None
+            order_matches = None
             rows = db.recent_orders(conn)
-    return render_template("records.html", rows=rows, query=query, results=results, pdf_results=None)
+    return render_template("records.html", rows=rows, query=query, results=results,
+                           order_matches=order_matches, pdf_results=None)
 
 
 def _order_voided(plates: list[dict]) -> bool:
