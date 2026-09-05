@@ -80,6 +80,7 @@ def build_pedido_pdf(
     order_date: str = "11/08/2026",
     pedido_numero: str = "77",
     order_label: str = "ORDEN DE\nPRODUCCION:",
+    order_row_leaks_bare_pedido_label: bool = False,
     lines: list[dict[str, str]] | None = None,
 ) -> bytes:
     """Render a pedido PDF and return its bytes.
@@ -88,14 +89,20 @@ def build_pedido_pdf(
     the real documents use. `pedido_numero` is the client-facing claim number
     that must NEVER be parsed as the production order number. `order_label`
     lets tests reproduce the older template generation, which called the same
-    field 'NT:'.
+    field 'NT:'. `order_row_leaks_bare_pedido_label` reproduces a real layout
+    where a colon-less 'PEDIDO #' sits later in the SAME row as the order
+    label -- confirmed happening for real, see pdf_extract._LABEL_PEDIDO_HASH_BARE.
     """
     specs = DEFAULT_LINES if lines is None else lines
+
+    order_row = _field_row(order_label, order_number)
+    if order_row_leaks_bare_pedido_label:
+        order_row[6] = "PEDIDO #"
 
     table: list[list[Any]] = [
         _field_row("CLIENTE:", client),
         _field_row("FECHA PEDIDO:", order_date),
-        _field_row(order_label, order_number),
+        order_row,
         _field_row(f"PEDIDO #: {pedido_numero}", ""),
         list(COLUMNS),
         *[_data_row(s) for s in specs],

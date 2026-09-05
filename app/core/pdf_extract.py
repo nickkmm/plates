@@ -175,6 +175,16 @@ _LABEL_FECHA = "FECHA PEDIDO"
 # 'PEDIDO #' is deliberately absent — it is the client-facing claim number.
 _LABELS_ORDEN = ("ORDEN DE PRODUCCION", "NT")
 
+# 'PEDIDO #' is sometimes printed with no colon, packed into the same row as
+# another field (e.g. right after ORDEN DE PRODUCCION's own value cell). Since
+# _split_label only recognizes 'LABEL:' text, a bare 'PEDIDO #' slips past it
+# and _find_header_value would otherwise walk right into it and misread it as
+# the value it's looking for. Confirmed happening for real: a pedido re-upload
+# created a production order literally numbered "PEDIDO #" this way, which
+# then silently missed the /ingest duplicate-order check (nothing in the DB is
+# really numbered that) and had to be found and deleted by hand.
+_LABEL_PEDIDO_HASH_BARE = "PEDIDO #"
+
 # The plate-line table's checkbox columns -> the canonical plate TYPE each one
 # means. Values must exist in normalize.PLATE_TYPES; the check below turns any
 # future drift in that tuple into a loud import-time failure instead of rows
@@ -339,6 +349,8 @@ def _find_header_value(rows: list[list[Any]], label: str) -> str:
                 text = _cell_text(nxt)
                 if not text:
                     continue
+                if _fold(text) == _LABEL_PEDIDO_HASH_BARE:
+                    return ""  # bare 'PEDIDO #' label, no colon -- not a value
                 next_label, _ = _split_label(text)
                 if next_label:
                     return ""  # next filled cell is another field's label: this one is blank
