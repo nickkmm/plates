@@ -321,6 +321,52 @@ def search_plates_by_number(conn: psycopg.Connection, query: str, limit: int = 2
         return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
 
 
+def search_orders_by_number(conn: psycopg.Connection, query: str, limit: int = 200) -> list[dict]:
+    """Find orders anywhere in the DB by (partial) order_number, not just the
+    recent-orders page -- lets the person look up a specific old order without
+    scrolling past everything newer than it.
+
+    Same row shape as recent_orders() (id, order_number, order_date,
+    requested_by, cities, n_plates, total_qty, plates summary) so the results
+    can be rendered with the same table. order_number is plain text/digits,
+    not a plate number, so unlike search_plates_by_number this does NOT run
+    the query through clean_plate() -- just strips whitespace. Partial match
+    (ILIKE %query%) since the person may not remember it in full. Most recent
+    order first, same tiebreaking as recent_orders().
+    """
+    needle = f"%{query.strip()}%"
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT o.id, o.order_number, o.order_date, o.requested_by,
+                   COALESCE(
+                       array_agg(DISTINCT p.city) FILTER (WHERE p.city IS NOT NULL),
+                       '{}'
+                   ) AS cities,
+                   count(p.id) AS n_plates,
+                   COALESCE(SUM(p.quantity), 0) AS total_qty,
+                   string_agg(
+                       CASE
+                           WHEN p.id IS NULL THEN NULL  -- LEFT JOIN phantom row: no plate at all
+                           WHEN p.plate_number IS NOT NULL THEN p.plate_number
+                           WHEN p.is_batch_replacement THEN 'reposición'
+                           WHEN p.is_voided THEN 'anulada'
+                           ELSE 'sin placa'
+                       END, ', ' ORDER BY p.id) AS plates
+            FROM production_orders o
+            LEFT JOIN plates p ON p.order_id = o.id
+            WHERE o.order_number ILIKE %s
+            GROUP BY o.id
+            ORDER BY o.order_date DESC, o.created_at DESC, o.id DESC
+            LIMIT %s
+            """,
+            (needle, limit),
+        )
+        assert cur.description is not None, "cur.description is always set after a successful SELECT"
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+
+
 def order_detail(conn: psycopg.Connection, order_id: int) -> tuple[dict | None, list[dict]]:
     """Return (order dict, list of its plate dicts) for the detail view."""
     with conn.cursor() as cur:

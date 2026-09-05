@@ -498,6 +498,61 @@ class TestRecordsRoute:
         assert resp.status_code == 200
         assert "No se encontró ninguna placa".encode() in resp.data
 
+    def test_search_by_order_number_finds_the_order(self, authenticated_client, db_conn):
+        """A query that matches an order_number (not any plate_number) must
+        still surface that order, via the new order_matches section."""
+        order_id = db.insert_order(db_conn, order_number="OLD-2603", order_date=date(2019, 1, 1),
+                                    requested_by="OLD CLIENT 2")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="NOMATCH1"),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = authenticated_client.get("/records?q=OLD-2603")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "OLD-2603" in html
+        assert "OLD CLIENT 2" in html
+        assert "Coincidencias por número de orden" in html
+        # the query doesn't match any plate_number, so no plate-results section
+        assert "resultado(s) para" not in html
+
+    def test_order_number_search_does_not_affect_plate_search_results(
+        self, authenticated_client, db_conn
+    ):
+        """Regression guard: adding order-number search must not change the
+        existing plate-search behavior when a query only matches a plate."""
+        order_id = db.insert_order(db_conn, order_number="2604", order_date=date(2020, 1, 1),
+                                    requested_by="OLD CLIENT 3")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="PLT999"),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = authenticated_client.get("/records?q=PLT999")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "PLT999" in html
+        assert "resultado(s) para" in html
+        # PLT999 doesn't match the order_number "2604", so no order section
+        assert "Coincidencias por número de orden" not in html
+
+    def test_query_matching_both_a_plate_and_an_order_number_shows_both_sections(
+        self, authenticated_client, db_conn
+    ):
+        order_id = db.insert_order(db_conn, order_number="2605", order_date=date(2021, 1, 1),
+                                    requested_by="BOTH CLIENT")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="ABC2605"),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = authenticated_client.get("/records?q=2605")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "Coincidencias por número de orden" in html
+        assert "resultado(s) para" in html
+
     def test_blank_query_falls_back_to_recent_orders(self, authenticated_client, db_conn):
         db.insert_order(db_conn, order_number="2602", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")

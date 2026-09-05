@@ -411,6 +411,79 @@ class TestSearchPlatesByNumber:
         assert len(rows) == 2
 
 
+class TestSearchOrdersByNumber:
+    """Finds an order anywhere in the DB by (partial) order_number -- the
+    counterpart to TestSearchPlatesByNumber, but for looking up a specific
+    old order directly instead of a plate."""
+
+    def test_exact_match(self, db_conn):
+        db.insert_order(db_conn, order_number="800", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        results = db.search_orders_by_number(db_conn, "800")
+        assert len(results) == 1
+        assert results[0]["order_number"] == "800"
+        assert results[0]["requested_by"] == "PEDRO"
+
+    def test_partial_match(self, db_conn):
+        db.insert_order(db_conn, order_number="80042", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "004")] == ["80042"]
+
+    def test_query_is_not_cleaned_like_a_plate_number(self, db_conn):
+        """order_number is plain text/digits, not a plate -- unlike
+        search_plates_by_number this must NOT run the query through
+        clean_plate(), so a query with internal spaces only matches an
+        order_number that literally contains them."""
+        db.insert_order(db_conn, order_number="80 1", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "80 1")] == ["80 1"]
+        assert db.search_orders_by_number(db_conn, "801") == []
+
+    def test_leading_and_trailing_whitespace_is_stripped(self, db_conn):
+        db.insert_order(db_conn, order_number="802", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "  802  ")] == ["802"]
+
+    def test_case_insensitive(self, db_conn):
+        """Most order_number values are digits, but ILIKE is used (not LIKE)
+        so a non-numeric order_number still matches regardless of case."""
+        db.insert_order(db_conn, order_number="ABC-803", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "abc-803")] == ["ABC-803"]
+
+    def test_no_match_returns_empty_list(self, db_conn):
+        assert db.search_orders_by_number(db_conn, "ZZZ999") == []
+
+    def test_summarizes_plates_same_as_recent_orders(self, db_conn):
+        """Same row shape as recent_orders() -- cities/n_plates/total_qty/
+        plates are all derived the same way so the result can be rendered
+        with the same table partial."""
+        order_id = db.insert_order(db_conn, order_number="804", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="QRS111", city="CALI"),
+                         is_possible_duplicate=False)
+        results = db.search_orders_by_number(db_conn, "804")
+        assert results[0]["n_plates"] == 1
+        assert results[0]["total_qty"] == 1
+        assert results[0]["plates"] == "QRS111"
+        assert results[0]["cities"] == ["CALI"]
+
+    def test_most_recent_order_first(self, db_conn):
+        db.insert_order(db_conn, order_number="900-A", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        db.insert_order(db_conn, order_number="900-B", order_date=date(2026, 2, 1),
+                         requested_by="PEDRO")
+        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "900")] == \
+            ["900-B", "900-A"]
+
+    def test_limit_caps_number_of_rows_returned(self, db_conn):
+        for i in range(5):
+            db.insert_order(db_conn, order_number=f"910-{i}", order_date=date(2026, 1, 1),
+                             requested_by="PEDRO")
+        assert len(db.search_orders_by_number(db_conn, "910", limit=2)) == 2
+
+
 class TestOrderDetail:
     def test_returns_order_and_its_plates(self, db_conn):
         order_id = db.insert_order(db_conn, order_number="900", order_date=date(2026, 1, 1),
