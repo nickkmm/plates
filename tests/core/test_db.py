@@ -314,6 +314,58 @@ class TestRecentOrders:
         assert [r["order_number"] for r in db.recent_orders(db_conn)] == ["521", "520"]
 
 
+class TestFindOrdersByNumber:
+    """Same row shape as recent_orders(), but WHERE order_number = %s exactly
+    -- used to warn /ingest before it silently creates a second
+    production_orders row under a number that already exists."""
+
+    def test_no_match_returns_empty_list(self, db_conn):
+        assert db.find_orders_by_number(db_conn, "ZZZ999") == []
+
+    def test_exact_match_only_not_partial(self, db_conn):
+        """A stray ILIKE-style partial match must never trigger this warning
+        -- order_number '99' must not match an existing '1099'."""
+        db.insert_order(db_conn, order_number="1099", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        assert db.find_orders_by_number(db_conn, "99") == []
+        assert len(db.find_orders_by_number(db_conn, "1099")) == 1
+
+    def test_finds_the_matching_order_with_its_plates_summarized(self, db_conn):
+        order_id = db.insert_order(db_conn, order_number="1100", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="FON111"),
+                         is_possible_duplicate=False)
+
+        matches = db.find_orders_by_number(db_conn, "1100")
+        assert len(matches) == 1
+        assert matches[0]["id"] == order_id
+        assert matches[0]["order_number"] == "1100"
+        assert matches[0]["requested_by"] == "PEDRO"
+        assert matches[0]["n_plates"] == 1
+        assert matches[0]["total_qty"] == 1
+        assert matches[0]["plates"] == "FON111"
+
+    def test_returns_every_match_when_two_or_more_orders_share_the_number(self, db_conn):
+        """This already happens for real (WCY449 / pedido 1030, see
+        data/duplicados_revision_2026-08-15.md) -- no LIMIT, no picking one."""
+        first_id = db.insert_order(db_conn, order_number="1101", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        second_id = db.insert_order(db_conn, order_number="1101", order_date=date(2026, 2, 1),
+                                     requested_by="MARIA")
+
+        matches = db.find_orders_by_number(db_conn, "1101")
+        assert {m["id"] for m in matches} == {first_id, second_id}
+
+    def test_other_order_numbers_are_not_returned(self, db_conn):
+        db.insert_order(db_conn, order_number="1102", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        db.insert_order(db_conn, order_number="1103", order_date=date(2026, 1, 1),
+                         requested_by="PEDRO")
+        matches = db.find_orders_by_number(db_conn, "1102")
+        assert [m["order_number"] for m in matches] == ["1102"]
+
+
 class TestSearchPlatesByNumber:
     """Finds a plate anywhere in the DB, not just the 50 most recent orders --
     the point is checking whether a plate was ever made before."""
@@ -553,6 +605,69 @@ class TestUpdatePlate:
         with db_conn.cursor() as cur:
             cur.execute("SELECT plate_number FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone() == (None,)
+
+
+class TestUpdatePlateFull:
+    def test_edits_every_field_and_clears_review_flag(self, db_conn):
+        order_id = db.insert_order(db_conn, order_number="1210", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="OLD333",
+                                         quantity=1, is_possible_duplicate=True)
+
+        db.update_plate_full(
+            db_conn, plate_id, plate_type="MOTO PARTICULAR", plate_number="NEW444",
+            plate_to=None, city="CALI", quantity=5, is_voided=True,
+            is_plate_annulled=True, is_batch_replacement=False,
+        )
+
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "SELECT plate_type, plate_number, city, quantity, is_voided, "
+                "is_plate_annulled, is_possible_duplicate FROM plates WHERE id = %s",
+                (plate_id,),
+            )
+            assert cur.fetchone() == (
+                "MOTO PARTICULAR", "NEW444", "CALI", 5, True, True, False,
+            )
+
+    def test_fixes_stale_is_batch_replacement_when_a_real_plate_number_is_given(self, db_conn):
+        """Regression test: editing a reposición row in place to give it a real
+        plate_number must actually clear is_batch_replacement in the DB --
+        this was silently dropped before (the UPDATE never touched the
+        column), leaving the row mislabeled 'reposición' forever even after
+        the plate_number was corrected."""
+        order_id = db.insert_order(db_conn, order_number="1211", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        plate_id = _insert_plate_get_id(db_conn, order_id, is_batch_replacement=True)
+
+        db.update_plate_full(
+            db_conn, plate_id, plate_type="CARRO PARTICULAR", plate_number="REP555",
+            plate_to=None, city=None, quantity=1, is_voided=False,
+            is_plate_annulled=False, is_batch_replacement=False,
+        )
+
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "SELECT plate_number, is_batch_replacement FROM plates WHERE id = %s",
+                (plate_id,),
+            )
+            assert cur.fetchone() == ("REP555", False)
+
+    def test_plate_to_and_city_can_be_cleared_to_null(self, db_conn):
+        order_id = db.insert_order(db_conn, order_number="1212", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="RNG100",
+                                         plate_to="RNG105", city="PASTO")
+
+        db.update_plate_full(
+            db_conn, plate_id, plate_type="CARRO PARTICULAR", plate_number="RNG100",
+            plate_to=None, city=None, quantity=1, is_voided=False,
+            is_plate_annulled=False, is_batch_replacement=False,
+        )
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT plate_to, city FROM plates WHERE id = %s", (plate_id,))
+            assert cur.fetchone() == (None, None)
 
 
 class TestResolvePlate:

@@ -291,6 +291,51 @@ def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
         return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
 
 
+def find_orders_by_number(conn: psycopg.Connection, order_number: str) -> list[dict]:
+    """Existing production_orders rows with this EXACT order_number.
+
+    Same row shape as recent_orders() (id, order_number, order_date,
+    requested_by, cities, n_plates, total_qty, plates summary string), but an
+    exact match (not ILIKE) -- a stray partial match must never wrongly
+    trigger the /ingest "esta orden ya existe" warning.
+
+    order_number has no unique constraint in the schema, and historically
+    nothing ever checked for a collision here (only plate_number dedup did),
+    so 0, 1, or even 2+ rows are all possible results -- no LIMIT needed. See
+    app.core.process.replace_order, which fuses every match this returns into
+    exactly one order.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT o.id, o.order_number, o.order_date, o.requested_by,
+                   COALESCE(
+                       array_agg(DISTINCT p.city) FILTER (WHERE p.city IS NOT NULL),
+                       '{}'
+                   ) AS cities,
+                   count(p.id) AS n_plates,
+                   COALESCE(SUM(p.quantity), 0) AS total_qty,
+                   string_agg(
+                       CASE
+                           WHEN p.id IS NULL THEN NULL  -- LEFT JOIN phantom row: no plate at all
+                           WHEN p.plate_number IS NOT NULL THEN p.plate_number
+                           WHEN p.is_batch_replacement THEN 'reposición'
+                           WHEN p.is_voided THEN 'anulada'
+                           ELSE 'sin placa'
+                       END, ', ' ORDER BY p.id) AS plates
+            FROM production_orders o
+            LEFT JOIN plates p ON p.order_id = o.id
+            WHERE o.order_number = %s
+            GROUP BY o.id
+            ORDER BY o.order_date DESC, o.created_at DESC, o.id DESC
+            """,
+            (order_number,),
+        )
+        assert cur.description is not None, "cur.description is always set after a successful SELECT"
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+
+
 def search_plates_by_number(conn: psycopg.Connection, query: str, limit: int = 200) -> list[dict]:
     """Find plates anywhere in the DB by (partial) plate_number, not just the
     recent-orders page -- lets the person check whether a plate was ever
@@ -401,13 +446,20 @@ def update_plate(conn: psycopg.Connection, plate_id: int, *, plate_type: str,
 
 def update_plate_full(conn: psycopg.Connection, plate_id: int, *, plate_type: str,
                       plate_number: str | None, plate_to: str | None, city: str | None,
-                      quantity: int, is_voided: bool, is_plate_annulled: bool) -> None:
+                      quantity: int, is_voided: bool, is_plate_annulled: bool,
+                      is_batch_replacement: bool) -> None:
     """Edit every plate-level field from the Registro detail page.
 
     Wider than update_plate (which only covers the flagged-duplicate review
     form's fields): this also lets a range end, city, and the "placa anulada"
     waste flag be corrected after the order was already saved. Clears
     is_possible_duplicate too, same "editing counts as reviewed" convention.
+
+    is_batch_replacement is a required param (not left untouched) so that
+    editing a reposición row's plate_number in place to a real plate number
+    -- which normalize_row() correctly recomputes as is_batch_replacement=False
+    -- actually lands that correction in the DB, instead of leaving the row
+    mislabeled "reposición" forever.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -415,11 +467,11 @@ def update_plate_full(conn: psycopg.Connection, plate_id: int, *, plate_type: st
             UPDATE plates
             SET plate_type = %s, plate_number = %s, plate_to = %s, city = %s,
                 quantity = %s, is_voided = %s, is_plate_annulled = %s,
-                is_possible_duplicate = false
+                is_batch_replacement = %s, is_possible_duplicate = false
             WHERE id = %s
             """,
             (plate_type, plate_number, plate_to, city, quantity, is_voided,
-             is_plate_annulled, plate_id),
+             is_plate_annulled, is_batch_replacement, plate_id),
         )
 
 
