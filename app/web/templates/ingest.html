@@ -47,6 +47,27 @@
     <ul>{% for n in notices %}<li>{{ n }}</li>{% endfor %}</ul>
   </div>
   {% endif %}
+  {% if order_duplicates %}
+  <div class="error">
+    <strong>Ojo: ya existe{% if order_duplicates|length > 1 %}n{% endif %} {{ order_duplicates|length }} orden(es) con este N° de orden — no se guardó nada todavía.</strong>
+    <ul>
+      {% for o in order_duplicates %}
+      <li>
+        Orden <strong>{{ o.order_number }}</strong> ({{ o.order_date }}, {{ o.requested_by }}) —
+        {{ o.n_plates }} placa(s), cant. total {{ o.total_qty }}{% if o.plates %}: {{ o.plates }}{% endif %}
+        <a class="ver-btn" href="{{ url_for('record_detail', order_id=o.id) }}" target="_blank">ver pedido</a>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted">
+      Si es una orden distinta que casualmente reutiliza este número, guardala como orden nueva.
+      Si esto es la reposición de placas de esta MISMA orden (p. ej. subiste el PDF para recuperar
+      las placas reales de una reposición vieja cargada antes), reemplazala: se borra{% if order_duplicates|length > 1 %}n{% endif %}
+      la orden existente{% if order_duplicates|length > 1 %}s{% endif %} de arriba (y sus placas) y quedan
+      solamente las de este envío, bajo una única orden.
+    </p>
+  </div>
+  {% endif %}
   {% if duplicates %}
   <div class="error">
     <strong>Ojo: esta(s) placa(s) ya existen — no se guardó nada todavía.</strong>
@@ -76,6 +97,9 @@
     <ul>
       <li>Órdenes: {{ summary.orders_inserted }} · Placas: {{ summary.plates_inserted }}</li>
       <li>Reposiciones: {{ summary.batch_replacements }} · Órdenes anuladas: {{ summary.voided }} · Placas anuladas: {{ summary.plate_annulled }} · Posibles duplicados: {{ summary.possible_duplicates }}</li>
+      {% if summary.orders_replaced %}
+      <li>Se reemplazó{% if summary.orders_replaced > 1 %}n{% endif %} {{ summary.orders_replaced }} orden(es) existente(s) con este N° ({{ summary.plates_deleted }} placa(s) vieja(s) eliminada(s)) por esta orden nueva.</li>
+      {% endif %}
     </ul>
     {% if summary.possible_duplicates %}<p class="muted">Revisá los duplicados en <a href="{{ url_for('review') }}">Revisión</a>.</p>{% endif %}
   </div>
@@ -161,6 +185,11 @@
     <button type="submit" class="submit">Guardar orden</button>
     {% if duplicates %}
     <button type="submit" name="confirm_duplicate" value="1" class="submit" style="background:var(--red)">Guardar de todas formas</button>
+    {% endif %}
+    {% if order_duplicates %}
+    <button type="submit" name="confirm_order_duplicate" value="1" class="submit">Guardar como orden nueva de todas formas</button>
+    <button type="submit" name="replace_order" value="1" class="submit" style="background:var(--red)"
+            onclick="return confirm('Esto va a BORRAR PERMANENTEMENTE {{ order_duplicates|length }} orden(es) existente(s) con el N° {{ order_duplicates[0].order_number }} y sus {{ order_duplicates|sum(attribute='n_plates') }} placa(s) en total, y las va a reemplazar por una orden nueva con lo que acabás de escribir. Esta acción no se puede deshacer. ¿Confirmás?');">Reemplazar (fusionar en una sola)</button>
     {% endif %}
   </form>
 

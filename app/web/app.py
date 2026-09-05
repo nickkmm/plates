@@ -39,7 +39,7 @@ from app.core.normalize import (
     validate_plate,
 )
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
-from app.core.process import find_duplicate_plate_numbers, process_rows
+from app.core.process import find_duplicate_plate_numbers, process_rows, replace_order
 from app.web import auth
 from app.web.auth import consulta_allowed, login_required
 
@@ -346,19 +346,32 @@ def ingest_post():
     summary = None
     error = None
     duplicates = None
+    order_duplicates = None
     header = None
     lines = None
     try:
         rows = _rows_from_form(request.form)
         if not rows:
             error = "Agregá al menos una placa."
+        elif request.form.get("replace_order"):
+            # Explicit, opt-in fuse (see the "Reemplazar" button below): wipe
+            # every existing order under this order_number and replace it with
+            # exactly one new order built from these rows. The plate-number
+            # duplicate check below is moot for this choice -- we're about to
+            # delete every plate currently under this order_number outright,
+            # so nothing already there can register as "already existing"
+            # against the fresh rows being inserted in its place.
+            summary = replace_order(rows[0].order_number, rows)
         else:
-            dup_plate_numbers = find_duplicate_plate_numbers(rows)
-            if dup_plate_numbers and not request.form.get("confirm_duplicate"):
-                with db.get_conn() as conn:
-                    duplicates = {
-                        pn: db.find_orders_for_plate(conn, pn) for pn in sorted(dup_plate_numbers)
-                    }
+            # Order-number collision check runs BEFORE the plate-number dup
+            # check: a reposición placeholder order re-saved via a re-uploaded
+            # PDF has plate_number=NULL, so it would sail right through the
+            # plate check and silently create a second production_orders row
+            # under the same order_number (see replace_order's docstring for
+            # the real WCY449/pedido 1030 case this guards against).
+            with db.get_conn() as conn:
+                order_duplicates = db.find_orders_by_number(conn, rows[0].order_number)
+            if order_duplicates and not request.form.get("confirm_order_duplicate"):
                 header = {
                     "order_date": request.form.get("order_date", ""),
                     "order_number": request.form.get("order_number", ""),
@@ -366,7 +379,21 @@ def ingest_post():
                 }
                 lines = _sticky_lines_from_form(request.form)
             else:
-                summary = process_rows(rows)
+                order_duplicates = None  # not a collision the user needs to see anymore
+                dup_plate_numbers = find_duplicate_plate_numbers(rows)
+                if dup_plate_numbers and not request.form.get("confirm_duplicate"):
+                    with db.get_conn() as conn:
+                        duplicates = {
+                            pn: db.find_orders_for_plate(conn, pn) for pn in sorted(dup_plate_numbers)
+                        }
+                    header = {
+                        "order_date": request.form.get("order_date", ""),
+                        "order_number": request.form.get("order_number", ""),
+                        "requested_by": request.form.get("requested_by", ""),
+                    }
+                    lines = _sticky_lines_from_form(request.form)
+                else:
+                    summary = process_rows(rows)
     except Exception as e:  # surface validation/DB errors without crashing
         error = f"Error: {e}"
 
@@ -376,7 +403,7 @@ def ingest_post():
         "ingest.html", requesters=requesters, cities=cities,
         categories=FORM_PLATE_TYPES, today=_today_iso(),
         summary=summary.model_dump() if summary else None, error=error,
-        duplicates=duplicates, header=header, lines=lines,
+        duplicates=duplicates, order_duplicates=order_duplicates, header=header, lines=lines,
     )
 
 
@@ -409,11 +436,17 @@ def ingest_pdf():
 
     header, lines, notices = _form_from_pedido(pedido)
     with db.get_conn() as conn:
+        # Read-only: surface "esta orden ya existe" as soon as the PDF is
+        # previewed, not only after a first failed POST /ingest save attempt.
+        # This route never writes to the DB either way.
+        order_duplicates = (
+            db.find_orders_by_number(conn, pedido.order_number) if pedido.order_number else []
+        )
         requesters, cities = _options(conn)
     return render_template(
         "ingest.html", requesters=requesters, cities=cities,
         categories=FORM_PLATE_TYPES, today=_today_iso(),
-        header=header, lines=lines, notices=notices,
+        header=header, lines=lines, notices=notices, order_duplicates=order_duplicates,
     )
 
 
@@ -574,6 +607,7 @@ def record_save(order_id):
                         plate_number=normalized.plate_number, plate_to=normalized.plate_to,
                         city=normalized.city, quantity=normalized.quantity,
                         is_voided=normalized.is_voided, is_plate_annulled=normalized.is_plate_annulled,
+                        is_batch_replacement=normalized.is_batch_replacement,
                     )
                 else:
                     is_dup = bool(
