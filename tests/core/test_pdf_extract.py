@@ -101,6 +101,18 @@ class TestHeaderFields:
         assert pedido.order_number == ""
         assert len(pedido.lines) == 4  # lines still recovered for manual completion
 
+    def test_bare_pedido_hash_in_the_same_row_is_never_read_as_the_order_number(self):
+        """Confirmed happening for real: when ORDEN DE PRODUCCION's own value
+        cell is blank and a colon-less 'PEDIDO #' sits later in the same row,
+        the scan for a value must not walk into it and misread it as the
+        production order -- it must come back empty (like any other unreadable
+        field), not silently produce a bogus order literally numbered
+        "PEDIDO #"."""
+        pedido = parse_pedido_pdf(
+            build_pedido_pdf(order_number="", order_row_leaks_bare_pedido_label=True)
+        )
+        assert pedido.order_number == ""
+
     def test_reads_the_client_as_requested_by(self):
         assert parse_pedido_pdf(build_pedido_pdf(client="CLIENTE DEMO")).requested_by == "CLIENTE DEMO"
 
