@@ -105,7 +105,7 @@
             {% elif p.is_batch_replacement %}<span class="muted">reposición</span>
             {% endif %}
           </td>
-          <td class="actions"><a class="ver" href="{{ url_for('record_detail', order_id=p.order_id) }}">Ver pedido</a></td>
+          <td class="actions"><a class="ver" href="{{ url_for('record_detail', order_id=p.order_id, q=query or None) }}">Ver pedido</a></td>
         </tr>
         {% endfor %}
       </tbody>

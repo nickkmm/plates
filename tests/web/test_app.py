@@ -563,6 +563,41 @@ class TestRecordsRoute:
         assert b"2602" in resp.data
         assert b"resultado(s) para" not in resp.data
 
+    def test_plate_search_result_ver_link_carries_the_query_along(
+        self, authenticated_client, db_conn
+    ):
+        """So record_detail's 'Volver a Registros' can send the person back to
+        this same search instead of always landing on the unfiltered list."""
+        order_id = db.insert_order(db_conn, order_number="2606", order_date=date(2021, 1, 1),
+                                    requested_by="LINK CLIENT")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="LNK606"),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = authenticated_client.get("/records?q=LNK606")
+        assert f"/records/{order_id}?q=LNK606" in resp.data.decode()
+
+    def test_order_search_result_ver_link_carries_the_query_along(
+        self, authenticated_client, db_conn
+    ):
+        order_id = db.insert_order(db_conn, order_number="OLD-2607", order_date=date(2019, 1, 1),
+                                    requested_by="OLD CLIENT 4")
+        db_conn.commit()
+
+        resp = authenticated_client.get("/records?q=OLD-2607")
+        assert f"/records/{order_id}?q=OLD-2607" in resp.data.decode()
+
+    def test_recent_orders_ver_link_has_no_query(self, authenticated_client, db_conn):
+        """Regression guard: the default (unfiltered) list has no search to
+        return to, so its 'Ver' link must stay a plain record_detail URL."""
+        order_id = db.insert_order(db_conn, order_number="2608", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db_conn.commit()
+
+        resp = authenticated_client.get("/records")
+        assert f'href="/records/{order_id}"' in resp.data.decode()
+
 
 class TestRecordDetailRoute:
     def test_existing_order_renders_its_plates(self, authenticated_client, db_conn):
@@ -582,6 +617,25 @@ class TestRecordDetailRoute:
         resp = authenticated_client.get("/records/999999")
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/records"
+
+    def test_back_link_preserves_the_originating_search_query(self, authenticated_client, db_conn):
+        """Reached via a Registros search's 'Ver' link (?q=... passed through)
+        -- 'Volver a Registros' must return to that same search, not the bare
+        unfiltered list."""
+        order_id = db.insert_order(db_conn, order_number="2701", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db_conn.commit()
+
+        resp = authenticated_client.get(f"/records/{order_id}?q=PEDRO")
+        assert "/records?q=PEDRO" in resp.data.decode()
+
+    def test_back_link_has_no_query_when_reached_without_one(self, authenticated_client, db_conn):
+        order_id = db.insert_order(db_conn, order_number="2702", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db_conn.commit()
+
+        resp = authenticated_client.get(f"/records/{order_id}")
+        assert 'href="/records"' in resp.data.decode()
 
     def test_plates_are_rendered_as_editable_inline_forms(self, authenticated_client, db_conn):
         """Smoke test for the inline-edit table: each plate row must expose a

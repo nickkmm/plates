@@ -550,6 +550,11 @@ def _order_voided(plates: list[dict]) -> bool:
 @app.get("/records/<int:order_id>")
 @consulta_allowed
 def record_detail(order_id):
+    # ?q= only ever arrives here as a passthrough from a Registros search
+    # result's own "Ver" link (see records.html/_orders_table.html), so
+    # "Volver a Registros" can send the person back to their actual search
+    # instead of always landing on the unfiltered recent-orders list.
+    back_query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
         order, plates = db.order_detail(conn, order_id)
         requesters, cities = _options(conn)
@@ -557,7 +562,8 @@ def record_detail(order_id):
         return redirect(url_for("records"))
     return render_template("record_detail.html", order=order, plates=plates,
                            cities=cities, requesters=requesters, categories=FORM_PLATE_TYPES,
-                           today=_today_iso(), order_voided=_order_voided(plates))
+                           today=_today_iso(), order_voided=_order_voided(plates),
+                           back_query=back_query)
 
 
 def _record_detail_error(order_id: int, error: str):
