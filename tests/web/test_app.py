@@ -252,7 +252,7 @@ class TestReviewRoute:
     def test_empty_queue_shows_no_records_message(self, authenticated_client, clean_db):
         resp = authenticated_client.get("/review")
         assert resp.status_code == 200
-        assert "No hay registros marcados".encode() in resp.data
+        assert b"No hay registros marcados" in resp.data
 
 
 class TestReviewUpdateRoute:
@@ -491,7 +491,7 @@ class TestRecordsRoute:
         assert b"SRC123" in resp.data
         assert b"OLD CLIENT" in resp.data
         # the plain recent-orders table must not render alongside search results
-        assert "resultado(s) para".encode() in resp.data
+        assert b"resultado(s) para" in resp.data
 
     def test_search_with_no_match_shows_a_clear_message(self, authenticated_client, clean_db):
         resp = authenticated_client.get("/records?q=ZZZ999")
@@ -506,7 +506,7 @@ class TestRecordsRoute:
         resp = authenticated_client.get("/records?q=")
         assert resp.status_code == 200
         assert b"2602" in resp.data
-        assert "resultado(s) para".encode() not in resp.data
+        assert b"resultado(s) para" not in resp.data
 
 
 class TestRecordDetailRoute:
@@ -920,7 +920,7 @@ class TestIngestPostRoute:
             "city": ["BOGOTA"],
         })
         assert resp.status_code == 200
-        assert "Registrado".encode() in resp.data
+        assert b"Registrado" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT order_number, requested_by FROM production_orders")
@@ -988,7 +988,7 @@ class TestIngestPostRoute:
             "plate_number": ["AAA100"], "plate_to": ["AAA105"], "quantity": ["6"],
         })
         assert resp.status_code == 200
-        assert "Registrado".encode() in resp.data
+        assert b"Registrado" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT plate_number, plate_to FROM plates")
@@ -1029,7 +1029,7 @@ class TestIngestPostRoute:
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
         assert resp.status_code == 200
-        assert "futura".encode() in resp.data
+        assert b"futura" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM production_orders")
@@ -1043,7 +1043,7 @@ class TestIngestPostRoute:
             "plate_number": ["AAA100"], "plate_to": [""], "quantity": ["1"],
         })
         assert resp.status_code == 200
-        assert "desde".encode() in resp.data and "hasta".encode() in resp.data
+        assert b"desde" in resp.data and b"hasta" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM production_orders")
@@ -1059,7 +1059,7 @@ class TestIngestPostRoute:
             "plate_number": [""], "plate_to": [""], "quantity": ["50"],
         })
         assert resp.status_code == 200
-        assert "Registrado".encode() in resp.data
+        assert b"Registrado" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute(
@@ -1077,7 +1077,7 @@ class TestIngestPostRoute:
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
         assert resp.status_code == 200
-        assert "Registrado".encode() in resp.data
+        assert b"Registrado" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute(
@@ -1093,7 +1093,7 @@ class TestIngestPostRoute:
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
         assert resp.status_code == 200
-        assert "Registrado".encode() in resp.data
+        assert b"Registrado" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT plate_number, plate_to FROM plates")
@@ -1109,7 +1109,7 @@ class TestIngestPostRoute:
             "plate_number": ["AAA200"], "plate_to": [""], "quantity": ["1"],
         })
         assert resp.status_code == 200
-        assert "Registrado".encode() in resp.data
+        assert b"Registrado" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT plate_number, plate_to, is_plate_annulled FROM plates")
@@ -1126,7 +1126,7 @@ class TestIngestPostRoute:
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
         assert resp.status_code == 200
-        assert "Registrado".encode() in resp.data
+        assert b"Registrado" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT plate_number, is_plate_annulled FROM plates")
@@ -1143,7 +1143,7 @@ class TestIngestPostRoute:
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
         assert resp.status_code == 200
-        assert "Registrado".encode() in resp.data
+        assert b"Registrado" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT plate_number FROM plates")
@@ -1160,7 +1160,7 @@ class TestIngestPostRoute:
             "plate_number": ["", "AAA300"], "plate_to": ["", ""], "quantity": ["1", "1"],
         })
         assert resp.status_code == 200
-        assert "Registrado".encode() in resp.data
+        assert b"Registrado" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT plate_number FROM plates")
@@ -1184,7 +1184,7 @@ class TestIngestDuplicateWarning:
             "plate_number": ["DUP001"], "plate_to": [""], "quantity": ["1"],
         })
         assert resp.status_code == 200
-        assert "ya existen".encode() in resp.data
+        assert b"ya existen" in resp.data
         assert b"4000" in resp.data  # points to the order where it already exists
         assert b'value="MARIA"' in resp.data  # typed header data preserved
 
@@ -1207,7 +1207,7 @@ class TestIngestDuplicateWarning:
             "confirm_duplicate": "1",
         })
         assert resp.status_code == 200
-        assert "Registrado".encode() in resp.data
+        assert b"Registrado" in resp.data
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute(
@@ -1226,12 +1226,170 @@ class TestIngestDuplicateWarning:
             "plate_number": ["DUP003", "DUP003"], "plate_to": ["", ""], "quantity": ["1", "1"],
         })
         assert resp.status_code == 200
-        assert "ya existen".encode() in resp.data
+        assert b"ya existen" in resp.data
         assert "mismo envío".encode() in resp.data  # no prior order to link to, just a same-batch repeat
 
         with db.get_conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '4004'")
             assert cur.fetchone()[0] == 0
+
+
+class TestIngestOrderDuplicateWarning:
+    """The order-number collision check (db.find_orders_by_number) runs
+    BEFORE the plate-number dup check in ingest_post -- a reposición
+    placeholder order has plate_number=NULL, so it would otherwise sail
+    straight through the plate check and silently create a second
+    production_orders row under the same order_number (see
+    app.core.process.replace_order's docstring for the real WCY449/pedido
+    1030 case)."""
+
+    def test_colliding_order_number_blocks_save_and_shows_warning(
+        self, authenticated_client, clean_db
+    ):
+        authenticated_client.post("/ingest", data={
+            "order_number": "5000", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": [""], "plate_to": [""], "quantity": ["50"],
+        })
+        resp = authenticated_client.post("/ingest", data={
+            "order_number": "5000", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["WCY449"], "plate_to": [""], "quantity": ["1"],
+        })
+        assert resp.status_code == 200
+        assert b"ya existe" in resp.data
+        assert b'value="PEDRO"' in resp.data  # typed header data preserved
+
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '5000'")
+            assert cur.fetchone()[0] == 1  # still just the original placeholder order
+            cur.execute(
+                "SELECT count(*) FROM plates p JOIN production_orders o ON o.id = p.order_id "
+                "WHERE o.order_number = '5000'"
+            )
+            assert cur.fetchone()[0] == 1  # the new plate line was NOT saved
+
+    def test_confirm_order_duplicate_saves_as_a_genuinely_new_second_order(
+        self, authenticated_client, clean_db
+    ):
+        """Today's (bad, but explicitly chosen) behavior, fully preserved:
+        confirming creates a SECOND production_orders row sharing the number."""
+        authenticated_client.post("/ingest", data={
+            "order_number": "5001", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": [""], "plate_to": [""], "quantity": ["50"],
+        })
+        resp = authenticated_client.post("/ingest", data={
+            "order_number": "5001", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["WCY450"], "plate_to": [""], "quantity": ["1"],
+            "confirm_order_duplicate": "1",
+        })
+        assert resp.status_code == 200
+        assert b"Registrado" in resp.data
+
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '5001'")
+            assert cur.fetchone()[0] == 2  # two orders now share this number
+            cur.execute(
+                "SELECT count(*) FROM plates p JOIN production_orders o ON o.id = p.order_id "
+                "WHERE o.order_number = '5001'"
+            )
+            assert cur.fetchone()[0] == 2  # both the old reposición row and the new plate exist
+
+    def test_replace_order_fuses_a_single_existing_order_into_one(
+        self, authenticated_client, clean_db
+    ):
+        authenticated_client.post("/ingest", data={
+            "order_number": "5002", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": [""], "plate_to": [""], "quantity": ["50"],
+        })
+        resp = authenticated_client.post("/ingest", data={
+            "order_number": "5002", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["WCY451"], "plate_to": [""], "quantity": ["1"],
+            "replace_order": "1",
+        })
+        assert resp.status_code == 200
+        assert b"Registrado" in resp.data
+
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '5002'")
+            assert cur.fetchone()[0] == 1  # exactly one order, not two
+            cur.execute(
+                "SELECT p.plate_number FROM plates p JOIN production_orders o ON o.id = p.order_id "
+                "WHERE o.order_number = '5002'"
+            )
+            assert cur.fetchall() == [("WCY451",)]  # only the newly submitted plate remains
+
+    def test_replace_order_fuses_two_pre_existing_colliding_orders_into_one(
+        self, authenticated_client, db_conn
+    ):
+        """Proves the fuse behavior when the collision is already 2 orders
+        deep (order_number has no unique constraint, so this really happens
+        -- see WCY449/pedido 1030)."""
+        first_id = db.insert_order(db_conn, order_number="5003", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=first_id,
+                         row=make_row(order_number="5003", plate_type="CARRO PARTICULAR",
+                                      is_batch_replacement=True, quantity=30),
+                         is_possible_duplicate=False)
+        second_id = db.insert_order(db_conn, order_number="5003", order_date=date(2026, 1, 2),
+                                     requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=second_id,
+                         row=make_row(order_number="5003", plate_type="CARRO PARTICULAR",
+                                      plate_number="OLD999"),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        resp = authenticated_client.post("/ingest", data={
+            "order_number": "5003", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["placa", "placa"],
+            "plate_type": ["CARRO PARTICULAR", "CARRO PARTICULAR"],
+            "plate_number": ["NEW100", "NEW101"], "plate_to": ["", ""], "quantity": ["1", "1"],
+            "replace_order": "1",
+        })
+        assert resp.status_code == 200
+        assert b"Registrado" in resp.data
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '5003'")
+            assert cur.fetchone()[0] == 1  # both pre-existing orders fused into one
+            cur.execute(
+                "SELECT p.plate_number FROM plates p JOIN production_orders o ON o.id = p.order_id "
+                "WHERE o.order_number = '5003' ORDER BY p.plate_number"
+            )
+            assert cur.fetchall() == [("NEW100",), ("NEW101",)]
+            cur.execute("SELECT count(*) FROM plates WHERE plate_number = 'OLD999'")
+            assert cur.fetchone()[0] == 0  # the old plate from the second fused order is gone too
+
+    def test_no_collision_path_is_completely_unaffected(self, authenticated_client, clean_db):
+        """Regression coverage: an ordinary, no-collision /ingest submission
+        must save immediately, with no order-duplicate warning at all."""
+        resp = authenticated_client.post("/ingest", data={
+            "order_number": "5004", "order_date": "2026-01-01",
+            "requested_by": "PEDRO", "city": "",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["FRE599"], "plate_to": [""], "quantity": ["1"],
+        })
+        assert resp.status_code == 200
+        assert b"Registrado" in resp.data
+        assert b"ya existe" not in resp.data
+
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '5004'")
+            assert cur.fetchone()[0] == 1
+            cur.execute("SELECT plate_number FROM plates WHERE order_id = ("
+                        "SELECT id FROM production_orders WHERE order_number = '5004')")
+            assert cur.fetchall() == [("FRE599",)]
 
 
 class TestConsultaRole:

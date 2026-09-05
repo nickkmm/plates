@@ -12,8 +12,11 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
+from app.core import db
 from app.core.models import ExtractedRow
-from app.core.process import find_duplicate_plate_numbers, process_rows
+from app.core.process import find_duplicate_plate_numbers, process_rows, replace_order
 
 
 def make_row(**overrides: object) -> ExtractedRow:
@@ -327,3 +330,180 @@ class TestReviewNotes:
         ]
         summary = process_rows(rows)
         assert summary.review_notes == []
+
+
+class TestReplaceOrder:
+    """replace_order() fuses every existing production_orders row sharing an
+    order_number into exactly one new one -- the opt-in fix for a reposición
+    placeholder order later getting its real plates recovered from a
+    re-uploaded PDF (see the WCY449 / pedido 1030 case in
+    data/duplicados_revision_2026-08-15.md)."""
+
+    def test_rejects_rows_spanning_more_than_one_order_number(self, db_conn):
+        rows = [
+            make_row(order_number="1000", plate_number="AAA111", plate_type="CARRO PARTICULAR"),
+            make_row(order_number="1001", plate_number="AAA112", plate_type="CARRO PARTICULAR"),
+        ]
+        with pytest.raises(ValueError, match="order_number"):
+            replace_order("1000", rows)
+
+    def test_rejects_an_empty_row_list(self, db_conn):
+        with pytest.raises(ValueError):
+            replace_order("1000", [])
+
+    def test_replaces_a_single_existing_order_leaving_only_the_new_one(self, db_conn):
+        old_id = db.insert_order(db_conn, order_number="1010", order_date=date(2026, 1, 1),
+                                  requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=old_id,
+                         row=make_row(order_number="1010", plate_type="CARRO PARTICULAR",
+                                      is_batch_replacement=True, quantity=50),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        new_rows = [
+            make_row(order_number="1010", order_date=date(2026, 1, 5), requested_by="MARIA",
+                      plate_type="CARRO PARTICULAR", plate_number="WCY449"),
+        ]
+        summary = replace_order("1010", new_rows)
+
+        assert summary.orders_replaced == 1
+        assert summary.plates_deleted == 1
+        assert summary.orders_inserted == 1
+        assert summary.plates_inserted == 1
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '1010'")
+            assert cur.fetchone()[0] == 1  # the old placeholder order is gone, replaced by one new one
+            cur.execute(
+                "SELECT o.id, o.requested_by, p.plate_number, p.is_batch_replacement "
+                "FROM production_orders o JOIN plates p ON p.order_id = o.id "
+                "WHERE o.order_number = '1010'"
+            )
+            rows = cur.fetchall()
+            assert len(rows) == 1
+            new_id, requested_by, plate_number, is_batch = rows[0]
+            assert new_id != old_id
+            assert (requested_by, plate_number, is_batch) == ("MARIA", "WCY449", False)
+
+    def test_fuses_two_or_more_existing_orders_sharing_the_number_into_one(self, db_conn):
+        """The real bug this exists for: order_number has no unique constraint,
+        so two production_orders rows already sharing one can exist. Replacing
+        must delete ALL of them (and ALL their plates), not just one."""
+        first_id = db.insert_order(db_conn, order_number="1020", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=first_id,
+                         row=make_row(order_number="1020", plate_type="CARRO PARTICULAR",
+                                      is_batch_replacement=True, quantity=30),
+                         is_possible_duplicate=False)
+        second_id = db.insert_order(db_conn, order_number="1020", order_date=date(2026, 1, 10),
+                                     requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=second_id,
+                         row=make_row(order_number="1020", plate_type="CARRO PARTICULAR",
+                                      plate_number="OLD999"),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        new_rows = [
+            make_row(order_number="1020", plate_type="CARRO PARTICULAR", plate_number="NEW100"),
+            make_row(order_number="1020", plate_type="CARRO PARTICULAR", plate_number="NEW101"),
+        ]
+        summary = replace_order("1020", new_rows)
+
+        assert summary.orders_replaced == 2
+        assert summary.plates_deleted == 2
+        assert summary.orders_inserted == 1
+        assert summary.plates_inserted == 2
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '1020'")
+            assert cur.fetchone()[0] == 1
+            cur.execute(
+                "SELECT p.plate_number FROM plates p JOIN production_orders o ON o.id = p.order_id "
+                "WHERE o.order_number = '1020' ORDER BY p.plate_number"
+            )
+            assert [r[0] for r in cur.fetchall()] == ["NEW100", "NEW101"]
+            # both old plates (from BOTH fused orders) are gone
+            cur.execute("SELECT count(*) FROM plates WHERE plate_number IN ('OLD999')")
+            assert cur.fetchone()[0] == 0
+
+    def test_replacing_a_number_with_no_existing_order_just_inserts(self, db_conn):
+        rows = [make_row(order_number="1030", plate_type="CARRO PARTICULAR", plate_number="FRESH1")]
+        summary = replace_order("1030", rows)
+        assert summary.orders_replaced == 0
+        assert summary.plates_deleted == 0
+        assert summary.orders_inserted == 1
+        assert summary.plates_inserted == 1
+
+    def test_inventory_is_recalculated_without_double_counting(self, db_conn):
+        """The exact scenario the whole feature exists to fix: the old
+        reposición row's quantity must NOT still be counted alongside the new
+        rows' quantities after the replace."""
+        db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
+                                     quantity=100, prepared_by=None)
+        old_id = db.insert_order(db_conn, order_number="1040", order_date=date(2026, 1, 1),
+                                  requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=old_id,
+                         row=make_row(order_number="1040", plate_type="CARRO PARTICULAR",
+                                      is_batch_replacement=True, quantity=40),
+                         is_possible_duplicate=False)
+        db.recalc_inventory(db_conn)
+        db_conn.commit()
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
+            assert cur.fetchone() == (40,)  # sanity check before replacing
+
+        new_rows = [
+            make_row(order_number="1040", plate_type="CARRO PARTICULAR", plate_number="INV100", quantity=20),
+            make_row(order_number="1040", plate_type="CARRO PARTICULAR", plate_number="INV101", quantity=20),
+        ]
+        replace_order("1040", new_rows)
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
+            # 40 total across the two new rows -- NOT 80 (40 old + 40 new)
+            assert cur.fetchone() == (40,)
+
+    def test_is_possible_duplicate_set_exactly_as_process_rows_would(self, db_conn):
+        """A plate number that's still live elsewhere in the DB (NOT part of
+        the order being replaced) must still get flagged on the new row --
+        replacing one order must not blind the normal cross-order dup check."""
+        process_rows([make_row(order_number="1050", plate_type="CARRO PARTICULAR", plate_number="LIVE001")])
+
+        old_id = db.insert_order(db_conn, order_number="1051", order_date=date(2026, 1, 1),
+                                  requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=old_id,
+                         row=make_row(order_number="1051", plate_type="CARRO PARTICULAR",
+                                      is_batch_replacement=True, quantity=1),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        new_rows = [
+            make_row(order_number="1051", plate_type="CARRO PARTICULAR", plate_number="LIVE001"),
+            make_row(order_number="1051", plate_type="CARRO PARTICULAR", plate_number="FRESH2"),
+        ]
+        summary = replace_order("1051", new_rows)
+        assert summary.possible_duplicates == 1
+
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "SELECT p.plate_number, p.is_possible_duplicate FROM plates p "
+                "JOIN production_orders o ON o.id = p.order_id "
+                "WHERE o.order_number = '1051' ORDER BY p.plate_number"
+            )
+            assert cur.fetchall() == [("FRESH2", False), ("LIVE001", True)]
+
+    def test_within_batch_repeat_is_flagged_on_both_new_rows(self, db_conn):
+        old_id = db.insert_order(db_conn, order_number="1060", order_date=date(2026, 1, 1),
+                                  requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=old_id,
+                         row=make_row(order_number="1060", plate_type="CARRO PARTICULAR",
+                                      is_batch_replacement=True, quantity=1),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        new_rows = [
+            make_row(order_number="1060", plate_type="CARRO PARTICULAR", plate_number="REPT01"),
+            make_row(order_number="1060", plate_type="CARRO PARTICULAR", plate_number="REPT01"),
+        ]
+        summary = replace_order("1060", new_rows)
+        assert summary.possible_duplicates == 2
