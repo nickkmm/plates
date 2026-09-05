@@ -26,6 +26,11 @@ class Summary(BaseModel):
     plate_annulled: int = 0
     batch_replacements: int = 0
     review_notes: list[str] = []
+    # Only set by replace_order() (process_rows never deletes anything):
+    # how many pre-existing production_orders rows sharing the submitted
+    # order_number got fused away, and how many of their plates went with them.
+    orders_replaced: int = 0
+    plates_deleted: int = 0
 
 
 def _is_alistado(row: ExtractedRow) -> bool:
@@ -131,6 +136,100 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
                     summary.plate_annulled += 1
                 if r.is_batch_replacement:
                     summary.batch_replacements += 1
+
+        db.recalc_inventory(conn)
+        conn.commit()
+
+    return summary
+
+
+def replace_order(order_number: str, rows: list[ExtractedRow]) -> Summary:
+    """Fuse-replace every existing order under `order_number` with one fresh
+    order built from `rows`.
+
+    An explicit, opt-in action (see the /ingest "Reemplazar" button) for the
+    case where a big historical reposición batch (one placeholder plates row,
+    no plate identities -- see is_batch_replacement) gets its real plate
+    numbers recovered later, e.g. by re-uploading the original pedido PDF.
+    Simply re-running process_rows() on that PDF would silently create a
+    SECOND production_orders row with the same order_number (there's no
+    unique constraint on it, and the only duplicate check process_rows makes
+    is on plate_number, which a reposición row never has) -- this is exactly
+    what happened for real with WCY449 / pedido 1030 (see
+    data/duplicados_revision_2026-08-15.md), fixed by hand at the time.
+
+    Unlike process_rows (which groups an arbitrary batch by order_number and
+    can insert several orders at once), this is deliberately scoped to ONE
+    order_number: every row in `rows` must share it, or this raises --
+    replacing doesn't make sense spread across multiple orders in one call.
+
+    "Fuse" means every production_orders row that currently exists under
+    order_number gets deleted (there can be more than one already -- that's
+    the bug this exists to clean up), along with all of their plates, and
+    exactly one new order is inserted in their place. There is no picking
+    which existing row to keep: after this runs, order_number exists exactly
+    once, full stop.
+
+    Runs in a single transaction: either the whole replace lands or none of it.
+    """
+    if not rows:
+        raise ValueError("replace_order needs at least one row.")
+    if any(r.order_number != order_number for r in rows):
+        raise ValueError(
+            f"replace_order got rows for a different order_number than {order_number!r} -- "
+            "replacing must stay within a single order."
+        )
+
+    normalized = [normalize_row(r) for r in rows]
+
+    # Same within-batch duplicate check process_rows makes (only real plate
+    # identifiers count -- samples/serials/INGSE repeat legitimately).
+    batch_counts = Counter(
+        r.plate_number for r in normalized if is_real_plate(r.plate_number) and not r.is_voided
+    )
+
+    summary = Summary()
+
+    with db.get_conn() as conn:
+        # Fuse: delete every existing order under this order_number (and its
+        # plates) before inserting the replacement -- regardless of whether
+        # that's 0, 1, or 2+ rows (WCY449/pedido 1030 shows 2+ really happens).
+        existing = db.find_orders_by_number(conn, order_number)
+        for match in existing:
+            db.delete_order(conn, match["id"])
+            summary.plates_deleted += match["n_plates"]
+        summary.orders_replaced = len(existing)
+
+        live_candidates = {
+            r.plate_number for r in normalized if is_real_plate(r.plate_number) and not r.is_voided
+        }
+        already_present = db.existing_plate_numbers(conn, live_candidates)
+
+        head = normalized[0]
+        order_id = db.insert_order(
+            conn,
+            order_number=order_number,
+            order_date=head.order_date,
+            requested_by=head.requested_by,
+        )
+        summary.orders_inserted = 1
+
+        for r in normalized:
+            is_dup = bool(
+                is_real_plate(r.plate_number)
+                and not r.is_voided
+                and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
+            )
+            db.insert_plate(conn, order_id=order_id, row=r, is_possible_duplicate=is_dup)
+            summary.plates_inserted += 1
+            if is_dup:
+                summary.possible_duplicates += 1
+            if r.is_voided:
+                summary.voided += 1
+            if r.is_plate_annulled:
+                summary.plate_annulled += 1
+            if r.is_batch_replacement:
+                summary.batch_replacements += 1
 
         db.recalc_inventory(conn)
         conn.commit()
