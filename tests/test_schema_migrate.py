@@ -21,8 +21,10 @@ from datetime import date
 from pathlib import Path
 
 import psycopg
+import pytest
 
 from app import schema_migrate
+from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _INIT_SQL = (_REPO_ROOT / "init.sql").read_text(encoding="utf-8")
@@ -80,7 +82,7 @@ CREATE TABLE blank_preparations (
 
 _APP_TABLES = (
     "production_orders", "plates", "blank_preparations", "inventory_categories",
-    "clientes", "usuarios", "plate_type_prices", "schema_migrations",
+    "clientes", "usuarios", "plate_type_prices", "schema_migrations", "plate_types",
 )
 
 
@@ -119,6 +121,16 @@ class TestApplySqlMigrations:
         everywhere), independent of the schema_migrations bookkeeping that
         normally prevents a second run."""
         sql = (_MIGRATIONS_DIR / "0001_pos_fields.sql").read_text(encoding="utf-8")
+        with db_conn.cursor() as cur:
+            cur.execute(sql)
+            cur.execute(sql)
+
+    def test_0002_reference_integrity_sql_is_safe_to_apply_twice_directly(self, db_conn):
+        """Same idempotency guarantee as 0001, for the Fase 1b migration:
+        CREATE TABLE IF NOT EXISTS, INSERT ... ON CONFLICT DO NOTHING, and
+        each ADD CONSTRAINT guarded by a DO block (Postgres has no ADD
+        CONSTRAINT IF NOT EXISTS)."""
+        sql = (_MIGRATIONS_DIR / "0002_reference_integrity.sql").read_text(encoding="utf-8")
         with db_conn.cursor() as cur:
             cur.execute(sql)
             cur.execute(sql)
@@ -399,3 +411,101 @@ class TestSchemaInvariant:
                 cur.execute(f"DROP SCHEMA IF EXISTS {fresh} CASCADE")
                 cur.execute(f"DROP SCHEMA IF EXISTS {migrated} CASCADE")
             db_conn.commit()
+
+
+# --------------------------------------------------------------------------
+# Reference integrity (Fase 1b): plate_types / inventory_categories FKs
+# --------------------------------------------------------------------------
+
+
+class TestPlateTypesAndInventoryCategoriesSeed:
+    """`_db_ready` (tests/conftest.py) has already applied init.sql +
+    app/migrations/*.sql once this session, and `clean_db` reseeds
+    inventory_categories after every TRUNCATE (see tests/conftest.py) -- so
+    by the time a test runs, both reference tables must hold exactly the
+    values in the matching normalize.py constant, no more, no less. This is
+    the guard against the hand-copied seed SQL (init.sql AND
+    0002_reference_integrity.sql) drifting from PLATE_TYPES/
+    INVENTORY_CATEGORIES.
+    """
+
+    def test_plate_types_matches_normalize_plate_types_exactly(self, db_conn):
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT plate_type FROM plate_types")
+            seeded = {row[0] for row in cur.fetchall()}
+        assert seeded == set(PLATE_TYPES)
+
+    def test_inventory_categories_matches_normalize_inventory_categories_exactly(self, db_conn):
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT category FROM inventory_categories")
+            seeded = {row[0] for row in cur.fetchall()}
+        assert seeded == set(INVENTORY_CATEGORIES)
+
+
+class TestReferenceIntegrityConstraints:
+    """Fase 1b: plates.plate_type / plate_type_prices.plate_type are now real
+    FKs to plate_types(plate_type), and blank_preparations.category is a real
+    FK to inventory_categories(category) -- no longer just a text convention
+    checked in Python (normalize.PLATE_TYPES/INVENTORY_CATEGORIES). These
+    prove the FK actually rejects a bad value at the database layer, and that
+    a valid value still works exactly as before.
+    """
+
+    def test_plate_with_invalid_plate_type_is_rejected(self, db_conn):
+        order_id = _insert_order(db_conn, "PEDRO", "1")
+        db_conn.commit()
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), db_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO plates (order_id, plate_type) VALUES (%s, %s)",
+                (order_id, "NOT A REAL TYPE"),
+            )
+        db_conn.rollback()
+
+    def test_plate_with_valid_plate_type_still_works(self, db_conn):
+        order_id = _insert_order(db_conn, "PEDRO", "1")
+        db_conn.commit()
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO plates (order_id, plate_type) VALUES (%s, %s) RETURNING id",
+                (order_id, "CARRO PARTICULAR"),
+            )
+            assert cur.fetchone() is not None
+        db_conn.commit()
+
+    def test_plate_type_prices_with_invalid_plate_type_is_rejected(self, db_conn):
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), db_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO plate_type_prices (plate_type, unit_price) VALUES (%s, %s)",
+                ("NOT A REAL TYPE", 1000),
+            )
+        db_conn.rollback()
+
+    def test_plate_type_prices_with_valid_plate_type_still_works(self, db_conn):
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO plate_type_prices (plate_type, unit_price) VALUES (%s, %s)",
+                ("CARRO PARTICULAR", 1000),
+            )
+        db_conn.commit()
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "SELECT unit_price FROM plate_type_prices WHERE plate_type = 'CARRO PARTICULAR'"
+            )
+            assert cur.fetchone()[0] == 1000
+
+    def test_blank_preparation_with_invalid_category_is_rejected(self, db_conn):
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), db_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO blank_preparations (category, quantity) VALUES (%s, %s)",
+                ("NOT A REAL CATEGORY", 10),
+            )
+        db_conn.rollback()
+
+    def test_blank_preparation_with_valid_category_still_works(self, db_conn):
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO blank_preparations (category, quantity) VALUES (%s, %s) RETURNING id",
+                ("CARRO PARTICULAR", 10),
+            )
+            assert cur.fetchone() is not None
+        db_conn.commit()

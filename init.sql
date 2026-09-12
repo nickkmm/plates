@@ -10,10 +10,27 @@ CREATE TABLE production_orders (
     created_at TIMESTAMP DEFAULT now()
 );
 
+-- Fase 1b: the 7 granular plate TYPES (normalize.PLATE_TYPES), now a real
+-- lookup table instead of a text convention -- see docs/DATABASE.md rarezas.
+-- Defined here, before `plates`, so plates.plate_type can reference it
+-- directly.
+CREATE TABLE plate_types (
+    plate_type TEXT PRIMARY KEY
+);
+
+INSERT INTO plate_types (plate_type) VALUES
+    ('MOTO PARTICULAR'),
+    ('CARRO PARTICULAR'),
+    ('MOTO CARRO PARTICULAR'),
+    ('MOTO CARRO PÚBLICO'),
+    ('CARRO PÚBLICO'),
+    ('REMOLQUE'),
+    ('ORNAMENTAL');
+
 CREATE TABLE plates (
     id SERIAL PRIMARY KEY,
     order_id INTEGER REFERENCES production_orders(id),
-    plate_type TEXT NOT NULL,
+    plate_type TEXT NOT NULL REFERENCES plate_types(plate_type),
     plate_number TEXT,              -- single plate, or the START of a range
     plate_to TEXT,                  -- END of a range (NULL for single plates / reposición)
     is_batch_replacement BOOLEAN DEFAULT false,
@@ -38,13 +55,22 @@ CREATE TABLE inventory_categories (
     -- available (initial_stock + prepared - consumed) is computed in the view.
 );
 
+-- Seeded with the 3 fixed materials (normalize.INVENTORY_CATEGORIES) from
+-- birth -- Fase 1b: blank_preparations.category below is now a real FK to
+-- this table, so the row must already exist the first time ALISTAMIENTO is
+-- ever recorded, before db.recalc_inventory() gets a chance to create it.
+INSERT INTO inventory_categories (category) VALUES
+    ('CARRO PARTICULAR'),
+    ('MOTO PARTICULAR'),
+    ('PÚBLICO');
+
 -- Blank-preparation ("alistamiento") events: blanks cut/prepared in advance,
 -- and new material intake. Recorded in the ledger as ALISTAMIENTO rows. These
 -- are NOT plates; they feed inventory_categories.prepared.
 CREATE TABLE blank_preparations (
     id SERIAL PRIMARY KEY,
     prep_date DATE,
-    category TEXT NOT NULL,
+    category TEXT NOT NULL REFERENCES inventory_categories(category),
     quantity INTEGER NOT NULL DEFAULT 0,
     prepared_by TEXT,
     created_at TIMESTAMP DEFAULT now()
@@ -87,7 +113,7 @@ CREATE TABLE usuarios (
 -- (read from the Python constant), marking the ones with no row yet as
 -- "sin tarifa" instead of depending on seeded data.
 CREATE TABLE plate_type_prices (
-    plate_type TEXT PRIMARY KEY,
+    plate_type TEXT PRIMARY KEY REFERENCES plate_types(plate_type),
     unit_price NUMERIC(12,2) NOT NULL,
     updated_at TIMESTAMP DEFAULT now(),
     updated_by TEXT

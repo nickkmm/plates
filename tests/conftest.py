@@ -98,6 +98,7 @@ import pytest  # noqa: E402
 
 from app import schema_migrate  # noqa: E402
 from app.core import db  # noqa: E402
+from app.core.normalize import INVENTORY_CATEGORIES  # noqa: E402
 
 TABLES = (
     "plates", "production_orders", "blank_preparations", "inventory_categories",
@@ -188,6 +189,17 @@ def clean_db(_db_ready: bool):
     available (see task notes: no per-test transaction rollback here because
     `db.get_conn()` opens a fresh connection per call with no injection
     point, so tests instead get a truncated table set).
+
+    Reseeds `inventory_categories` with the 3 fixed materials right after
+    truncating it (mirroring init.sql/0002_reference_integrity.sql, which
+    seed it the same way) -- since Fase 1b, blank_preparations.category is a
+    real FK to this table, so any row must already exist before the first
+    `db.insert_blank_preparation()` in a test, exactly like on a real
+    from-birth database (`db.recalc_inventory()` only creates the row
+    afterwards, too late for a non-deferred FK on an insert that comes
+    first). `plate_types` (the other Fase 1b reference table) is NOT in
+    TABLES/truncated here on purpose -- it's static and never touched by
+    tests, so it stays seeded from `_db_ready`'s one-time schema setup.
     """
     if not _db_ready:
         pytest.skip("Postgres test database not reachable at 127.0.0.1:5433 (plates_test)")
@@ -195,6 +207,10 @@ def clean_db(_db_ready: bool):
     try:
         with conn.cursor() as cur:
             cur.execute(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
+            cur.executemany(
+                "INSERT INTO inventory_categories (category) VALUES (%s)",
+                [(category,) for category in INVENTORY_CATEGORIES],
+            )
         conn.commit()
     finally:
         conn.close()

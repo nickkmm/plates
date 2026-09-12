@@ -139,10 +139,18 @@ class TestAlistamiento:
 
     def test_prepared_by_alistam_also_detected(self, db_conn):
         """Belt-and-suspenders: the marker can be in ALISTADO POR (prepared_by)
-        instead of SOLICITADO POR (requested_by)."""
+        instead of SOLICITADO POR (requested_by).
+
+        plate_type is deliberately "CARRO PARTICULAR", not "PÚBLICO" --
+        normalize_plate_type() expands a bare "PÚBLICO" into "CARRO PÚBLICO"
+        (the 7-value plate TYPE namespace), which is not one of the 3
+        inventory_categories.category materials this ends up written to
+        (see docs/DATABASE.md rarezas on the two namespaces) and would trip
+        the Fase 1b blank_preparations FK -- irrelevant to what this test
+        actually verifies (the prepared_by marker detection)."""
         rows = [
             make_row(
-                order_number="201", requested_by="PEDRO", plate_type="PÚBLICO",
+                order_number="201", requested_by="PEDRO", plate_type="CARRO PARTICULAR",
                 quantity=100, prepared_by="ALISTAMIENTO JUNIO",
             )
         ]

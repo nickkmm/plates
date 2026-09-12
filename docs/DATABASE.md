@@ -34,6 +34,9 @@ erDiagram
     production_orders ||--o{ plates : "tiene"
     clientes ||--o{ production_orders : "cliente_id (nullable)"
     usuarios ||--o{ production_orders : "creado_por (nullable)"
+    plate_types ||--o{ plates : "plate_type"
+    plate_types ||--o{ plate_type_prices : "plate_type (PK)"
+    inventory_categories ||--o{ blank_preparations : "category"
 
     production_orders {
         int id PK
@@ -57,7 +60,7 @@ erDiagram
     plates {
         int id PK
         int order_id FK
-        text plate_type
+        text plate_type FK
         text plate_number "nullable"
         text plate_to "nullable, fin de rango"
         boolean is_batch_replacement
@@ -94,7 +97,7 @@ erDiagram
         timestamp created_at
     }
     plate_type_prices {
-        text plate_type PK "uno de normalize.PLATE_TYPES, no una FK — ver rarezas"
+        text plate_type PK, FK "uno de normalize.PLATE_TYPES"
         numeric unit_price
         timestamp updated_at
         text updated_by "nullable"
@@ -106,7 +109,7 @@ erDiagram
     blank_preparations {
         int id PK
         date prep_date "nullable"
-        text category
+        text category FK
         int quantity
         text prepared_by
         timestamp created_at
@@ -117,20 +120,36 @@ erDiagram
         int prepared
         int consumed
     }
+    plate_types {
+        text plate_type PK "las 7 normalize.PLATE_TYPES — Fase 1b"
+    }
 ```
 
-`blank_preparations`, `inventory_categories`, `plate_type_prices` y
-`schema_migrations` **no tienen FK** hacia el resto:
-- `blank_preparations`/`inventory_categories` se relacionan solo porque
-  `recalc_inventory()` (en `app/core/db.py`) recalcula `prepared`/`consumed`
-  agregando sobre esas tablas por texto de `category`/`plate_type`, no por
-  llave foránea.
-- `plate_type_prices.plate_type` es texto libre validado en Python contra la
-  constante `normalize.PLATE_TYPES` (mismo patrón de guard en tiempo de
-  import que ya usa `pdf_extract._CHECKBOX_COLUMNS`) — no existe una tabla
-  de tipos de placa a la que apuntar con una FK real.
-- `schema_migrations` es puro bookkeeping de `app/schema_migrate.py`, sin
-  relación con el resto del dominio.
+`schema_migrations` es la única tabla del esquema sin ninguna FK hacia el
+resto — es puro bookkeeping de `app/schema_migrate.py`, sin relación con el
+resto del dominio.
+
+Desde la **Fase 1b**, las otras tres relaciones que antes existían solo "por
+convención de texto" (mismo valor, sin FK real) ya son FK reales:
+- `plates.plate_type` y `plate_type_prices.plate_type` → `plate_types
+  (plate_type)`. `plate_types` es una tabla nueva, sembrada con los 7
+  valores de `normalize.PLATE_TYPES` — la validación en Python contra esa
+  misma constante **se mantiene** (mensaje de error más claro antes de
+  llegar a la BD); la FK es una red de seguridad adicional a nivel de datos,
+  no un reemplazo.
+- `blank_preparations.category` → `inventory_categories(category)`.
+  `inventory_categories` ya existía (Fase 1) y ahora hace de tabla de
+  referencia natural para las 3 categorías — no hizo falta una tabla nueva
+  para esta. **Por eso `inventory_categories` está sembrada con sus 3 filas
+  desde `init.sql`/la migración**, en vez de nacer vacía como antes de la
+  Fase 1b: si no tuviera ya las 3 filas, la primerísima fila de
+  ALISTAMIENTO en un volumen recién creado fallaría contra esta FK, porque
+  `recalc_inventory()` (en `app/core/db.py`) solo crea esas filas *después*
+  de insertar en `blank_preparations`, no antes.
+- `recalc_inventory()` sigue agregando `prepared`/`consumed` por texto de
+  `category`/`plate_type` sobre `blank_preparations`/`plates` — eso no
+  cambió; lo nuevo es que esos valores de texto ahora están garantizados
+  por FK a ser uno de los válidos, en vez de solo por convención.
 
 `cliente_id`/`creado_por` en `production_orders` sí son FK reales (a
 `clientes(id)`/`usuarios(id)`), ambas nullable y sin `ON DELETE` — igual que
@@ -171,7 +190,7 @@ el primer índice fuera de una PK/UNIQUE — ver rarezas para ambos.
 |---|---|---|---|
 | `id` | SERIAL | PK | |
 | `order_id` | INTEGER | FK → `production_orders(id)` | Nullable en el esquema, sin `ON DELETE`; el borrado en cascada lo hace la app (`delete_order` borra placas antes que la orden). Indexado (`plates_order_id_idx`, Fase 1) — ver rarezas. |
-| `plate_type` | TEXT | NOT NULL | `CARRO PARTICULAR`, `MOTO PARTICULAR`, `CARRO PÚBLICO`, `MOTO CARRO PÚBLICO`, `REMOLQUE`, `ORNAMENTAL`, etc. |
+| `plate_type` | TEXT | NOT NULL, FK → `plate_types(plate_type)` (Fase 1b) | `CARRO PARTICULAR`, `MOTO PARTICULAR`, `CARRO PÚBLICO`, `MOTO CARRO PÚBLICO`, `REMOLQUE`, `ORNAMENTAL`, etc. |
 | `plate_number` | TEXT | nullable | Placa única, o inicio de rango. `NULL` es válido (reposiciones sin placa asignada aún). |
 | `plate_to` | TEXT | nullable | Fin de rango; `NULL` en placas únicas/reposiciones. |
 | `quantity` | INTEGER | NOT NULL DEFAULT 1 | |
@@ -216,9 +235,22 @@ aviso al principio de este documento).
 | `id` | SERIAL | PK | |
 | `username` | TEXT | UNIQUE NOT NULL | |
 | `password_hash` | TEXT | NOT NULL | Mismo formato werkzeug (pbkdf2) que `AUTH_USERS` hoy — el backfill copia el hash tal cual, nunca resetea contraseñas. |
-| `rol` | TEXT | NOT NULL | `admin`/`produccion`/`consulta`/`punto_venta`, texto libre validado en Python contra una tupla en `auth.py` (mismo patrón que `plate_type_prices.plate_type`), no `CHECK` en la BD. |
+| `rol` | TEXT | NOT NULL | `admin`/`produccion`/`consulta`/`punto_venta`, texto libre validado en Python contra una tupla en `auth.py`, sin FK ni `CHECK` en la BD — a diferencia de `plate_type_prices.plate_type`/`plates.plate_type`/`blank_preparations.category`, que desde la Fase 1b sí tienen FK real (ver rarezas). |
 | `activo` | BOOLEAN | DEFAULT true | |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
+
+### `plate_types`
+
+*Agregada en la **Fase 1b**.* Tabla de referencia pura (sin más columnas que
+la PK) para los 7 valores de `normalize.PLATE_TYPES` — antes de la Fase 1b
+esto era solo una convención de texto compartida entre `plates.plate_type` y
+`plate_type_prices.plate_type`, sin nada en la BD que la hiciera cumplir. Ver
+rarezas para el detalle de por qué `plates`/`plate_type_prices` ahora
+referencian esta tabla con FK real.
+
+| Columna | Tipo | Constraint/Default | Nota |
+|---|---|---|---|
+| `plate_type` | TEXT | PK | Sembrada una vez, desde `init.sql`/`app/migrations/0002_reference_integrity.sql`, con los 7 valores exactos de `normalize.PLATE_TYPES`. No se escribe en ningún otro lugar de la app. |
 
 ### `plate_type_prices`
 
@@ -226,7 +258,7 @@ aviso al principio de este documento).
 
 | Columna | Tipo | Constraint/Default | Nota |
 |---|---|---|---|
-| `plate_type` | TEXT | PK | Uno de los 7 valores de `normalize.PLATE_TYPES` — **nunca** uno de los 3 `inventory_categories.category`. Ver rarezas, es fácil confundir estos dos espacios de nombres. |
+| `plate_type` | TEXT | PK, FK → `plate_types(plate_type)` (Fase 1b) | Uno de los 7 valores de `normalize.PLATE_TYPES` — **nunca** uno de los 3 `inventory_categories.category`. Ver rarezas, es fácil confundir estos dos espacios de nombres. |
 | `unit_price` | NUMERIC(12,2) | NOT NULL | Tarifa **sugerida/default**, no bloqueada — el precio real puede variar por cliente/negociación y queda editable al capturar cada placa (`plates.unit_price`). |
 | `updated_at` | TIMESTAMP | DEFAULT now() | |
 | `updated_by` | TEXT | nullable | |
@@ -250,7 +282,7 @@ las lecturas nunca deben usar `COALESCE(unit_price, 0)`.
 |---|---|---|---|
 | `id` | SERIAL | PK | |
 | `prep_date` | DATE | nullable | Sin `NOT NULL` a pesar de representar "cuándo se preparó". |
-| `category` | TEXT | NOT NULL | Texto libre, no forzado por FK a `inventory_categories.category` (solo coincide por convención). |
+| `category` | TEXT | NOT NULL, FK → `inventory_categories(category)` (Fase 1b) | Uno de los 3 valores de `normalize.INVENTORY_CATEGORIES`. |
 | `quantity` | INTEGER | NOT NULL DEFAULT 0 | |
 | `prepared_by` | TEXT | nullable | |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
@@ -263,7 +295,7 @@ antemano, o ingreso de material nuevo. No son placas; solo alimentan
 
 | Columna | Tipo | Constraint/Default | Nota |
 |---|---|---|---|
-| `category` | TEXT | PK | Una de las 3 categorías fijas: `CARRO PARTICULAR`, `MOTO PARTICULAR`, `PÚBLICO`. |
+| `category` | TEXT | PK | Una de las 3 categorías fijas: `CARRO PARTICULAR`, `MOTO PARTICULAR`, `PÚBLICO`. Sembrada con esas 3 filas desde `init.sql`/la migración desde la **Fase 1b** — ver rarezas (antes de eso, esta tabla nacía vacía). |
 | `initial_stock` | INTEGER | DEFAULT 0 | **Columna muerta** — ver rarezas. |
 | `prepared` | INTEGER | DEFAULT 0 | Recalculado por `recalc_inventory()` como suma de `blank_preparations.quantity`. |
 | `consumed` | INTEGER | DEFAULT 0 | Recalculado por `recalc_inventory()` como suma de `plates.quantity` no anuladas, mapeadas a material. |
@@ -317,6 +349,10 @@ vendido, no por material de inventario. Confundirlos dejaría `ORNAMENTAL`
 sin poder tener precio propio y le daría a `REMOLQUE` la tarifa de
 `CARRO PÚBLICO`. Precio (dinero, por tipo) e inventario (cantidades, por
 material) son loops separados en `app/core/db.py` y deben seguir separados.
+Desde la Fase 1b cada espacio de nombres tiene su propia tabla de referencia
+real (`plate_types` para los 7 tipos, `inventory_categories` para los 3
+materiales) — dos tablas *distintas*, no una FK compartida; seguir sin
+confundirlas.
 
 ### `order_number` sin `UNIQUE`
 
