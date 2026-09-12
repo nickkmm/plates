@@ -122,7 +122,7 @@
     </fieldset>
 
     <div class="save-row">
-      <a class="back" href="{{ url_for('records', q=back_query or None) }}">Volver a Registros</a>
+      <a class="back" href="{{ url_for('records', q=back_query or None) }}">← Volver a Registros</a>
       <button type="submit" class="submit">Guardar cambios</button>
     </div>
   </form>
@@ -169,7 +169,7 @@
       <tr><td colspan="4" class="r"><b>Total placas</b></td><td class="r"><b>{{ plates | sum(attribute='quantity') }}</b></td><td></td></tr>
     </tfoot>
   </table>
-  <a class="back no-form-back" href="{{ url_for('records', q=back_query or None) }}">Volver a Registros</a>
+  <a class="back no-form-back" href="{{ url_for('records', q=back_query or None) }}">← Volver a Registros</a>
   {% endif %}
 </body>
 </html>
