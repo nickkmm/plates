@@ -17,6 +17,7 @@ import pytest
 
 from app.core import db
 from app.core.models import ExtractedRow
+from app.core.normalize import INVENTORY_CATEGORIES
 
 
 class TestGetConn:
@@ -170,8 +171,16 @@ class TestInventoryView:
         rows = {r["category"]: r for r in db.inventory_view(db_conn)}
         assert rows["PÚBLICO"]["wasted"] == 0
 
-    def test_no_inventory_categories_rows_returns_empty_list(self, db_conn):
-        assert db.inventory_view(db_conn) == []
+    def test_no_activity_returns_the_3_seeded_categories_all_zeroed(self, db_conn):
+        """Since Fase 1b, inventory_categories is seeded with the 3 fixed
+        materials from birth (required so blank_preparations' FK to it never
+        blocks the very first ALISTAMIENTO -- see tests/conftest.py's
+        clean_db) -- so an otherwise-untouched DB no longer returns an empty
+        list, but the 3 rows with everything at zero."""
+        rows = {r["category"]: r for r in db.inventory_view(db_conn)}
+        assert set(rows) == set(INVENTORY_CATEGORIES)
+        for row in rows.values():
+            assert (row["prepared"], row["consumed"], row["available"], row["wasted"]) == (0, 0, 0, 0)
 
 
 class TestOrnamentalCount:
