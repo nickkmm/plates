@@ -27,6 +27,7 @@ jobs:
             git reset --hard origin/main
             echo "$ENV_FILE_B64" | base64 -d > .env
             docker compose up -d --build
+            docker compose exec -T web python -m app.schema_migrate
             docker compose ps
         env:
           ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
