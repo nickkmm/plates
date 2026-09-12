@@ -37,7 +37,7 @@
   <form class="search" method="get" action="{{ url_for('records') }}">
     <input type="text" name="q" value="{{ query or '' }}" placeholder="Buscar placa u orden, ej. ARN911 o 1234" autofocus>
     <button type="submit">Buscar</button>
-    {% if query %}<a class="clear" href="{{ url_for('records') }}">✕ limpiar</a>{% endif %}
+    {% if query %}<a class="clear" href="{{ url_for('records') }}">Limpiar</a>{% endif %}
   </form>
 
   <form class="search" method="post" action="{{ url_for('records_search_pdf') }}" enctype="multipart/form-data">

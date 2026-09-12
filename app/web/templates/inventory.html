@@ -52,7 +52,7 @@
         </div>
         <div class="bar"><i class="{{ 'over' if pct > 100 else '' }}" style="width: {{ [pct, 100] | min }}%"></i></div>
         <div class="pct">{{ pct | round(0) | int }}% consumido</div>
-        {% if r.available < 0 %}<div class="warn">⚠ Negativo — probablemente faltan alistamientos por cargar.</div>{% endif %}
+        {% if r.available < 0 %}<div class="warn">Negativo — probablemente faltan alistamientos por cargar.</div>{% endif %}
       </div>
     {% endfor %}
 

@@ -91,7 +91,7 @@
               <input type="checkbox" {{ 'checked' if p.is_plate_annulled else '' }}
                      onchange="this.previousElementSibling.value = this.checked ? 'on' : ''">
             </td>
-            <td><button type="button" class="rm" onclick="rmLine(this, true)">✕</button></td>
+            <td><button type="button" class="rm" onclick="rmLine(this, true)">Quitar</button></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -116,13 +116,13 @@
             <input type="hidden" name="is_plate_annulled" value="">
             <input type="checkbox" onchange="this.previousElementSibling.value = this.checked ? 'on' : ''">
           </td>
-          <td><button type="button" class="rm" onclick="rmLine(this, false)">✕</button></td>
+          <td><button type="button" class="rm" onclick="rmLine(this, false)">Quitar</button></td>
         </tr>
       </template>
     </fieldset>
 
     <div class="save-row">
-      <a class="back" href="{{ url_for('records', q=back_query or None) }}">← Volver a Registros</a>
+      <a class="back" href="{{ url_for('records', q=back_query or None) }}">Volver a Registros</a>
       <button type="submit" class="submit">Guardar cambios</button>
     </div>
   </form>
@@ -169,7 +169,7 @@
       <tr><td colspan="4" class="r"><b>Total placas</b></td><td class="r"><b>{{ plates | sum(attribute='quantity') }}</b></td><td></td></tr>
     </tfoot>
   </table>
-  <a class="back no-form-back" href="{{ url_for('records', q=back_query or None) }}">← Volver a Registros</a>
+  <a class="back no-form-back" href="{{ url_for('records', q=back_query or None) }}">Volver a Registros</a>
   {% endif %}
 </body>
 </html>
