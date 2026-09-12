@@ -93,7 +93,7 @@
   {% endif %}
   {% if summary %}
   <div class="summary">
-    <strong>Registrado ✓</strong>
+    <strong>Registrado</strong>
     <ul>
       <li>Órdenes: {{ summary.orders_inserted }} · Placas: {{ summary.plates_inserted }}</li>
       <li>Reposiciones: {{ summary.batch_replacements }} · Órdenes anuladas: {{ summary.voided }} · Placas anuladas: {{ summary.plate_annulled }} · Posibles duplicados: {{ summary.possible_duplicates }}</li>
@@ -123,7 +123,7 @@
       <legend>Placas</legend>
       <table>
         <thead>
-          <tr><th style="width:18%">Tipo de registro</th><th style="width:20%">Tipo de placa</th><th>Placa / Desde</th><th>Hasta</th><th style="width:16%">Ciudad</th><th style="width:10%">Cantidad</th><th style="width:5%"></th></tr>
+          <tr><th style="width:18%">Tipo de registro</th><th style="width:20%">Tipo de placa</th><th>Placa / Desde</th><th>Hasta</th><th style="width:16%">Ciudad</th><th style="width:10%">Cantidad</th><th style="width:8%"></th></tr>
         </thead>
         <tbody id="lines">
           {% set line_labels = {'placa':'Placa','rango':'Rango','reposicion':'Reposición','anulada_orden':'Orden anulada','placa_anulada':'Placa anulada','muestra':'Muestra'} %}
@@ -148,7 +148,7 @@
             <td><input type="text" name="plate_to" class="plate-num" value="{{ line.plate_to or '' }}" {% if line.line_type!='rango' %}readonly style="background:#f0f0f0"{% endif %}></td>
             <td><input type="text" name="city" list="cities" value="{{ line.city or '' }}"></td>
             <td><input type="number" name="quantity" value="{{ line.quantity or 1 }}" min="0" required></td>
-            <td><button type="button" class="rm" onclick="rmLine(this)">✕</button></td>
+            <td><button type="button" class="rm" onclick="rmLine(this)">Quitar</button></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -177,7 +177,7 @@
           <td><input type="text" name="plate_to" class="plate-num" readonly style="background:#f0f0f0"></td>
           <td><input type="text" name="city" list="cities"></td>
           <td><input type="number" name="quantity" value="1" min="0" required></td>
-          <td><button type="button" class="rm" onclick="rmLine(this)">✕</button></td>
+          <td><button type="button" class="rm" onclick="rmLine(this)">Quitar</button></td>
         </tr>
       </template>
     </fieldset>

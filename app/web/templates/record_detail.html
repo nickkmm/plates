@@ -91,7 +91,7 @@
               <input type="checkbox" {{ 'checked' if p.is_plate_annulled else '' }}
                      onchange="this.previousElementSibling.value = this.checked ? 'on' : ''">
             </td>
-            <td><button type="button" class="rm" onclick="rmLine(this, true)">✕</button></td>
+            <td><button type="button" class="rm" onclick="rmLine(this, true)">Quitar</button></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -116,7 +116,7 @@
             <input type="hidden" name="is_plate_annulled" value="">
             <input type="checkbox" onchange="this.previousElementSibling.value = this.checked ? 'on' : ''">
           </td>
-          <td><button type="button" class="rm" onclick="rmLine(this, false)">✕</button></td>
+          <td><button type="button" class="rm" onclick="rmLine(this, false)">Quitar</button></td>
         </tr>
       </template>
     </fieldset>
