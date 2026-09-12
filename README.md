@@ -4,6 +4,9 @@ Plate production tracking for INGSE (Colombia). Replaces a spreadsheet-based
 workflow with a Flask + PostgreSQL app running on a VPS, deployed automatically
 on every push to `main` via GitHub Actions.
 
+For architecture, database schema, and internal request-flow reference docs
+(with diagrams), see [`docs/README.md`](docs/README.md).
+
 ## Stack
 
 - Flask web app (`app/web/`) behind gunicorn, gated by session login:
