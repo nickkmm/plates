@@ -96,9 +96,13 @@ os.environ.setdefault("POSTGRES_USER", "plates_user")
 import psycopg  # noqa: E402
 import pytest  # noqa: E402
 
+from app import schema_migrate  # noqa: E402
 from app.core import db  # noqa: E402
 
-TABLES = ("plates", "production_orders", "blank_preparations", "inventory_categories")
+TABLES = (
+    "plates", "production_orders", "blank_preparations", "inventory_categories",
+    "clientes", "usuarios", "plate_type_prices",
+)
 _SCHEMA_PATH = os.path.join(_REPO_ROOT, "init.sql")
 
 
@@ -142,11 +146,21 @@ def _apply_schema(conn: psycopg.Connection) -> None:
 
 @pytest.fixture(scope="session")
 def _db_ready() -> bool:
-    """Session-scoped: ensure `plates_test` exists with the schema applied.
+    """Session-scoped: ensure `plates_test` exists with the CURRENT schema
+    applied (base schema + every app/migrations/*.sql).
 
     Returns True if the test database is reachable and ready, False
     otherwise (e.g. no POSTGRES_PASSWORD, or Postgres not reachable) so
     DB-dependent tests can skip cleanly instead of erroring the whole run.
+
+    The to_regclass check below only tells us `plates` exists at all, not
+    that it has the latest columns -- a developer with an old `plates_test`
+    volume from before a schema change would otherwise sail past this check
+    and then hit a confusing "column does not exist" deep inside some
+    unrelated test. So after that check (applying init.sql from scratch if
+    needed), we ALWAYS run the migration runner too: on a fresh DB it's a
+    fast no-op (nothing new to apply), and on a stale one it converges the
+    schema the same way `python -m app.schema_migrate` does in production.
     """
     if not os.environ.get("POSTGRES_PASSWORD"):
         return False
@@ -158,6 +172,7 @@ def _db_ready() -> bool:
                 _apply_schema(conn)
         finally:
             conn.close()
+        schema_migrate.main()
         return True
     except psycopg.Error:
         return False
