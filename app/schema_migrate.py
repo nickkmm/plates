@@ -1,5 +1,15 @@
 """Schema migration runner: applies app/migrations/*.sql to an already-
-initialized database, then backfills clientes/usuarios from existing data.
+initialized database, then backfills customers/users from existing data.
+
+(The backfill functions/constants below are still named/spelled
+backfill_clientes/backfill_usuarios/BACKFILL_CLIENTES_VERSION/etc. -- Fase 1c
+(app/migrations/0003_rename_to_english.sql) only renamed the `clientes`/
+`usuarios` SQL table and column names to `customers`/`users`, not these
+Python identifiers. The BACKFILL_*_VERSION strings in particular are left
+alone on purpose: they are literal values already written into production's
+`schema_migrations` table by the original Fase 1 run, and changing the
+string here would make this runner think that backfill had never happened,
+running it again unnecessarily against real production.)
 
 Deliberately named `schema_migrate.py`, NOT `migrate.py` -- `app/migrate.py`
 already exists and does something completely different (one-off historical
@@ -150,8 +160,8 @@ def backfill_clientes(conn: psycopg.Connection) -> None:
             for canonical, raws in groups.items():
                 cur.execute(
                     """
-                    INSERT INTO clientes (nombre) VALUES (%s)
-                    ON CONFLICT (nombre) DO UPDATE SET nombre = EXCLUDED.nombre
+                    INSERT INTO customers (name) VALUES (%s)
+                    ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
                     RETURNING id
                     """,
                     (canonical,),
@@ -196,7 +206,7 @@ def backfill_usuarios(conn: psycopg.Connection) -> None:
             for username, password_hash in users.items():
                 cur.execute(
                     """
-                    INSERT INTO usuarios (username, password_hash, rol) VALUES (%s, %s, %s)
+                    INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)
                     ON CONFLICT (username) DO NOTHING
                     """,
                     (username, password_hash, roles.get(username, ROLE_ADMIN)),

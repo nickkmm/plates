@@ -1,9 +1,12 @@
 """Tests for app.schema_migrate.
 
-Three things are covered:
-  1. The clientes/usuarios backfill algorithm, against small synthetic data
-     (never real production numbers -- see the Fase 1 plan's hard
-     constraint about not fabricating/fetching real data).
+Four things are covered:
+  1. The clientes/usuarios backfill algorithm (writing into customers/users
+     since Fase 1c -- see app/schema_migrate.py's module docstring for why
+     the functions/constants involved keep their original Spanish names),
+     against small synthetic data (never real production numbers -- see the
+     Fase 1 plan's hard constraint about not fabricating/fetching real
+     data).
   2. Idempotency: re-running apply_sql_migrations()/backfill_*()/main() must
      be a no-op the second time.
   3. The schema invariant: a fresh database built from the CURRENT init.sql
@@ -11,6 +14,10 @@ Three things are covered:
      applied on top must end up with an identical information_schema. This
      is the only thing that will catch the two schema sources drifting
      apart later.
+  4. Fase 1c specifically: app/migrations/0003_rename_to_english.sql renames
+     `clientes`/`usuarios` (table + columns, plus the objects Postgres
+     auto-named after them) to `customers`/`users` over real data, without
+     losing rows, and running it twice is a no-op.
 """
 
 from __future__ import annotations
@@ -82,7 +89,7 @@ CREATE TABLE blank_preparations (
 
 _APP_TABLES = (
     "production_orders", "plates", "blank_preparations", "inventory_categories",
-    "clientes", "usuarios", "plate_type_prices", "schema_migrations", "plate_types",
+    "customers", "users", "plate_type_prices", "schema_migrations", "plate_types",
 )
 
 
@@ -135,6 +142,22 @@ class TestApplySqlMigrations:
             cur.execute(sql)
             cur.execute(sql)
 
+    def test_0003_rename_to_english_sql_is_safe_to_apply_twice_directly(self, db_conn):
+        """Same idempotency guarantee as 0001/0002, for the Fase 1c rename.
+
+        By the time this runs, db_conn's database already has `customers`/
+        `users` under their final names (built straight from the CURRENT
+        init.sql by _db_ready) and no `clientes`/`usuarios` at all -- every
+        guard in the file should see "already done" and no-op both times.
+        The actual rename-over-real-data behavior is covered separately by
+        TestRenameToEnglish below, in a throwaway schema seeded with the
+        OLD Fase-1-era names.
+        """
+        sql = (_MIGRATIONS_DIR / "0003_rename_to_english.sql").read_text(encoding="utf-8")
+        with db_conn.cursor() as cur:
+            cur.execute(sql)
+            cur.execute(sql)
+
 
 # --------------------------------------------------------------------------
 # backfill_clientes
@@ -153,7 +176,7 @@ class TestBackfillClientes:
         schema_migrate.backfill_clientes(db_conn)
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT nombre FROM clientes")
+            cur.execute("SELECT name FROM customers")
             assert [row[0] for row in cur.fetchall()] == ["PTO.V"]
             cur.execute("SELECT DISTINCT cliente_id FROM production_orders")
             rows = cur.fetchall()
@@ -170,7 +193,7 @@ class TestBackfillClientes:
         schema_migrate.backfill_clientes(db_conn)
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM clientes")
+            cur.execute("SELECT count(*) FROM customers")
             assert cur.fetchone()[0] == 0
             cur.execute("SELECT cliente_id FROM production_orders WHERE order_number = '1'")
             assert cur.fetchone()[0] is None
@@ -186,7 +209,7 @@ class TestBackfillClientes:
         schema_migrate.backfill_clientes(db_conn)
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT nombre FROM clientes ORDER BY nombre")
+            cur.execute("SELECT name FROM customers ORDER BY name")
             assert [row[0] for row in cur.fetchall()] == ["MUVA GRANADA", "MUVA SERGIO"]
 
     def test_requested_by_is_never_rewritten(self, db_conn):
@@ -207,7 +230,7 @@ class TestBackfillClientes:
         schema_migrate.backfill_clientes(db_conn)
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM clientes")
+            cur.execute("SELECT count(*) FROM customers")
             assert cur.fetchone()[0] == 1
 
     def test_rerun_does_not_touch_an_already_resolved_order(self, db_conn):
@@ -218,10 +241,10 @@ class TestBackfillClientes:
         schema_migrate.backfill_clientes(db_conn)
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT id FROM clientes WHERE nombre = 'OTRO'")
+            cur.execute("SELECT id FROM customers WHERE name = 'OTRO'")
             row = cur.fetchone()
             if row is None:
-                cur.execute("INSERT INTO clientes (nombre) VALUES ('OTRO') RETURNING id")
+                cur.execute("INSERT INTO customers (name) VALUES ('OTRO') RETURNING id")
                 row = cur.fetchone()
             other_cliente_id = row[0]
             cur.execute("UPDATE production_orders SET cliente_id = %s WHERE id = %s",
@@ -248,8 +271,8 @@ class TestBackfillUsuarios:
         schema_migrate.backfill_usuarios(db_conn)
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT username, password_hash, rol FROM usuarios ORDER BY username")
-            rows = {username: (pw_hash, rol) for username, pw_hash, rol in cur.fetchall()}
+            cur.execute("SELECT username, password_hash, role FROM users ORDER BY username")
+            rows = {username: (pw_hash, role) for username, pw_hash, role in cur.fetchall()}
         # alice has no AUTH_ROLES entry -> defaults to admin, same as auth.role_for().
         assert rows["alice"] == ("pbkdf2:sha256:abc$def", "admin")
         assert rows["bob"] == ("pbkdf2:sha256:xyz", "consulta")
@@ -262,7 +285,7 @@ class TestBackfillUsuarios:
         schema_migrate.backfill_usuarios(db_conn)
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM usuarios")
+            cur.execute("SELECT count(*) FROM users")
             assert cur.fetchone()[0] == 1
 
 
@@ -296,7 +319,7 @@ class TestMain:
         conn = schema_migrate.db.get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT count(*) FROM usuarios")
+                cur.execute("SELECT count(*) FROM users")
                 row = cur.fetchone()
                 assert row is not None and row[0] == 1
                 cur.execute("SELECT version, count(*) FROM schema_migrations GROUP BY version")
@@ -411,6 +434,170 @@ class TestSchemaInvariant:
                 cur.execute(f"DROP SCHEMA IF EXISTS {fresh} CASCADE")
                 cur.execute(f"DROP SCHEMA IF EXISTS {migrated} CASCADE")
             db_conn.commit()
+
+
+# --------------------------------------------------------------------------
+# Fase 1c: clientes/usuarios -> customers/users rename
+# --------------------------------------------------------------------------
+
+# Byte-for-byte copy of the `clientes`/`usuarios` block exactly as Fase 1
+# shipped it (init.sql / app/migrations/0001_pos_fields.sql, before Fase 1c),
+# so Postgres auto-names the PK/UNIQUE constraints and the `id` sequence the
+# same way real production's tables were named
+# (clientes_pkey/clientes_nombre_key/clientes_id_seq,
+# usuarios_pkey/usuarios_username_key/usuarios_id_seq). Standing in for a
+# real, already-migrated Fase-1/1b production database -- NOT for a
+# pre-Fase-1 database (that's what _OLD_INIT_SQL/TestSchemaInvariant cover).
+_FASE1_CLIENTES_USUARIOS_SQL = """
+CREATE TABLE clientes (
+    id SERIAL PRIMARY KEY,
+    nombre TEXT NOT NULL UNIQUE,
+    tipo TEXT,
+    documento_tipo TEXT,
+    documento_numero TEXT,
+    documento_relacion TEXT,
+    telefono TEXT,
+    correo_electronico TEXT,
+    licencia_transito TEXT,
+    created_at TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE usuarios (
+    id SERIAL PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    rol TEXT NOT NULL,
+    activo BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT now()
+);
+"""
+
+_0003_SQL = (_MIGRATIONS_DIR / "0003_rename_to_english.sql").read_text(encoding="utf-8")
+
+
+class TestRenameToEnglish:
+    """app/migrations/0003_rename_to_english.sql, exercised against a
+    throwaway schema seeded with the OLD (Fase 1/1b) `clientes`/`usuarios`
+    names and a couple of hand-made rows -- proving the rename preserves
+    data, drops the old names, renames the auto-generated PK/UNIQUE/sequence
+    objects to match what a fresh `customers`/`users` table would have (see
+    TestSchemaInvariant), and that running it twice is a no-op.
+
+    Uses its own throwaway schema (same technique as TestSchemaInvariant)
+    rather than the shared `public` schema, which by this point in the test
+    session already has real `customers`/`users` (built straight from the
+    CURRENT init.sql) -- this test needs to start from the OLD names
+    instead.
+    """
+
+    SCHEMA = "fase1c_rename_test"
+
+    def _seed_old_schema(self, conn: psycopg.Connection) -> None:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {self.SCHEMA} CASCADE")
+            cur.execute(f"CREATE SCHEMA {self.SCHEMA}")
+            cur.execute(f"SET search_path TO {self.SCHEMA}")
+            cur.execute(_FASE1_CLIENTES_USUARIOS_SQL)
+            cur.execute(
+                "INSERT INTO clientes (nombre, tipo, telefono) VALUES "
+                "('PTO.V', 'EMPRESA', '3001234567'), ('MUVA GRANADA', NULL, NULL)"
+            )
+            cur.execute(
+                "INSERT INTO usuarios (username, password_hash, rol, activo) "
+                "VALUES ('alice', 'pbkdf2:sha256:abc', 'admin', true)"
+            )
+        conn.commit()
+
+    def _teardown_schema(self, conn: psycopg.Connection) -> None:
+        with conn.cursor() as cur:
+            cur.execute("SET search_path TO public")
+            cur.execute(f"DROP SCHEMA IF EXISTS {self.SCHEMA} CASCADE")
+        conn.commit()
+
+    def test_rename_preserves_data_and_drops_old_names(self, db_conn):
+        self._seed_old_schema(db_conn)
+        try:
+            with db_conn.cursor() as cur:
+                cur.execute(_0003_SQL)
+            db_conn.commit()
+
+            with db_conn.cursor() as cur:
+                cur.execute("SELECT name, type, phone FROM customers ORDER BY name")
+                customer_rows = cur.fetchall()
+                cur.execute("SELECT username, password_hash, role, active FROM users")
+                user_rows = cur.fetchall()
+                cur.execute("SELECT to_regclass('clientes'), to_regclass('usuarios')")
+                old_names = cur.fetchone()
+
+            assert customer_rows == [
+                ("MUVA GRANADA", None, None),
+                ("PTO.V", "EMPRESA", "3001234567"),
+            ]
+            assert user_rows == [("alice", "pbkdf2:sha256:abc", "admin", True)]
+            assert old_names == (None, None)
+        finally:
+            self._teardown_schema(db_conn)
+
+    def test_renamed_objects_match_what_a_fresh_table_would_auto_name(self, db_conn):
+        """The PK/UNIQUE constraint names and the id sequence must end up
+        named exactly as a fresh `CREATE TABLE customers`/`users` would
+        auto-name them -- otherwise a migrated old database's
+        information_schema would differ from a fresh install's (see
+        TestSchemaInvariant, which is the automated guard for this in
+        general; this test pins down the exact expected names)."""
+        self._seed_old_schema(db_conn)
+        try:
+            with db_conn.cursor() as cur:
+                cur.execute(_0003_SQL)
+            db_conn.commit()
+
+            with db_conn.cursor() as cur:
+                cur.execute(
+                    "SELECT conname FROM pg_constraint WHERE conrelid = to_regclass('customers')"
+                )
+                customer_constraints = {row[0] for row in cur.fetchall()}
+                cur.execute(
+                    "SELECT conname FROM pg_constraint WHERE conrelid = to_regclass('users')"
+                )
+                user_constraints = {row[0] for row in cur.fetchall()}
+                cur.execute(
+                    "SELECT pg_get_serial_sequence('customers', 'id'), "
+                    "pg_get_serial_sequence('users', 'id')"
+                )
+                customer_seq, user_seq = cur.fetchone()
+        finally:
+            self._teardown_schema(db_conn)
+
+        assert customer_constraints == {"customers_pkey", "customers_name_key"}
+        assert user_constraints == {"users_pkey", "users_username_key"}
+        assert customer_seq is not None and customer_seq.endswith(".customers_id_seq")
+        assert user_seq is not None and user_seq.endswith(".users_id_seq")
+
+    def test_rerun_is_a_no_op(self, db_conn):
+        """Applying the raw SQL a second time must change nothing and raise
+        nothing -- Postgres has no RENAME ... IF EXISTS, so this is only
+        true because of the guards in the file."""
+        self._seed_old_schema(db_conn)
+        try:
+            with db_conn.cursor() as cur:
+                cur.execute(_0003_SQL)
+            db_conn.commit()
+
+            with db_conn.cursor() as cur:
+                cur.execute("SELECT name FROM customers ORDER BY name")
+                before = cur.fetchall()
+
+            with db_conn.cursor() as cur:
+                cur.execute(_0003_SQL)
+            db_conn.commit()
+
+            with db_conn.cursor() as cur:
+                cur.execute("SELECT name FROM customers ORDER BY name")
+                after = cur.fetchall()
+        finally:
+            self._teardown_schema(db_conn)
+
+        assert before == after == [("MUVA GRANADA",), ("PTO.V",)]
 
 
 # --------------------------------------------------------------------------
