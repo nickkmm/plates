@@ -78,32 +78,38 @@ CREATE TABLE blank_preparations (
 
 -- POS (point-of-sale) order capture -- added alongside production tracking.
 -- See docs/DATABASE.md for the full column reference and the "rarezas" this
--- introduces (requested_by stays a denormalized copy of clientes.nombre).
+-- introduces (requested_by stays a denormalized copy of customers.name).
 
--- requested_by (the intermediary -- PTO.V, MUVA, etc.) and the sale "cliente"
+-- requested_by (the intermediary -- PTO.V, MUVA, etc.) and the sale "customer"
 -- are the same entity: the name already tracked in production_orders becomes
--- a real client row with new attributes. nombre is the ONLY UNIQUE constraint
+-- a real client row with new attributes. name is the ONLY UNIQUE constraint
 -- in this schema besides primary keys -- see docs/DATABASE.md for why.
-CREATE TABLE clientes (
+-- Table/columns named in English from birth -- Fase 1 originally shipped
+-- this as `clientes`/`nombre`/`tipo`/etc.; Fase 1c renamed it in production
+-- (see app/migrations/0003_rename_to_english.sql).
+CREATE TABLE customers (
     id SERIAL PRIMARY KEY,
-    nombre TEXT NOT NULL UNIQUE,   -- canonical form: normalize.normalize_requested_by(valor)
-    tipo TEXT,                     -- one of normalize.CLIENTE_TIPOS
-    documento_tipo TEXT,           -- one of normalize.DOCUMENTO_TIPOS
-    documento_numero TEXT,         -- TEXT always: NIT carries check digits/dashes
-    documento_relacion TEXT,       -- only meaningful when documento_tipo = CÉDULA
-    telefono TEXT,
-    correo_electronico TEXT,
-    licencia_transito TEXT,        -- only meaningful when tipo = PERSONA NATURAL
+    name TEXT NOT NULL UNIQUE,     -- canonical form: normalize.normalize_requested_by(valor)
+    type TEXT,                     -- one of normalize.CUSTOMER_TYPES
+    document_type TEXT,            -- one of normalize.DOCUMENT_TYPES
+    document_number TEXT,          -- TEXT always: NIT carries check digits/dashes
+    document_relation TEXT,        -- only meaningful when document_type = CÉDULA
+    phone TEXT,
+    email TEXT,
+    transit_license TEXT,          -- only meaningful when type = PERSONA NATURAL
     created_at TIMESTAMP DEFAULT now()
 );
 
 -- Real RBAC, replacing the AUTH_USERS/AUTH_ROLES env vars (see docs/WEB.md).
-CREATE TABLE usuarios (
+-- Table/columns named in English from birth -- Fase 1 originally shipped
+-- this as `usuarios`/`rol`/`activo`; Fase 1c renamed it in production (see
+-- app/migrations/0003_rename_to_english.sql).
+CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,   -- same werkzeug format as AUTH_USERS today
-    rol TEXT NOT NULL,             -- admin / produccion / consulta / punto_venta
-    activo BOOLEAN DEFAULT true,
+    role TEXT NOT NULL,            -- admin / produccion / consulta / punto_venta
+    active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT now()
 );
 
@@ -130,28 +136,37 @@ CREATE TABLE schema_migrations (
 
 -- New production_orders columns for the full sale order (POS), all nullable
 -- and additive -- no CHECK constraints, consistent with the rest of this
--- schema. cliente_id is nullable: not every historical requested_by value
--- backfills to a clean client (see app/schema_migrate.py).
-ALTER TABLE production_orders ADD COLUMN comprobante_tipo TEXT;
-ALTER TABLE production_orders ADD COLUMN comprobante_numero TEXT;
-ALTER TABLE production_orders ADD COLUMN cliente_id INTEGER REFERENCES clientes(id);
-ALTER TABLE production_orders ADD COLUMN forma_pago TEXT;
-ALTER TABLE production_orders ADD COLUMN guia_numero TEXT;
-ALTER TABLE production_orders ADD COLUMN pedido_numero TEXT;
-ALTER TABLE production_orders ADD COLUMN fecha_entrega DATE;
-ALTER TABLE production_orders ADD COLUMN fecha_transferencia_pago DATE;
-ALTER TABLE production_orders ADD COLUMN responsable_despacho TEXT;
-ALTER TABLE production_orders ADD COLUMN nombre_recibe TEXT;
-ALTER TABLE production_orders ADD COLUMN observaciones TEXT;
-ALTER TABLE production_orders ADD COLUMN creado_por INTEGER REFERENCES usuarios(id);
+-- schema. customer_id is nullable: not every historical requested_by value
+-- backfills to a clean client (see app/schema_migrate.py). Named in English
+-- from birth -- Fase 1 originally shipped these as `comprobante_tipo`,
+-- `comprobante_numero`, `cliente_id`, `forma_pago`, `guia_numero`,
+-- `pedido_numero`, `fecha_entrega`, `fecha_transferencia_pago`,
+-- `responsable_despacho`, `nombre_recibe`, `observaciones`, `creado_por`;
+-- Fase 1c renamed them in production (see
+-- app/migrations/0003_rename_to_english.sql).
+ALTER TABLE production_orders ADD COLUMN receipt_type TEXT;
+ALTER TABLE production_orders ADD COLUMN receipt_number TEXT;
+ALTER TABLE production_orders ADD COLUMN customer_id INTEGER REFERENCES customers(id);
+ALTER TABLE production_orders ADD COLUMN payment_method TEXT;
+ALTER TABLE production_orders ADD COLUMN tracking_number TEXT;
+ALTER TABLE production_orders ADD COLUMN client_order_number TEXT;
+ALTER TABLE production_orders ADD COLUMN delivery_date DATE;
+ALTER TABLE production_orders ADD COLUMN payment_date DATE;
+ALTER TABLE production_orders ADD COLUMN dispatched_by TEXT;
+ALTER TABLE production_orders ADD COLUMN received_by TEXT;
+ALTER TABLE production_orders ADD COLUMN notes TEXT;
+ALTER TABLE production_orders ADD COLUMN created_by INTEGER REFERENCES users(id);
 
--- New plates columns: per-vehicle/per-line data (motivo/marca_vehiculo) and
+-- New plates columns: per-vehicle/per-line data (reason/vehicle_brand) and
 -- the price snapshot taken at insert/edit time (see docs/DATABASE.md).
+-- reason/vehicle_brand named in English from birth -- Fase 1 originally
+-- shipped these as `motivo`/`marca_vehiculo`; Fase 1c renamed them in
+-- production (see app/migrations/0003_rename_to_english.sql).
 ALTER TABLE plates ADD COLUMN unit_price NUMERIC(12,2);
-ALTER TABLE plates ADD COLUMN motivo TEXT;         -- DETERIORO / PÉRDIDA / OTROS
-ALTER TABLE plates ADD COLUMN marca_vehiculo TEXT;
+ALTER TABLE plates ADD COLUMN reason TEXT;         -- DETERIORO / PÉRDIDA / OTROS
+ALTER TABLE plates ADD COLUMN vehicle_brand TEXT;
 
--- First index in this schema besides primary keys / the clientes.nombre
+-- First index in this schema besides primary keys / the customers.name
 -- UNIQUE: /cuadre introduces the first real aggregate JOIN over all of
 -- plates, joined on order_id.
 CREATE INDEX plates_order_id_idx ON plates(order_id);

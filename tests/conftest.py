@@ -102,7 +102,7 @@ from app.core.normalize import INVENTORY_CATEGORIES  # noqa: E402
 
 TABLES = (
     "plates", "production_orders", "blank_preparations", "inventory_categories",
-    "clientes", "usuarios", "plate_type_prices",
+    "customers", "users", "plate_type_prices",
 )
 _SCHEMA_PATH = os.path.join(_REPO_ROOT, "init.sql")
 
