@@ -12,19 +12,24 @@
 > construyen lógica de negocio **sobre** este esquema — no vuelven a
 > tocarlo. Este documento ya refleja ese esquema final.
 >
-> **Nota histórica (Fase 1c)**: la Fase 1 original nombró estas dos tablas
-> `clientes`/`usuarios` (y columnas como `nombre`/`tipo`/`rol`/`activo`) en
-> español, antes de fijar la convención de `CLAUDE.md` (identificadores en
-> inglés, contenido/valores en español). La **Fase 1c**
-> (`app/migrations/0003_rename_to_english.sql`) renombró tabla y columnas a
-> `customers`/`users` con sus nombres en inglés finales, tanto en producción
-> (con datos reales ya existentes: 190 `customers` / 3 `users`) como en
-> `init.sql` para instalaciones nuevas. Los *valores* guardados (nombres de
-> clientes, `PERSONA NATURAL`/`CÉDULA`/`DUEÑO`,
-> `admin`/`producción`/`consulta`/`punto_venta`) no cambiaron — son datos de
-> negocio en español, no identificadores. Las columnas `cliente_id`/
-> `creado_por` (y el resto de columnas nuevas de POS) en `production_orders`
-> **quedaron fuera** de este rename a propósito — ver rarezas más abajo.
+> **Nota histórica (Fase 1c)**: la Fase 1 original nombró `clientes`/
+> `usuarios` (tabla + columnas como `nombre`/`tipo`/`rol`/`activo`) **y**
+> todas las columnas nuevas de POS en `production_orders`/`plates`
+> (`comprobante_tipo`, `cliente_id`, `forma_pago`, `creado_por`, `motivo`,
+> `marca_vehiculo`, etc.) en español, antes de fijar la convención de
+> `CLAUDE.md` (identificadores en inglés, contenido/valores en español). La
+> **Fase 1c** (`app/migrations/0003_rename_to_english.sql`) renombró TODO
+> eso a sus nombres en inglés finales — tabla y columnas de `clientes`/
+> `usuarios`, y cada columna Spanish-named de `production_orders`/`plates`
+> (mapeo completo más abajo, sección de `production_orders`/`plates`) —
+> tanto en producción (con datos reales ya existentes: 190 `customers` / 3
+> `users` / 1954 `production_orders`) como en `init.sql` para instalaciones
+> nuevas. Los *valores* guardados (nombres de clientes, `PERSONA NATURAL`/
+> `CÉDULA`/`DUEÑO`, `admin`/`producción`/`consulta`/`punto_venta`,
+> `EFECTIVO`, etc.) no cambiaron — son datos de negocio en español, no
+> identificadores. (Una versión anterior de este documento decía que
+> `cliente_id`/`creado_por`/etc. habían quedado fuera del rename a
+> propósito — eso era un error, corregido: sí están incluidas.)
 >
 > **Aplicar el cambio a una base ya existente** (con datos reales, no un
 > volumen nuevo) es trabajo del runner nuevo `app/schema_migrate.py`
@@ -46,8 +51,8 @@
 ```mermaid
 erDiagram
     production_orders ||--o{ plates : "tiene"
-    customers ||--o{ production_orders : "cliente_id (nullable)"
-    users ||--o{ production_orders : "creado_por (nullable)"
+    customers ||--o{ production_orders : "customer_id (nullable)"
+    users ||--o{ production_orders : "created_by (nullable)"
     plate_types ||--o{ plates : "plate_type"
     plate_types ||--o{ plate_type_prices : "plate_type (PK)"
     inventory_categories ||--o{ blank_preparations : "category"
@@ -57,18 +62,18 @@ erDiagram
         text order_number "sin UNIQUE — ver rarezas"
         date order_date
         text requested_by "copia desnormalizada de customers.name — ver rarezas"
-        text comprobante_tipo "nullable"
-        text comprobante_numero "nullable"
-        int cliente_id FK "nullable"
-        text forma_pago "nullable — hoy siempre NULL, ver rarezas"
-        text guia_numero "nullable"
-        text pedido_numero "nullable"
-        date fecha_entrega "nullable"
-        date fecha_transferencia_pago "nullable"
-        text responsable_despacho "nullable"
-        text nombre_recibe "nullable"
-        text observaciones "nullable"
-        int creado_por FK "nullable"
+        text receipt_type "nullable"
+        text receipt_number "nullable"
+        int customer_id FK "nullable"
+        text payment_method "nullable — hoy siempre NULL, ver rarezas"
+        text tracking_number "nullable"
+        text client_order_number "nullable"
+        date delivery_date "nullable"
+        date payment_date "nullable"
+        text dispatched_by "nullable"
+        text received_by "nullable"
+        text notes "nullable"
+        int created_by FK "nullable"
         timestamp created_at
     }
     plates {
@@ -86,8 +91,8 @@ erDiagram
         text prepared_by
         text city "por placa, no por orden"
         numeric unit_price "nullable — snapshot al guardar/editar, ver rarezas"
-        text motivo "nullable — DETERIORO/PÉRDIDA/OTROS"
-        text marca_vehiculo "nullable"
+        text reason "nullable — DETERIORO/PÉRDIDA/OTROS"
+        text vehicle_brand "nullable"
         timestamp created_at
     }
     customers {
@@ -165,11 +170,9 @@ convención de texto" (mismo valor, sin FK real) ya son FK reales:
   cambió; lo nuevo es que esos valores de texto ahora están garantizados
   por FK a ser uno de los válidos, en vez de solo por convención.
 
-`cliente_id`/`creado_por` en `production_orders` sí son FK reales (a
+`customer_id`/`created_by` en `production_orders` sí son FK reales (a
 `customers(id)`/`users(id)`), ambas nullable y sin `ON DELETE` — igual que
-la FK preexistente `plates.order_id`. Sus propios nombres de columna
-siguen en español a propósito — ver rarezas ("Fase 1c no tocó las columnas
-de `production_orders`").
+la FK preexistente `plates.order_id`.
 
 No existe ningún `VIEW` ni `CHECK constraint` en todo el esquema.
 `customers.name UNIQUE` (Fase 1) es la primera y única restricción de
@@ -186,18 +189,18 @@ el primer índice fuera de una PK/UNIQUE — ver rarezas para ambos.
 | `order_number` | TEXT | NOT NULL | `TEXT`, no `INTEGER`, a propósito — hay números reales no numéricos (ej. `"NT 895"`). Sin `UNIQUE`. |
 | `order_date` | DATE | NOT NULL | Fecha real del negocio, distinta de `created_at`. |
 | `requested_by` | TEXT | NOT NULL | "Solicitado por" — normalizado en `app/core/normalize.py`. Desde la Fase 1, copia desnormalizada de `customers.name` — ver rarezas. |
-| `comprobante_tipo` | TEXT | nullable | *Fase 1: columna agregada al esquema; el flujo de `/ingest` todavía no la llena (fase posterior de la misma feature).* Valor esperado: `normalize.COMPROBANTE_TIPOS` (`FACTURA`/`RECIBO`/`OTROS`). Nombre de columna en español — ver rarezas ("Fase 1c no tocó las columnas de `production_orders`"). |
-| `comprobante_numero` | TEXT | nullable | Ídem — sin normalización de vocabulario, es un número/código libre. |
-| `cliente_id` | INTEGER | FK → `customers(id)`, nullable | Nullable porque no todo valor histórico de `requested_by` resuelve a un cliente limpio — ver el backfill en `app/schema_migrate.py` y rarezas. |
-| `forma_pago` | TEXT | nullable | Valor esperado: `normalize.FORMAS_PAGO` (`EFECTIVO`/`TRANSFERENCIA`/`CRÉDITO`/`OTROS`). Hoy **todas** las órdenes existentes tienen esto en `NULL` — ver rarezas. |
-| `guia_numero` | TEXT | nullable | |
-| `pedido_numero` | TEXT | nullable | El número de `PEDIDO #:` impreso — **no** es lo mismo que `order_number` (`ORDEN DE PRODUCCIÓN`), no confundirlos. |
-| `fecha_entrega` | DATE | nullable | A diferencia de `order_date`, una fecha futura acá es válida y esperada. |
-| `fecha_transferencia_pago` | DATE | nullable | |
-| `responsable_despacho` | TEXT | nullable | |
-| `nombre_recibe` | TEXT | nullable | Quien recibió físicamente el pedido — distinto de `cliente_id`/`requested_by`. |
-| `observaciones` | TEXT | nullable | |
-| `creado_por` | INTEGER | FK → `users(id)`, nullable | El usuario logueado que guardó la orden — distinto de `responsable_despacho`/`nombre_recibe` (datos de la entrega física, no de quién la cargó al sistema). |
+| `receipt_type` | TEXT | nullable | *Fase 1: columna agregada al esquema; el flujo de `/ingest` todavía no la llena (fase posterior de la misma feature).* Valor esperado: `normalize.RECEIPT_TYPES` (`FACTURA`/`RECIBO`/`OTROS`). Antes de la Fase 1c, esta columna se llamaba `comprobante_tipo`. |
+| `receipt_number` | TEXT | nullable | Ídem — sin normalización de vocabulario, es un número/código libre. Antes de la Fase 1c, `comprobante_numero`. |
+| `customer_id` | INTEGER | FK → `customers(id)`, nullable | Nullable porque no todo valor histórico de `requested_by` resuelve a un cliente limpio — ver el backfill en `app/schema_migrate.py` y rarezas. Antes de la Fase 1c, `cliente_id`. |
+| `payment_method` | TEXT | nullable | Valor esperado: `normalize.PAYMENT_METHODS` (`EFECTIVO`/`TRANSFERENCIA`/`CRÉDITO`/`OTROS`). Hoy **todas** las órdenes existentes tienen esto en `NULL` — ver rarezas. Antes de la Fase 1c, `forma_pago`. |
+| `tracking_number` | TEXT | nullable | Antes de la Fase 1c, `guia_numero`. |
+| `client_order_number` | TEXT | nullable | El número de `PEDIDO #:` impreso — **no** es lo mismo que `order_number` (`ORDEN DE PRODUCCIÓN`), no confundirlos. Antes de la Fase 1c, `pedido_numero`. |
+| `delivery_date` | DATE | nullable | A diferencia de `order_date`, una fecha futura acá es válida y esperada. Antes de la Fase 1c, `fecha_entrega`. |
+| `payment_date` | DATE | nullable | Antes de la Fase 1c, `fecha_transferencia_pago`. |
+| `dispatched_by` | TEXT | nullable | Antes de la Fase 1c, `responsable_despacho`. |
+| `received_by` | TEXT | nullable | Quien recibió físicamente el pedido — distinto de `customer_id`/`requested_by`. Antes de la Fase 1c, `nombre_recibe`. |
+| `notes` | TEXT | nullable | Antes de la Fase 1c, `observaciones`. |
+| `created_by` | INTEGER | FK → `users(id)`, nullable | El usuario logueado que guardó la orden — distinto de `dispatched_by`/`received_by` (datos de la entrega física, no de quién la cargó al sistema). Antes de la Fase 1c, `creado_por`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | Nunca se usa para ordenar por "reciente" (ver `recent_orders` en [`CORE.md`](CORE.md)). |
 
 ### `plates`
@@ -214,8 +217,8 @@ el primer índice fuera de una PK/UNIQUE — ver rarezas para ambos.
 | `prepared_by` | TEXT | nullable | Rara vez se llena. |
 | `city` | TEXT | nullable | **Por placa, no por orden** — una orden puede despachar a varias ciudades. |
 | `unit_price` | NUMERIC(12,2) | nullable | *Fase 1: columna agregada al esquema; nada la escribe todavía (fase posterior de la misma feature).* Cuando se use: snapshot del precio al momento de guardar/editar la placa, tomado de `plate_type_prices` pero editable — no una referencia viva a la tarifa. `NULL` significa "sin tarifa capturada", nunca se trata como `0`. |
-| `motivo` | TEXT | nullable | Dato del vehículo/placa, no de la orden. Valor esperado: `normalize.MOTIVOS` (`DETERIORO`/`PÉRDIDA`/`OTROS`). |
-| `marca_vehiculo` | TEXT | nullable | Dato del vehículo, siempre de captura manual (no viene impreso en el PDF de pedido). |
+| `reason` | TEXT | nullable | Dato del vehículo/placa, no de la orden. Valor esperado: `normalize.REASONS` (`DETERIORO`/`PÉRDIDA`/`OTROS`). Antes de la Fase 1c, esta columna se llamaba `motivo`. |
+| `vehicle_brand` | TEXT | nullable | Dato del vehículo, siempre de captura manual (no viene impreso en el PDF de pedido). Antes de la Fase 1c, `marca_vehiculo`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
 ### `customers`
@@ -229,7 +232,7 @@ ahora con atributos propios.
 |---|---|---|---|
 | `id` | SERIAL | PK | |
 | `name` | TEXT | NOT NULL UNIQUE | Forma **canónica**: `normalize.normalize_requested_by(valor)`. Ver rarezas — es la primera `UNIQUE` del esquema aparte de las PK. Antes de la Fase 1c, esta columna se llamaba `nombre`. |
-| `type` | TEXT | nullable | Valor esperado: `normalize.CUSTOMER_TYPES` (`PERSONA NATURAL`/`TRÁNSITO`/`EMPRESA`/`OTROS`). No confundir con los *valores* de `plates.motivo` ni con `document_type`. |
+| `type` | TEXT | nullable | Valor esperado: `normalize.CUSTOMER_TYPES` (`PERSONA NATURAL`/`TRÁNSITO`/`EMPRESA`/`OTROS`). No confundir con los *valores* de `plates.reason` ni con `document_type`. |
 | `document_type` | TEXT | nullable | Valor esperado: `normalize.DOCUMENT_TYPES` (`NIT`/`CÉDULA`/`OTROS`). |
 | `document_number` | TEXT | nullable | `TEXT` siempre, aunque a veces sea numérico — un NIT trae dígito de verificación/guiones. |
 | `document_relation` | TEXT | nullable | Solo tiene sentido si `document_type = 'CÉDULA'`; debe quedar `NULL` en cualquier otro caso (se refuerza en servidor, no solo en el HTML). |
@@ -334,7 +337,7 @@ se convirtió en una columna derivada/calculada porque 9 queries de lectura y
 `search_plates_by_number`, `find_orders_for_plate`, `review_rows`,
 `order_detail`, `distinct_requested_by`, `_orders_table.html`,
 `record_detail.html`). Regla que hay que respetar en cualquier código nuevo:
-**toda escritura que fija `cliente_id` debe fijar también `requested_by =
+**toda escritura que fija `customer_id` debe fijar también `requested_by =
 customers.name` en la misma operación** — dejarlos desincronizados es un
 bug, no una variante válida.
 
@@ -350,24 +353,30 @@ SERGIO` quedan sin fusionar a propósito); para separarlos se tipea un nombre
 calificado (`PTO.V FABIO M`), igual que siempre. `customers.name` no fuerza
 nada distinto — solo canonicaliza (`normalize.normalize_requested_by`).
 
-### Fase 1c no tocó las columnas de `production_orders`
+### Fase 1c cubrió TODO lo que Fase 1 agregó en español, no solo `clientes`/`usuarios`
 
-El rename de la Fase 1c fue exclusivamente `clientes`→`customers` y
-`usuarios`→`users` (tabla y columnas propias de cada una). Las columnas que
-`production_orders` agregó en la Fase 1 y que **referencian** esas tablas
-(`cliente_id`, `creado_por`) o que comparten el mismo espíritu POS
-(`comprobante_tipo`, `comprobante_numero`, `forma_pago`, `guia_numero`,
-`pedido_numero`, `fecha_entrega`, `fecha_transferencia_pago`,
-`responsable_despacho`, `nombre_recibe`, `observaciones`) **se quedaron con
-sus nombres en español** — fuera de alcance a propósito, ver la Fase 1c del
-plan. Las FK de `cliente_id`/`creado_por` siguen funcionando exactamente
-igual después del rename (Postgres nombra una FK por la columna que
-referencia, no por la tabla referenciada, y resuelve la tabla referenciada
-por OID internamente — no por nombre) — solo que ahora apuntan a
-`customers(id)`/`users(id)` en vez de `clientes(id)`/`usuarios(id)`. Cuando
-la Fase 2 retome esta feature, sus columnas nuevas usan directamente los
-nombres en inglés finales (`receipt_type`, `payment_method`, etc.) en vez de
-reciclar estos.
+Una versión anterior de este documento (y del plan) decía que las columnas
+de POS en `production_orders`/`plates` (`cliente_id`, `creado_por`,
+`comprobante_tipo`, `motivo`, etc.) habían quedado fuera del rename de la
+Fase 1c porque "pertenecían a una Fase 2 que nunca llegó a pushear" — eso
+era un error, detectado al verificar contra producción real con
+`\d production_orders`/`\d plates`: esas columnas ya existían, agregadas
+por la Fase 1 (PR #14) igual que `clientes`/`usuarios`, así que el rename
+de la Fase 1c las cubre a todas — ver el mapeo completo en la sección de
+`production_orders`/`plates` más arriba y en
+`app/migrations/0003_rename_to_english.sql`. Las 2 FK existentes
+(`production_orders_cliente_id_fkey` → `production_orders_customer_id_fkey`,
+`production_orders_creado_por_fkey` → `production_orders_created_by_fkey`)
+se renombraron también — no por necesidad funcional (Postgres nombra una FK
+por la columna que referencia, no por la tabla referenciada, y la resuelve
+por OID internamente, así que habría seguido funcionando igual sin
+renombrarlas) sino para que el nombre de la constraint en una base ya
+migrada coincida con el que Postgres le pone automáticamente en una
+instalación nueva (mismo razonamiento que las constraints de
+`customers`/`users`, ver arriba). Cuando la Fase 2 retome esta feature,
+sigue construyendo directamente sobre estos nombres en inglés
+(`receipt_type`, `payment_method`, `reason`, etc.), sin nada pendiente de
+renombrar.
 
 ### `plates_order_id_idx` — primer índice de este esquema fuera de PK/UNIQUE
 

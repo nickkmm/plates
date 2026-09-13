@@ -178,7 +178,7 @@ class TestBackfillClientes:
         with db_conn.cursor() as cur:
             cur.execute("SELECT name FROM customers")
             assert [row[0] for row in cur.fetchall()] == ["PTO.V"]
-            cur.execute("SELECT DISTINCT cliente_id FROM production_orders")
+            cur.execute("SELECT DISTINCT customer_id FROM production_orders")
             rows = cur.fetchall()
         assert len(rows) == 1
         assert rows[0][0] is not None
@@ -186,7 +186,7 @@ class TestBackfillClientes:
     def test_junk_value_without_alphanumerics_is_left_unresolved(self, db_conn):
         """A requested_by with no alphanumeric character (e.g. '//') is
         skipped entirely: no junk client gets created, and the order is left
-        with cliente_id NULL for manual review."""
+        with customer_id NULL for manual review."""
         _insert_order(db_conn, "//", "1")
         db_conn.commit()
 
@@ -195,7 +195,7 @@ class TestBackfillClientes:
         with db_conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM customers")
             assert cur.fetchone()[0] == 0
-            cur.execute("SELECT cliente_id FROM production_orders WHERE order_number = '1'")
+            cur.execute("SELECT customer_id FROM production_orders WHERE order_number = '1'")
             assert cur.fetchone()[0] is None
 
     def test_distinct_real_clients_are_never_merged(self, db_conn):
@@ -234,7 +234,7 @@ class TestBackfillClientes:
             assert cur.fetchone()[0] == 1
 
     def test_rerun_does_not_touch_an_already_resolved_order(self, db_conn):
-        """A cliente_id already set by other means (e.g. the future /ingest
+        """A customer_id already set by other means (e.g. the future /ingest
         flow) must never be silently overwritten by a later backfill run."""
         order_id = _insert_order(db_conn, "PEDRO", "1")
         db_conn.commit()
@@ -246,16 +246,16 @@ class TestBackfillClientes:
             if row is None:
                 cur.execute("INSERT INTO customers (name) VALUES ('OTRO') RETURNING id")
                 row = cur.fetchone()
-            other_cliente_id = row[0]
-            cur.execute("UPDATE production_orders SET cliente_id = %s WHERE id = %s",
-                        (other_cliente_id, order_id))
+            other_customer_id = row[0]
+            cur.execute("UPDATE production_orders SET customer_id = %s WHERE id = %s",
+                        (other_customer_id, order_id))
         db_conn.commit()
 
         schema_migrate.backfill_clientes(db_conn)
 
         with db_conn.cursor() as cur:
-            cur.execute("SELECT cliente_id FROM production_orders WHERE id = %s", (order_id,))
-            assert cur.fetchone()[0] == other_cliente_id
+            cur.execute("SELECT customer_id FROM production_orders WHERE id = %s", (order_id,))
+            assert cur.fetchone()[0] == other_customer_id
 
 
 # --------------------------------------------------------------------------
@@ -437,18 +437,23 @@ class TestSchemaInvariant:
 
 
 # --------------------------------------------------------------------------
-# Fase 1c: clientes/usuarios -> customers/users rename
+# Fase 1c: full rename to English (clientes/usuarios AND the Spanish-named
+# POS columns Fase 1 also added to production_orders/plates)
 # --------------------------------------------------------------------------
 
-# Byte-for-byte copy of the `clientes`/`usuarios` block exactly as Fase 1
-# shipped it (init.sql / app/migrations/0001_pos_fields.sql, before Fase 1c),
-# so Postgres auto-names the PK/UNIQUE constraints and the `id` sequence the
-# same way real production's tables were named
-# (clientes_pkey/clientes_nombre_key/clientes_id_seq,
-# usuarios_pkey/usuarios_username_key/usuarios_id_seq). Standing in for a
-# real, already-migrated Fase-1/1b production database -- NOT for a
-# pre-Fase-1 database (that's what _OLD_INIT_SQL/TestSchemaInvariant cover).
-_FASE1_CLIENTES_USUARIOS_SQL = """
+# Byte-for-byte copy of the Spanish-named schema exactly as Fase 1 shipped it
+# (init.sql / app/migrations/0001_pos_fields.sql, before Fase 1c) -- table
+# and column names only, columns trimmed to the ones this migration touches
+# plus the NOT NULL ones needed to satisfy production_orders' own
+# constraints -- so Postgres auto-names the PK/UNIQUE constraints, the `id`
+# sequences, and the two production_orders FKs the same way real
+# production's tables were named (clientes_pkey/clientes_nombre_key/
+# clientes_id_seq, usuarios_pkey/usuarios_username_key/usuarios_id_seq,
+# production_orders_cliente_id_fkey, production_orders_creado_por_fkey).
+# Standing in for a real, already-migrated Fase-1/1b production database --
+# NOT for a pre-Fase-1 database (that's what _OLD_INIT_SQL/TestSchemaInvariant
+# cover).
+_FASE1_SPANISH_SQL = """
 CREATE TABLE clientes (
     id SERIAL PRIMARY KEY,
     nombre TEXT NOT NULL UNIQUE,
@@ -470,24 +475,64 @@ CREATE TABLE usuarios (
     activo BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT now()
 );
+
+CREATE TABLE production_orders (
+    id SERIAL PRIMARY KEY,
+    order_number TEXT NOT NULL,
+    order_date DATE NOT NULL,
+    requested_by TEXT NOT NULL,
+    comprobante_tipo TEXT,
+    comprobante_numero TEXT,
+    cliente_id INTEGER REFERENCES clientes(id),
+    forma_pago TEXT,
+    guia_numero TEXT,
+    pedido_numero TEXT,
+    fecha_entrega DATE,
+    fecha_transferencia_pago DATE,
+    responsable_despacho TEXT,
+    nombre_recibe TEXT,
+    observaciones TEXT,
+    creado_por INTEGER REFERENCES usuarios(id),
+    created_at TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE plates (
+    id SERIAL PRIMARY KEY,
+    order_id INTEGER REFERENCES production_orders(id),
+    plate_type TEXT NOT NULL,
+    motivo TEXT,
+    marca_vehiculo TEXT,
+    created_at TIMESTAMP DEFAULT now()
+);
 """
 
 _0003_SQL = (_MIGRATIONS_DIR / "0003_rename_to_english.sql").read_text(encoding="utf-8")
 
+# The Spanish-named POS columns this migration renames, grouped by table --
+# used below to assert every old name is gone after the rename.
+_OLD_PRODUCTION_ORDERS_POS_COLUMNS = [
+    "comprobante_tipo", "comprobante_numero", "cliente_id", "forma_pago",
+    "guia_numero", "pedido_numero", "fecha_entrega", "fecha_transferencia_pago",
+    "responsable_despacho", "nombre_recibe", "observaciones", "creado_por",
+]
+_OLD_PLATES_POS_COLUMNS = ["motivo", "marca_vehiculo"]
+
 
 class TestRenameToEnglish:
     """app/migrations/0003_rename_to_english.sql, exercised against a
-    throwaway schema seeded with the OLD (Fase 1/1b) `clientes`/`usuarios`
-    names and a couple of hand-made rows -- proving the rename preserves
-    data, drops the old names, renames the auto-generated PK/UNIQUE/sequence
-    objects to match what a fresh `customers`/`users` table would have (see
-    TestSchemaInvariant), and that running it twice is a no-op.
+    throwaway schema seeded with the OLD (Fase 1/1b) Spanish names -- both
+    `clientes`/`usuarios` and the Spanish-named POS columns Fase 1 also
+    added to `production_orders`/`plates` -- and a couple of hand-made rows.
+    Proves the rename preserves data, drops every old name, renames the
+    auto-generated PK/UNIQUE/sequence/FK objects to match what a fresh
+    install would have (see TestSchemaInvariant), and that running it twice
+    is a no-op.
 
     Uses its own throwaway schema (same technique as TestSchemaInvariant)
     rather than the shared `public` schema, which by this point in the test
-    session already has real `customers`/`users` (built straight from the
-    CURRENT init.sql) -- this test needs to start from the OLD names
-    instead.
+    session already has the real, already-English schema (built straight
+    from the CURRENT init.sql) -- this test needs to start from the OLD
+    names instead.
     """
 
     SCHEMA = "fase1c_rename_test"
@@ -497,7 +542,7 @@ class TestRenameToEnglish:
             cur.execute(f"DROP SCHEMA IF EXISTS {self.SCHEMA} CASCADE")
             cur.execute(f"CREATE SCHEMA {self.SCHEMA}")
             cur.execute(f"SET search_path TO {self.SCHEMA}")
-            cur.execute(_FASE1_CLIENTES_USUARIOS_SQL)
+            cur.execute(_FASE1_SPANISH_SQL)
             cur.execute(
                 "INSERT INTO clientes (nombre, tipo, telefono) VALUES "
                 "('PTO.V', 'EMPRESA', '3001234567'), ('MUVA GRANADA', NULL, NULL)"
@@ -506,6 +551,30 @@ class TestRenameToEnglish:
                 "INSERT INTO usuarios (username, password_hash, rol, activo) "
                 "VALUES ('alice', 'pbkdf2:sha256:abc', 'admin', true)"
             )
+            # PTO.V and alice are each the first (only) row inserted into
+            # their table above, so their ids are deterministically 1 -- used
+            # below instead of a subquery, to keep the expected row tuple
+            # readable.
+            cur.execute(
+                """
+                INSERT INTO production_orders (
+                    order_number, order_date, requested_by, comprobante_tipo,
+                    comprobante_numero, cliente_id, forma_pago, guia_numero,
+                    pedido_numero, fecha_entrega, fecha_transferencia_pago,
+                    responsable_despacho, nombre_recibe, observaciones, creado_por
+                ) VALUES (
+                    '5001', '2026-01-15', 'PTO.V', 'FACTURA', 'F-001',
+                    1, 'EFECTIVO', 'G-777', '28', '2026-01-20',
+                    '2026-01-18', 'JUAN', 'MARIA', 'Entrega urgente', 1
+                )
+                """
+            )
+            cur.execute(
+                """
+                INSERT INTO plates (order_id, plate_type, motivo, marca_vehiculo)
+                VALUES (1, 'CARRO PARTICULAR', 'DETERIORO', 'CHEVROLET')
+                """
+            )
         conn.commit()
 
     def _teardown_schema(self, conn: psycopg.Connection) -> None:
@@ -513,6 +582,27 @@ class TestRenameToEnglish:
             cur.execute("SET search_path TO public")
             cur.execute(f"DROP SCHEMA IF EXISTS {self.SCHEMA} CASCADE")
         conn.commit()
+
+    def _old_pos_columns_remaining(self, conn: psycopg.Connection) -> list[str]:
+        """Any of the OLD Spanish POS column names still present (not
+        dropped) on production_orders/plates -- empty once the rename is
+        complete."""
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT attname FROM pg_attribute "
+                "WHERE attrelid = to_regclass('production_orders') "
+                "AND attname = ANY(%s) AND NOT attisdropped",
+                (_OLD_PRODUCTION_ORDERS_POS_COLUMNS,),
+            )
+            remaining = [row[0] for row in cur.fetchall()]
+            cur.execute(
+                "SELECT attname FROM pg_attribute "
+                "WHERE attrelid = to_regclass('plates') "
+                "AND attname = ANY(%s) AND NOT attisdropped",
+                (_OLD_PLATES_POS_COLUMNS,),
+            )
+            remaining += [row[0] for row in cur.fetchall()]
+        return remaining
 
     def test_rename_preserves_data_and_drops_old_names(self, db_conn):
         self._seed_old_schema(db_conn)
@@ -526,25 +616,45 @@ class TestRenameToEnglish:
                 customer_rows = cur.fetchall()
                 cur.execute("SELECT username, password_hash, role, active FROM users")
                 user_rows = cur.fetchall()
+                cur.execute(
+                    """
+                    SELECT order_number, receipt_type, receipt_number, customer_id,
+                           payment_method, tracking_number, client_order_number,
+                           delivery_date, payment_date, dispatched_by, received_by,
+                           notes, created_by
+                    FROM production_orders WHERE order_number = '5001'
+                    """
+                )
+                order_row = cur.fetchone()
+                cur.execute("SELECT reason, vehicle_brand FROM plates WHERE order_id = 1")
+                plate_row = cur.fetchone()
                 cur.execute("SELECT to_regclass('clientes'), to_regclass('usuarios')")
-                old_names = cur.fetchone()
+                old_table_names = cur.fetchone()
+                old_pos_columns = self._old_pos_columns_remaining(db_conn)
 
             assert customer_rows == [
                 ("MUVA GRANADA", None, None),
                 ("PTO.V", "EMPRESA", "3001234567"),
             ]
             assert user_rows == [("alice", "pbkdf2:sha256:abc", "admin", True)]
-            assert old_names == (None, None)
+            assert order_row == (
+                "5001", "FACTURA", "F-001", 1, "EFECTIVO", "G-777", "28",
+                date(2026, 1, 20), date(2026, 1, 18), "JUAN", "MARIA",
+                "Entrega urgente", 1,
+            )
+            assert plate_row == ("DETERIORO", "CHEVROLET")
+            assert old_table_names == (None, None)
+            assert old_pos_columns == []
         finally:
             self._teardown_schema(db_conn)
 
     def test_renamed_objects_match_what_a_fresh_table_would_auto_name(self, db_conn):
-        """The PK/UNIQUE constraint names and the id sequence must end up
-        named exactly as a fresh `CREATE TABLE customers`/`users` would
-        auto-name them -- otherwise a migrated old database's
-        information_schema would differ from a fresh install's (see
-        TestSchemaInvariant, which is the automated guard for this in
-        general; this test pins down the exact expected names)."""
+        """The PK/UNIQUE/FK constraint names and the id sequences must end
+        up named exactly as a fresh install would auto-name them --
+        otherwise a migrated old database's information_schema would differ
+        from a fresh install's (see TestSchemaInvariant, which is the
+        automated guard for this in general; this test pins down the exact
+        expected names)."""
         self._seed_old_schema(db_conn)
         try:
             with db_conn.cursor() as cur:
@@ -561,6 +671,11 @@ class TestRenameToEnglish:
                 )
                 user_constraints = {row[0] for row in cur.fetchall()}
                 cur.execute(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE conrelid = to_regclass('production_orders') AND contype = 'f'"
+                )
+                production_orders_fks = {row[0] for row in cur.fetchall()}
+                cur.execute(
                     "SELECT pg_get_serial_sequence('customers', 'id'), "
                     "pg_get_serial_sequence('users', 'id')"
                 )
@@ -570,6 +685,9 @@ class TestRenameToEnglish:
 
         assert customer_constraints == {"customers_pkey", "customers_name_key"}
         assert user_constraints == {"users_pkey", "users_username_key"}
+        assert production_orders_fks == {
+            "production_orders_customer_id_fkey", "production_orders_created_by_fkey",
+        }
         assert customer_seq is not None and customer_seq.endswith(".customers_id_seq")
         assert user_seq is not None and user_seq.endswith(".users_id_seq")
 
@@ -585,7 +703,12 @@ class TestRenameToEnglish:
 
             with db_conn.cursor() as cur:
                 cur.execute("SELECT name FROM customers ORDER BY name")
-                before = cur.fetchall()
+                customers_before = cur.fetchall()
+                cur.execute(
+                    "SELECT customer_id, payment_method, created_by "
+                    "FROM production_orders WHERE order_number = '5001'"
+                )
+                order_before = cur.fetchone()
 
             with db_conn.cursor() as cur:
                 cur.execute(_0003_SQL)
@@ -593,11 +716,17 @@ class TestRenameToEnglish:
 
             with db_conn.cursor() as cur:
                 cur.execute("SELECT name FROM customers ORDER BY name")
-                after = cur.fetchall()
+                customers_after = cur.fetchall()
+                cur.execute(
+                    "SELECT customer_id, payment_method, created_by "
+                    "FROM production_orders WHERE order_number = '5001'"
+                )
+                order_after = cur.fetchone()
         finally:
             self._teardown_schema(db_conn)
 
-        assert before == after == [("MUVA GRANADA",), ("PTO.V",)]
+        assert customers_before == customers_after == [("MUVA GRANADA",), ("PTO.V",)]
+        assert order_before == order_after == (1, "EFECTIVO", 1)
 
 
 # --------------------------------------------------------------------------

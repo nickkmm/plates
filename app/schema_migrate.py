@@ -3,13 +3,16 @@ initialized database, then backfills customers/users from existing data.
 
 (The backfill functions/constants below are still named/spelled
 backfill_clientes/backfill_usuarios/BACKFILL_CLIENTES_VERSION/etc. -- Fase 1c
-(app/migrations/0003_rename_to_english.sql) only renamed the `clientes`/
-`usuarios` SQL table and column names to `customers`/`users`, not these
-Python identifiers. The BACKFILL_*_VERSION strings in particular are left
-alone on purpose: they are literal values already written into production's
-`schema_migrations` table by the original Fase 1 run, and changing the
-string here would make this runner think that backfill had never happened,
-running it again unnecessarily against real production.)
+(app/migrations/0003_rename_to_english.sql) renamed `clientes`/`usuarios`
+AND the Spanish-named POS columns Fase 1 also added to production_orders/
+plates (cliente_id -> customer_id, creado_por -> created_by, etc. -- see
+that migration file for the full map) to their English equivalents, but
+none of these Python identifiers changed. The BACKFILL_*_VERSION strings in
+particular are left alone on purpose: they are literal values already
+written into production's `schema_migrations` table by the original Fase 1
+run, and changing the string here would make this runner think that
+backfill had never happened, running it again unnecessarily against real
+production.)
 
 Deliberately named `schema_migrate.py`, NOT `migrate.py` -- `app/migrate.py`
 already exists and does something completely different (one-off historical
@@ -27,7 +30,7 @@ usuarios backfill is plain Python (not a `.sql` file) because grouping
 requires app.core.normalize.normalize_requested_by -- it is tracked in the
 same `schema_migrations` table under its own synthetic version names, and its
 SQL is additionally written to be idempotent on its own (ON CONFLICT DO
-NOTHING / UPDATE ... WHERE cliente_id IS NULL) as defense in depth.
+NOTHING / UPDATE ... WHERE customer_id IS NULL) as defense in depth.
 
 Does NOT create the base schema (production_orders/plates/...) -- that is
 init.sql's job, applied automatically by Postgres only the first time a data
@@ -133,14 +136,14 @@ def backfill_clientes(conn: psycopg.Connection) -> None:
     Algorithm (see the Fase 1 plan for the exact rationale):
       1. Read every distinct requested_by value.
       2. Discard values with no alphanumeric character at all (e.g. '//') --
-         they're left with cliente_id NULL, never turned into a junk client.
+         they're left with customer_id NULL, never turned into a junk client.
       3. Group the rest by normalize_requested_by(value) -- the CANONICAL
          form, not the raw string, so two spelling variants of the same
          intermediary collapse into one client.
-      4. One clientes row per group (attributes NULL -- unknown for
+      4. One customers row per group (attributes NULL -- unknown for
          historical clients); ON CONFLICT so a re-run never duplicates.
       5. Point every production_orders row whose requested_by is in that
-         group at the new cliente_id -- but only where cliente_id is still
+         group at the new customer_id -- but only where customer_id is still
          NULL, so a re-run never overwrites anything already resolved
          (including rows resolved some other way after this first ran).
       requested_by itself is never rewritten here -- that's a separate
@@ -168,14 +171,14 @@ def backfill_clientes(conn: psycopg.Connection) -> None:
                 )
                 row = cur.fetchone()
                 assert row is not None, "INSERT ... RETURNING id always yields a row"
-                cliente_id = row[0]
+                customer_id = row[0]
                 for raw in raws:
                     cur.execute(
                         """
-                        UPDATE production_orders SET cliente_id = %s
-                        WHERE requested_by = %s AND cliente_id IS NULL
+                        UPDATE production_orders SET customer_id = %s
+                        WHERE requested_by = %s AND customer_id IS NULL
                         """,
-                        (cliente_id, raw),
+                        (customer_id, raw),
                     )
             _record_version(cur, BACKFILL_CLIENTES_VERSION)
         conn.commit()
@@ -186,7 +189,7 @@ def backfill_clientes(conn: psycopg.Connection) -> None:
     if skipped:
         print(
             f"backfill_clientes: {len(skipped)} requested_by value(s) had no alphanumeric "
-            f"characters and were left with cliente_id NULL for manual review: {skipped!r}"
+            f"characters and were left with customer_id NULL for manual review: {skipped!r}"
         )
 
 
