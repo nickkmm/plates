@@ -136,32 +136,35 @@ CREATE TABLE schema_migrations (
 
 -- New production_orders columns for the full sale order (POS), all nullable
 -- and additive -- no CHECK constraints, consistent with the rest of this
--- schema. cliente_id is nullable: not every historical requested_by value
--- backfills to a clean client (see app/schema_migrate.py).
--- NOTE (Fase 1c): cliente_id/creado_por/comprobante_tipo/etc. below keep
--- their original Spanish column names -- only the `clientes`/`usuarios`
--- TABLES they reference were in scope for the Fase 1c rename (see
--- docs/DATABASE.md and app/migrations/0003_rename_to_english.sql). These
--- production_orders columns get real English names only when Fase 2 adds
--- its own new POS columns from scratch.
-ALTER TABLE production_orders ADD COLUMN comprobante_tipo TEXT;
-ALTER TABLE production_orders ADD COLUMN comprobante_numero TEXT;
-ALTER TABLE production_orders ADD COLUMN cliente_id INTEGER REFERENCES customers(id);
-ALTER TABLE production_orders ADD COLUMN forma_pago TEXT;
-ALTER TABLE production_orders ADD COLUMN guia_numero TEXT;
-ALTER TABLE production_orders ADD COLUMN pedido_numero TEXT;
-ALTER TABLE production_orders ADD COLUMN fecha_entrega DATE;
-ALTER TABLE production_orders ADD COLUMN fecha_transferencia_pago DATE;
-ALTER TABLE production_orders ADD COLUMN responsable_despacho TEXT;
-ALTER TABLE production_orders ADD COLUMN nombre_recibe TEXT;
-ALTER TABLE production_orders ADD COLUMN observaciones TEXT;
-ALTER TABLE production_orders ADD COLUMN creado_por INTEGER REFERENCES users(id);
+-- schema. customer_id is nullable: not every historical requested_by value
+-- backfills to a clean client (see app/schema_migrate.py). Named in English
+-- from birth -- Fase 1 originally shipped these as `comprobante_tipo`,
+-- `comprobante_numero`, `cliente_id`, `forma_pago`, `guia_numero`,
+-- `pedido_numero`, `fecha_entrega`, `fecha_transferencia_pago`,
+-- `responsable_despacho`, `nombre_recibe`, `observaciones`, `creado_por`;
+-- Fase 1c renamed them in production (see
+-- app/migrations/0003_rename_to_english.sql).
+ALTER TABLE production_orders ADD COLUMN receipt_type TEXT;
+ALTER TABLE production_orders ADD COLUMN receipt_number TEXT;
+ALTER TABLE production_orders ADD COLUMN customer_id INTEGER REFERENCES customers(id);
+ALTER TABLE production_orders ADD COLUMN payment_method TEXT;
+ALTER TABLE production_orders ADD COLUMN tracking_number TEXT;
+ALTER TABLE production_orders ADD COLUMN client_order_number TEXT;
+ALTER TABLE production_orders ADD COLUMN delivery_date DATE;
+ALTER TABLE production_orders ADD COLUMN payment_date DATE;
+ALTER TABLE production_orders ADD COLUMN dispatched_by TEXT;
+ALTER TABLE production_orders ADD COLUMN received_by TEXT;
+ALTER TABLE production_orders ADD COLUMN notes TEXT;
+ALTER TABLE production_orders ADD COLUMN created_by INTEGER REFERENCES users(id);
 
--- New plates columns: per-vehicle/per-line data (motivo/marca_vehiculo) and
+-- New plates columns: per-vehicle/per-line data (reason/vehicle_brand) and
 -- the price snapshot taken at insert/edit time (see docs/DATABASE.md).
+-- reason/vehicle_brand named in English from birth -- Fase 1 originally
+-- shipped these as `motivo`/`marca_vehiculo`; Fase 1c renamed them in
+-- production (see app/migrations/0003_rename_to_english.sql).
 ALTER TABLE plates ADD COLUMN unit_price NUMERIC(12,2);
-ALTER TABLE plates ADD COLUMN motivo TEXT;         -- DETERIORO / PÉRDIDA / OTROS
-ALTER TABLE plates ADD COLUMN marca_vehiculo TEXT;
+ALTER TABLE plates ADD COLUMN reason TEXT;         -- DETERIORO / PÉRDIDA / OTROS
+ALTER TABLE plates ADD COLUMN vehicle_brand TEXT;
 
 -- First index in this schema besides primary keys / the customers.name
 -- UNIQUE: /cuadre introduces the first real aggregate JOIN over all of
