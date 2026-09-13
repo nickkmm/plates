@@ -10,28 +10,53 @@
 -- Must produce the exact same end schema as the equivalent block in init.sql
 -- -- see tests/test_schema_migrate.py, which asserts this against
 -- information_schema.
+--
+-- Fase 1c NOTE: the two CREATE TABLE statements below still literally create
+-- `clientes`/`usuarios` (this file's original, already-applied-in-production
+-- content is left alone -- app/migrations/0003_rename_to_english.sql handles
+-- the actual production rename) -- but each is now guarded to also treat
+-- `customers`/`users` already existing as "nothing to do". Without that,
+-- this file would try to (re)create a spurious, empty `clientes`/`usuarios`
+-- table on a volume built from the CURRENT init.sql, which creates
+-- `customers`/`users` directly and never has `clientes`/`usuarios` at all.
+-- Resolved via to_regclass() (current search_path), NOT information_schema
+-- filtered by a hardcoded 'public' -- same convention as
+-- app/migrations/0003_rename_to_english.sql and 0002's `'plates'::regclass`-
+-- style checks, so this behaves correctly whichever schema it runs against
+-- (tests/test_schema_migrate.py exercises it inside throwaway, non-public
+-- schemas).
 
-CREATE TABLE IF NOT EXISTS clientes (
-    id SERIAL PRIMARY KEY,
-    nombre TEXT NOT NULL UNIQUE,
-    tipo TEXT,
-    documento_tipo TEXT,
-    documento_numero TEXT,
-    documento_relacion TEXT,
-    telefono TEXT,
-    correo_electronico TEXT,
-    licencia_transito TEXT,
-    created_at TIMESTAMP DEFAULT now()
-);
+DO $$
+BEGIN
+    IF to_regclass('clientes') IS NULL AND to_regclass('customers') IS NULL THEN
+        CREATE TABLE clientes (
+            id SERIAL PRIMARY KEY,
+            nombre TEXT NOT NULL UNIQUE,
+            tipo TEXT,
+            documento_tipo TEXT,
+            documento_numero TEXT,
+            documento_relacion TEXT,
+            telefono TEXT,
+            correo_electronico TEXT,
+            licencia_transito TEXT,
+            created_at TIMESTAMP DEFAULT now()
+        );
+    END IF;
+END $$;
 
-CREATE TABLE IF NOT EXISTS usuarios (
-    id SERIAL PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    rol TEXT NOT NULL,
-    activo BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT now()
-);
+DO $$
+BEGIN
+    IF to_regclass('usuarios') IS NULL AND to_regclass('users') IS NULL THEN
+        CREATE TABLE usuarios (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            rol TEXT NOT NULL,
+            activo BOOLEAN DEFAULT true,
+            created_at TIMESTAMP DEFAULT now()
+        );
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS plate_type_prices (
     plate_type TEXT PRIMARY KEY,
