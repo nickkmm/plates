@@ -619,10 +619,13 @@ def record_save(order_id):
                         is_batch_replacement=normalized.is_batch_replacement,
                     )
                 else:
-                    is_dup = bool(
-                        is_real_plate(normalized.plate_number) and not normalized.is_voided
-                        and db.existing_plate_numbers(conn, [normalized.plate_number])
-                    )
+                    # Route this through ingestion.py's own duplicate-detection helper
+                    # instead of querying db.existing_plate_numbers directly -- no SQL
+                    # query or business rule should live outside app/core/ (docs/CORE.md),
+                    # and duplicating the is_real_plate/is_voided filter inline here risked
+                    # drifting from process_rows'/replace_order's actual definition of
+                    # "possible duplicate".
+                    is_dup = normalized.plate_number in find_duplicate_plate_numbers([row])
                     db.insert_plate(conn, order_id=order_id, row=normalized, is_possible_duplicate=is_dup)
 
             db.recalc_inventory(conn)
