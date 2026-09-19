@@ -242,9 +242,22 @@ def make_row(**overrides: object) -> ExtractedRow:
     return ExtractedRow(**defaults)
 
 
+def _insert_order(conn, *, order_number: str, order_date, requested_by: str) -> int:
+    """Back-compat shim for this file's many "just need an order header to
+    exist" setup calls -- see the identical helper (and its full rationale)
+    in tests/core/test_db.py."""
+    return db.insert_order(
+        conn,
+        row=ExtractedRow(order_number=order_number, order_date=order_date, requested_by=requested_by,
+                          plate_type="MOTO PARTICULAR"),
+        customer_id=None,
+        created_by=None,
+    )
+
+
 class TestReviewRoute:
     def test_renders_flagged_rows(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="2100", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2100", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="REV111"),
                          is_possible_duplicate=True)
@@ -262,7 +275,7 @@ class TestReviewRoute:
 
 class TestReviewUpdateRoute:
     def test_updates_plate_clears_flag_and_redirects_to_review(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="2200", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2200", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="UPD111", quantity=1),
                          is_possible_duplicate=True)
@@ -286,7 +299,7 @@ class TestReviewUpdateRoute:
             assert cur.fetchone() == ("MOTO PARTICULAR", "UPD222", 5, False, False)
 
     def test_is_voided_checkbox_on_marks_voided(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="2201", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2201", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="UPD333"),
                          is_possible_duplicate=True)
@@ -307,7 +320,7 @@ class TestReviewUpdateRoute:
     def test_recalculates_inventory_after_quantity_change(self, authenticated_client, db_conn):
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
-        order_id = db.insert_order(db_conn, order_number="2202", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2202", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="UPD444", quantity=5),
@@ -330,7 +343,7 @@ class TestReviewUpdateRoute:
 
 class TestReviewResolveRoute:
     def test_clears_flag_without_other_changes_and_redirects(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="2300", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2300", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="RES111", quantity=3),
                          is_possible_duplicate=True)
@@ -353,7 +366,7 @@ class TestReviewResolveRoute:
 
 class TestReviewDeleteRoute:
     def test_deletes_plate_and_redirects(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="2400", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2400", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DEL111", quantity=7),
@@ -382,7 +395,7 @@ class TestReviewDeleteRoute:
         recalculate correctly (unaffected by this fix)."""
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
-        order_id = db.insert_order(db_conn, order_number="2402", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2402", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DEL222", quantity=7),
@@ -406,7 +419,7 @@ class TestReviewDeleteRoute:
     def test_deleting_one_of_a_flagged_pair_clears_the_surviving_sibling(self, authenticated_client, db_conn):
         """Exercises db.delete_plate's sibling-clearing behavior through the
         actual route, not just the db.py function directly."""
-        order_id = db.insert_order(db_conn, order_number="2401", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2401", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="SIB999"),
                          is_possible_duplicate=True)
@@ -428,7 +441,7 @@ class TestInventoryRoute:
     def test_renders_material_cards_and_ornamental_counter(self, authenticated_client, db_conn):
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=50, prepared_by=None)
-        order_id = db.insert_order(db_conn, order_number="2500", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2500", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="ORNAMENTAL", quantity=3),
                          is_possible_duplicate=False)
@@ -464,7 +477,7 @@ class TestInventoryAlistadoRoute:
 
 class TestRecordsRoute:
     def test_renders_recent_orders(self, authenticated_client, db_conn):
-        db.insert_order(db_conn, order_number="2600", order_date=date(2026, 1, 1),
+        _insert_order(db_conn, order_number="2600", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
         db_conn.commit()
 
@@ -484,7 +497,7 @@ class TestRecordsRoute:
         """The plate lives in an order old enough that recent_orders() alone
         wouldn't necessarily show it -- the search path is a separate query,
         not a client-side filter of the 50 recent rows."""
-        order_id = db.insert_order(db_conn, order_number="2601", order_date=date(2020, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2601", order_date=date(2020, 1, 1),
                                     requested_by="OLD CLIENT")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SRC123"),
@@ -506,7 +519,7 @@ class TestRecordsRoute:
     def test_search_by_order_number_finds_the_order(self, authenticated_client, db_conn):
         """A query that matches an order_number (not any plate_number) must
         still surface that order, via the new order_matches section."""
-        order_id = db.insert_order(db_conn, order_number="OLD-2603", order_date=date(2019, 1, 1),
+        order_id = _insert_order(db_conn, order_number="OLD-2603", order_date=date(2019, 1, 1),
                                     requested_by="OLD CLIENT 2")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="NOMATCH1"),
@@ -527,7 +540,7 @@ class TestRecordsRoute:
     ):
         """Regression guard: adding order-number search must not change the
         existing plate-search behavior when a query only matches a plate."""
-        order_id = db.insert_order(db_conn, order_number="2604", order_date=date(2020, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2604", order_date=date(2020, 1, 1),
                                     requested_by="OLD CLIENT 3")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="PLT999"),
@@ -545,7 +558,7 @@ class TestRecordsRoute:
     def test_query_matching_both_a_plate_and_an_order_number_shows_both_sections(
         self, authenticated_client, db_conn
     ):
-        order_id = db.insert_order(db_conn, order_number="2605", order_date=date(2021, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2605", order_date=date(2021, 1, 1),
                                     requested_by="BOTH CLIENT")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="ABC2605"),
@@ -559,7 +572,7 @@ class TestRecordsRoute:
         assert "resultado(s) para" in html
 
     def test_blank_query_falls_back_to_recent_orders(self, authenticated_client, db_conn):
-        db.insert_order(db_conn, order_number="2602", order_date=date(2026, 1, 1),
+        _insert_order(db_conn, order_number="2602", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
         db_conn.commit()
 
@@ -573,7 +586,7 @@ class TestRecordsRoute:
     ):
         """So record_detail's 'Volver a Registros' can send the person back to
         this same search instead of always landing on the unfiltered list."""
-        order_id = db.insert_order(db_conn, order_number="2606", order_date=date(2021, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2606", order_date=date(2021, 1, 1),
                                     requested_by="LINK CLIENT")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="LNK606"),
@@ -586,7 +599,7 @@ class TestRecordsRoute:
     def test_order_search_result_ver_link_carries_the_query_along(
         self, authenticated_client, db_conn
     ):
-        order_id = db.insert_order(db_conn, order_number="OLD-2607", order_date=date(2019, 1, 1),
+        order_id = _insert_order(db_conn, order_number="OLD-2607", order_date=date(2019, 1, 1),
                                     requested_by="OLD CLIENT 4")
         db_conn.commit()
 
@@ -596,7 +609,7 @@ class TestRecordsRoute:
     def test_recent_orders_ver_link_has_no_query(self, authenticated_client, db_conn):
         """Regression guard: the default (unfiltered) list has no search to
         return to, so its 'Ver' link must stay a plain record_detail URL."""
-        order_id = db.insert_order(db_conn, order_number="2608", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2608", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db_conn.commit()
 
@@ -606,7 +619,7 @@ class TestRecordsRoute:
 
 class TestRecordDetailRoute:
     def test_existing_order_renders_its_plates(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="2700", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2700", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DET111", quantity=2),
@@ -627,7 +640,7 @@ class TestRecordDetailRoute:
         """Reached via a Registros search's 'Ver' link (?q=... passed through)
         -- 'Volver a Registros' must return to that same search, not the bare
         unfiltered list."""
-        order_id = db.insert_order(db_conn, order_number="2701", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2701", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db_conn.commit()
 
@@ -635,7 +648,7 @@ class TestRecordDetailRoute:
         assert "/records?q=PEDRO" in resp.data.decode()
 
     def test_back_link_has_no_query_when_reached_without_one(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="2702", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2702", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db_conn.commit()
 
@@ -646,7 +659,7 @@ class TestRecordDetailRoute:
         """Smoke test for the inline-edit table: each plate row must expose a
         hidden plate_id and an editable plate_number input, so the page really
         offers editing rather than just read-only display."""
-        order_id = db.insert_order(db_conn, order_number="2701", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2701", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT111", quantity=2),
@@ -670,7 +683,7 @@ class TestRecordDetailRoute:
         consulta user saw something that looked editable but wasn't, which is
         exactly the confusing behavior reported. No form, no inputs, no save
         button; the plate's data must still be visible as plain text."""
-        order_id = db.insert_order(db_conn, order_number="2702", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2702", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="ROT111", quantity=2),
@@ -699,7 +712,7 @@ class TestRecordSaveRoute:
         assert resp.status_code != 200
 
     def test_updates_the_order_header(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="3000", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="3000", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV100", quantity=1),
@@ -726,7 +739,7 @@ class TestRecordSaveRoute:
             assert cur.fetchone() == ("3000-B", date(2026, 2, 2), "MARIA")
 
     def test_edits_an_existing_plate_in_place(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="3001", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="3001", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV200", quantity=1),
@@ -759,7 +772,7 @@ class TestRecordSaveRoute:
         means 'the whole order was voided', so checking it must flip every
         plate row in this order, including one that keeps a real plate_number
         (the plate was made, then the order got voided after the fact)."""
-        order_id = db.insert_order(db_conn, order_number="3002", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="3002", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV300", quantity=1),
@@ -791,7 +804,7 @@ class TestRecordSaveRoute:
     def test_order_detail_page_reflects_the_current_voided_state(self, authenticated_client, db_conn):
         """The header checkbox must come back checked on reload, computed
         from the order's actual plates -- not just remembered from the form."""
-        order_id = db.insert_order(db_conn, order_number="3002b", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="3002b", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV302",
@@ -804,7 +817,7 @@ class TestRecordSaveRoute:
         assert '<input type="checkbox" name="order_voided" checked>' in html
 
     def test_adds_a_new_plate_row_in_the_same_submit(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="3003", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="3003", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV400", quantity=1),
@@ -833,7 +846,7 @@ class TestRecordSaveRoute:
         """The form has no explicit delete button/route -- removing a row
         client-side (JS) before submitting is what deletes it: its plate_id is
         simply absent from the next save."""
-        order_id = db.insert_order(db_conn, order_number="3004", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="3004", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV500", quantity=1),
@@ -859,7 +872,7 @@ class TestRecordSaveRoute:
             assert [r[0] for r in cur.fetchall()] == ["SAV500"]
 
     def test_removing_every_row_deletes_all_plates_but_keeps_the_order(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="3005", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="3005", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV700", quantity=1),
@@ -880,15 +893,15 @@ class TestRecordSaveRoute:
             assert cur.fetchone()[0] == 1  # the order itself survives, just empty
 
     def test_new_row_is_flagged_a_possible_duplicate_against_a_live_plate(self, authenticated_client, db_conn):
-        db.insert_order(db_conn, order_number="3006", order_date=date(2026, 1, 1), requested_by="PEDRO")
+        _insert_order(db_conn, order_number="3006", order_date=date(2026, 1, 1), requested_by="PEDRO")
         db.insert_plate(
             db_conn,
-            order_id=db.insert_order(db_conn, order_number="3007", order_date=date(2026, 1, 1),
+            order_id=_insert_order(db_conn, order_number="3007", order_date=date(2026, 1, 1),
                                       requested_by="PEDRO"),
             row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV800", quantity=1),
             is_possible_duplicate=False,
         )
-        other_order_id = db.insert_order(db_conn, order_number="3008", order_date=date(2026, 1, 1),
+        other_order_id = _insert_order(db_conn, order_number="3008", order_date=date(2026, 1, 1),
                                           requested_by="MARIA")
         db_conn.commit()
 
@@ -909,7 +922,7 @@ class TestRecordSaveRoute:
     def test_recalculates_inventory_after_saving(self, authenticated_client, db_conn):
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
-        order_id = db.insert_order(db_conn, order_number="3009", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="3009", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db_conn.commit()
 
@@ -925,7 +938,7 @@ class TestRecordSaveRoute:
             assert cur.fetchone() == (15,)
 
     def test_invalid_plate_number_rerenders_with_error_and_saves_nothing(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="3010", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="3010", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV111", quantity=1),
@@ -951,7 +964,7 @@ class TestRecordSaveRoute:
             assert cur.fetchone()[0] == 1
 
     def test_future_date_is_rejected(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="3011", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="3011", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db_conn.commit()
 
@@ -976,7 +989,7 @@ class TestRecordSaveRoute:
 
 class TestRecordsDeleteRoute:
     def test_deletes_order_and_its_plates_and_redirects(self, authenticated_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="2800", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="2800", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD111", quantity=8),
@@ -1001,12 +1014,12 @@ class TestRecordsDeleteRoute:
         outright)."""
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
-        keep_order = db.insert_order(db_conn, order_number="2801", order_date=date(2026, 1, 1),
+        keep_order = _insert_order(db_conn, order_number="2801", order_date=date(2026, 1, 1),
                                       requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=keep_order,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD200", quantity=3),
                          is_possible_duplicate=False)
-        delete_order = db.insert_order(db_conn, order_number="2802", order_date=date(2026, 1, 1),
+        delete_order = _insert_order(db_conn, order_number="2802", order_date=date(2026, 1, 1),
                                         requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=delete_order,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD201", quantity=8),
@@ -1449,13 +1462,13 @@ class TestIngestOrderDuplicateWarning:
         """Proves the fuse behavior when the collision is already 2 orders
         deep (order_number has no unique constraint, so this really happens
         -- see WCY449/pedido 1030)."""
-        first_id = db.insert_order(db_conn, order_number="5003", order_date=date(2026, 1, 1),
+        first_id = _insert_order(db_conn, order_number="5003", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=first_id,
                          row=make_row(order_number="5003", plate_type="CARRO PARTICULAR",
                                       is_batch_replacement=True, quantity=30),
                          is_possible_duplicate=False)
-        second_id = db.insert_order(db_conn, order_number="5003", order_date=date(2026, 1, 2),
+        second_id = _insert_order(db_conn, order_number="5003", order_date=date(2026, 1, 2),
                                      requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=second_id,
                          row=make_row(order_number="5003", plate_type="CARRO PARTICULAR",
@@ -1517,7 +1530,7 @@ class TestConsultaRole:
     """
 
     def test_records_returns_200(self, consulta_client, db_conn):
-        db.insert_order(db_conn, order_number="5000", order_date=date(2026, 1, 1),
+        _insert_order(db_conn, order_number="5000", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
         db_conn.commit()
 
@@ -1526,7 +1539,7 @@ class TestConsultaRole:
         assert b"5000" in resp.data
 
     def test_record_detail_returns_200(self, consulta_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="5001", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="5001", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="CNS111"),
@@ -1542,7 +1555,7 @@ class TestConsultaRole:
         recent-orders list used to show the 'Eliminar' button to every role
         regardless -- same class of bug as the plate-edit form: it looked
         available even though clicking it would just 403."""
-        db.insert_order(db_conn, order_number="5002", order_date=date(2026, 1, 1),
+        _insert_order(db_conn, order_number="5002", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
         db_conn.commit()
 
@@ -1610,7 +1623,7 @@ class TestProduccionRole:
     TestConsultaRole to guard against the two roles drifting apart again."""
 
     def test_records_returns_200(self, produccion_client, db_conn):
-        db.insert_order(db_conn, order_number="5100", order_date=date(2026, 1, 1),
+        _insert_order(db_conn, order_number="5100", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
         db_conn.commit()
 
@@ -1619,7 +1632,7 @@ class TestProduccionRole:
         assert b"5100" in resp.data
 
     def test_recent_orders_list_hides_the_delete_button(self, produccion_client, db_conn):
-        db.insert_order(db_conn, order_number="5101", order_date=date(2026, 1, 1),
+        _insert_order(db_conn, order_number="5101", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
         db_conn.commit()
 
@@ -1631,7 +1644,7 @@ class TestProduccionRole:
         assert 'action="/records/delete"' not in html
 
     def test_record_detail_shows_a_read_only_table_not_the_edit_form(self, produccion_client, db_conn):
-        order_id = db.insert_order(db_conn, order_number="5102", order_date=date(2026, 1, 1),
+        order_id = _insert_order(db_conn, order_number="5102", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="PRD111"),

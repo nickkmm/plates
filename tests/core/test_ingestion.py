@@ -12,6 +12,7 @@ back its effects through the identical session/transaction.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 import pytest
 from psycopg.rows import tuple_row
@@ -30,6 +31,19 @@ def make_row(**overrides: object) -> ExtractedRow:
     }
     defaults.update(overrides)
     return ExtractedRow(**defaults)
+
+
+def _insert_order(conn, *, order_number: str, order_date, requested_by: str) -> int:
+    """Back-compat shim for this file's pre-existing "seed an order to
+    replace/fuse against" setup calls -- see the identical helper (and its
+    full rationale) in tests/core/test_db.py."""
+    return db.insert_order(
+        conn,
+        row=ExtractedRow(order_number=order_number, order_date=order_date, requested_by=requested_by,
+                          plate_type="MOTO PARTICULAR"),
+        customer_id=None,
+        created_by=None,
+    )
 
 
 class TestNormalOrder:
@@ -76,6 +90,109 @@ class TestNormalOrder:
         ]
         summary = process_rows(db_conn, rows)
         assert summary.orders_inserted == 2
+
+
+class TestCustomerResolution:
+    """process_rows/replace_order resolve/create a customer per order group,
+    keyed off the group's head row's requested_by (the same field/value
+    already used for order_date) -- see db.resolve_or_create_customer."""
+
+    def test_new_order_resolves_and_links_a_customer(self, db_conn):
+        rows = [make_row(order_number="110", requested_by="PTO.V", plate_number="CUS100")]
+        process_rows(db_conn, rows)
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "SELECT c.name FROM production_orders o JOIN customers c ON c.id = o.customer_id "
+                "WHERE o.order_number = '110'"
+            )
+            assert cur.fetchone() == ("PTO.V",)
+
+    def test_same_requested_by_across_orders_reuses_the_same_customer(self, db_conn):
+        rows = [
+            make_row(order_number="111", requested_by="MUVA", plate_number="CUS101"),
+            make_row(order_number="112", requested_by="MUVA", plate_number="CUS102"),
+        ]
+        process_rows(db_conn, rows)
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT DISTINCT customer_id FROM production_orders WHERE order_number IN ('111', '112')")
+            assert len(cur.fetchall()) == 1
+            cur.execute("SELECT count(*) FROM customers WHERE name = 'MUVA'")
+            assert cur.fetchone()[0] == 1
+
+    def test_spelling_variant_resolves_to_an_existing_customer(self, db_conn):
+        """PTOV is a curated spelling variant of PTO.V (normalize._REQUESTED_BY_MAP_RAW)."""
+        first = process_rows(
+            db_conn, [make_row(order_number="113", requested_by="PTOV", plate_number="CUS103")]
+        )
+        assert first.orders_inserted == 1
+        process_rows(db_conn, [make_row(order_number="114", requested_by="PTO.V", plate_number="CUS104")])
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM customers WHERE name = 'PTO.V'")
+            assert cur.fetchone()[0] == 1
+
+
+class TestCreatedBy:
+    def test_defaults_to_null_when_omitted(self, db_conn):
+        process_rows(db_conn, [make_row(order_number="120", plate_number="CRE100")])
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT created_by FROM production_orders WHERE order_number = '120'")
+            assert cur.fetchone() == (None,)
+
+    def test_is_stored_when_given(self, db_conn):
+        user_id = db.create_user(db_conn, username="alice", password_hash="h", role="admin")
+        process_rows(db_conn, [make_row(order_number="121", plate_number="CRE101")], created_by=user_id)
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT created_by FROM production_orders WHERE order_number = '121'")
+            assert cur.fetchone() == (user_id,)
+
+
+class TestUnitPriceSnapshot:
+    """Case 1 of the re-snapshot rule (see db/plates.py for cases 2/3, which
+    apply on edit): a brand-new plate with no unit_price of its own takes
+    the CURRENT plate_type_prices tariff at insert time."""
+
+    def test_row_with_no_unit_price_gets_the_current_tariff(self, db_conn):
+        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
+        process_rows(
+            db_conn, [make_row(order_number="130", plate_number="PRC100", plate_type="CARRO PARTICULAR")]
+        )
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT unit_price FROM plates WHERE plate_number = 'PRC100'")
+            assert cur.fetchone() == (Decimal("150000"),)
+
+    def test_row_with_an_explicit_unit_price_is_kept_verbatim(self, db_conn):
+        """A negotiated/edited price on the row must NOT be overridden by the
+        suggested tariff, even if one is configured."""
+        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
+        process_rows(db_conn, [
+            make_row(order_number="131", plate_number="PRC101", plate_type="CARRO PARTICULAR",
+                      unit_price=Decimal("120000")),
+        ])
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT unit_price FROM plates WHERE plate_number = 'PRC101'")
+            assert cur.fetchone() == (Decimal("120000"),)
+
+    def test_no_tariff_configured_leaves_unit_price_null(self, db_conn):
+        process_rows(
+            db_conn, [make_row(order_number="132", plate_number="PRC102", plate_type="ORNAMENTAL")]
+        )
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT unit_price FROM plates WHERE plate_number = 'PRC102'")
+            assert cur.fetchone() == (None,)
+
+    def test_price_snapshot_is_per_plate_type(self, db_conn):
+        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
+        db.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
+        process_rows(db_conn, [
+            make_row(order_number="133", plate_number="PRC103", plate_type="CARRO PARTICULAR"),
+            make_row(order_number="133", plate_number="PRC104", plate_type="MOTO PARTICULAR"),
+        ])
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT plate_number, unit_price FROM plates ORDER BY plate_number")
+            assert cur.fetchall() == [("PRC103", Decimal("150000")), ("PRC104", Decimal("90000"))]
 
 
 class TestInventoryRecalc:
@@ -169,6 +286,33 @@ class TestAlistamiento:
         ]
         summary = process_rows(db_conn, rows)
         assert summary.blank_preparations == 2
+
+    def test_granular_publico_type_maps_to_the_publico_inventory_material(self, db_conn):
+        """Bug fix: this branch used to write row.plate_type straight into
+        `category` instead of mapping it through normalize.inventory_category()
+        -- a granular TYPE like 'CARRO PÚBLICO' is not itself a valid
+        inventory_categories.category (only 'PÚBLICO' is), so this used to be
+        able to trip the Fase 1b blank_preparations FK (or write the wrong
+        value) instead of correctly landing on the shared 'PÚBLICO' material."""
+        rows = [
+            make_row(order_number="204", requested_by="ALISTAMIENTO", plate_type="CARRO PÚBLICO",
+                      quantity=50),
+        ]
+        summary = process_rows(db_conn, rows)
+        assert summary.blank_preparations == 1
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT category, quantity FROM blank_preparations")
+            assert cur.fetchall() == [("PÚBLICO", 50)]
+
+    def test_ornamental_type_raises_instead_of_writing_a_null_category(self, db_conn):
+        """ORNAMENTAL has no inventory material (inventory_category ->
+        None) and genuinely can't be prepared as a blank -- this must raise
+        a clear error rather than attempt a NULL insert into a NOT NULL
+        column."""
+        rows = [make_row(order_number="205", requested_by="ALISTAMIENTO", plate_type="ORNAMENTAL",
+                          quantity=1)]
+        with pytest.raises(ValueError, match="alistamiento"):
+            process_rows(db_conn, rows)
 
 
 class TestDuplicateDetection:
@@ -343,6 +487,53 @@ class TestReviewNotes:
         summary = process_rows(db_conn, rows)
         assert summary.review_notes == []
 
+    def test_generalizes_to_every_order_level_field_not_just_requested_by(self, db_conn):
+        """The check used to only exist for requested_by -- now every field in
+        ingestion._ORDER_LEVEL_FIELDS gets its own mismatch check."""
+        rows = [
+            make_row(order_number="702", plate_number="MISM01", payment_method="EFECTIVO"),
+            make_row(order_number="702", plate_number="MISM02", payment_method="TRANSFERENCIA"),
+        ]
+        summary = process_rows(db_conn, rows)
+        assert len(summary.review_notes) == 1
+        assert "payment_method" in summary.review_notes[0]
+        assert "702" in summary.review_notes[0]
+
+    def test_multiple_mismatched_fields_produce_one_note_each(self, db_conn):
+        rows = [
+            make_row(order_number="703", plate_number="MISM03", receipt_number="R-1",
+                      tracking_number="G-1"),
+            make_row(order_number="703", plate_number="MISM04", receipt_number="R-2",
+                      tracking_number="G-2"),
+        ]
+        summary = process_rows(db_conn, rows)
+        assert len(summary.review_notes) == 2
+        joined = " ".join(summary.review_notes)
+        assert "receipt_number" in joined
+        assert "tracking_number" in joined
+
+    def test_agreeing_new_pos_fields_produce_no_review_note(self, db_conn):
+        rows = [
+            make_row(order_number="704", plate_number="MISM05", payment_method="EFECTIVO",
+                      notes="Igual"),
+            make_row(order_number="704", plate_number="MISM06", payment_method="EFECTIVO",
+                      notes="Igual"),
+        ]
+        summary = process_rows(db_conn, rows)
+        assert summary.review_notes == []
+
+    def test_per_line_fields_are_excluded_from_the_check(self, db_conn):
+        """reason/vehicle_brand/unit_price are genuinely per-line -- differing
+        across rows in the same order is normal, not a smell."""
+        rows = [
+            make_row(order_number="705", plate_number="MISM07", reason="DETERIORO",
+                      vehicle_brand="CHEVROLET", unit_price=Decimal("100000")),
+            make_row(order_number="705", plate_number="MISM08", reason="PÉRDIDA",
+                      vehicle_brand="MAZDA", unit_price=Decimal("200000")),
+        ]
+        summary = process_rows(db_conn, rows)
+        assert summary.review_notes == []
+
 
 class TestReplaceOrder:
     """replace_order() fuses every existing production_orders row sharing an
@@ -364,7 +555,7 @@ class TestReplaceOrder:
             replace_order(db_conn, "1000", [])
 
     def test_replaces_a_single_existing_order_leaving_only_the_new_one(self, db_conn):
-        old_id = db.insert_order(db_conn, order_number="1010", order_date=date(2026, 1, 1),
+        old_id = _insert_order(db_conn, order_number="1010", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=old_id,
                          row=make_row(order_number="1010", plate_type="CARRO PARTICULAR",
@@ -401,13 +592,13 @@ class TestReplaceOrder:
         """The real bug this exists for: order_number has no unique constraint,
         so two production_orders rows already sharing one can exist. Replacing
         must delete ALL of them (and ALL their plates), not just one."""
-        first_id = db.insert_order(db_conn, order_number="1020", order_date=date(2026, 1, 1),
+        first_id = _insert_order(db_conn, order_number="1020", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=first_id,
                          row=make_row(order_number="1020", plate_type="CARRO PARTICULAR",
                                       is_batch_replacement=True, quantity=30),
                          is_possible_duplicate=False)
-        second_id = db.insert_order(db_conn, order_number="1020", order_date=date(2026, 1, 10),
+        second_id = _insert_order(db_conn, order_number="1020", order_date=date(2026, 1, 10),
                                      requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=second_id,
                          row=make_row(order_number="1020", plate_type="CARRO PARTICULAR",
@@ -452,7 +643,7 @@ class TestReplaceOrder:
         rows' quantities after the replace."""
         db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
-        old_id = db.insert_order(db_conn, order_number="1040", order_date=date(2026, 1, 1),
+        old_id = _insert_order(db_conn, order_number="1040", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=old_id,
                          row=make_row(order_number="1040", plate_type="CARRO PARTICULAR",
@@ -483,7 +674,7 @@ class TestReplaceOrder:
             db_conn, [make_row(order_number="1050", plate_type="CARRO PARTICULAR", plate_number="LIVE001")]
         )
 
-        old_id = db.insert_order(db_conn, order_number="1051", order_date=date(2026, 1, 1),
+        old_id = _insert_order(db_conn, order_number="1051", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=old_id,
                          row=make_row(order_number="1051", plate_type="CARRO PARTICULAR",
@@ -507,7 +698,7 @@ class TestReplaceOrder:
             assert cur.fetchall() == [("FRESH2", False), ("LIVE001", True)]
 
     def test_within_batch_repeat_is_flagged_on_both_new_rows(self, db_conn):
-        old_id = db.insert_order(db_conn, order_number="1060", order_date=date(2026, 1, 1),
+        old_id = _insert_order(db_conn, order_number="1060", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=old_id,
                          row=make_row(order_number="1060", plate_type="CARRO PARTICULAR",
@@ -521,6 +712,56 @@ class TestReplaceOrder:
         ]
         summary = replace_order(db_conn, "1060", new_rows)
         assert summary.possible_duplicates == 2
+
+    def test_resolves_a_customer_for_the_new_order(self, db_conn):
+        new_rows = [make_row(order_number="1070", plate_type="CARRO PARTICULAR", plate_number="REP100",
+                              requested_by="PTO.V")]
+        replace_order(db_conn, "1070", new_rows)
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "SELECT c.name FROM production_orders o JOIN customers c ON c.id = o.customer_id "
+                "WHERE o.order_number = '1070'"
+            )
+            assert cur.fetchone() == ("PTO.V",)
+
+    def test_created_by_records_who_triggered_the_replace(self, db_conn):
+        user_id = db.create_user(db_conn, username="alice", password_hash="h", role="admin")
+        new_rows = [make_row(order_number="1071", plate_type="CARRO PARTICULAR", plate_number="REP101")]
+        replace_order(db_conn, "1071", new_rows, created_by=user_id)
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT created_by FROM production_orders WHERE order_number = '1071'")
+            assert cur.fetchone() == (user_id,)
+
+    def test_new_plates_take_the_tariff_vigente_at_replace_time_not_the_original_order_date(self, db_conn):
+        """Documented behavior (see replace_order's docstring), not a bug:
+        the replacement always re-snapshots the CURRENT tariff, regardless
+        of when the order was originally placed."""
+        old_id = _insert_order(db_conn, order_number="1072", order_date=date(2026, 1, 1),
+                                  requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=old_id,
+                         row=make_row(order_number="1072", plate_type="CARRO PARTICULAR",
+                                      is_batch_replacement=True, quantity=1),
+                         is_possible_duplicate=False)
+        db_conn.commit()
+
+        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("175000"), "admin")
+        new_rows = [make_row(order_number="1072", plate_type="CARRO PARTICULAR", plate_number="REP102")]
+        replace_order(db_conn, "1072", new_rows)
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT unit_price FROM plates WHERE plate_number = 'REP102'")
+            assert cur.fetchone() == (Decimal("175000"),)
+
+    def test_order_level_mismatch_is_flagged_same_as_process_rows(self, db_conn):
+        new_rows = [
+            make_row(order_number="1073", plate_type="CARRO PARTICULAR", plate_number="REP103",
+                      payment_method="EFECTIVO"),
+            make_row(order_number="1073", plate_type="CARRO PARTICULAR", plate_number="REP104",
+                      payment_method="TRANSFERENCIA"),
+        ]
+        summary = replace_order(db_conn, "1073", new_rows)
+        assert len(summary.review_notes) == 1
+        assert "payment_method" in summary.review_notes[0]
 
 
 class TestAtomicity:
