@@ -218,11 +218,14 @@ class TestLoginPageRendersWhenNotAuthenticated:
 # ----------------------------------------------------------------------------
 # Everything below needs both an authenticated client AND a real Postgres
 # connection (`db_conn`/`clean_db` -- see tests/conftest.py). `db_conn` and
-# the Flask route each open their OWN separate connection (db.get_conn() has
-# no injection point), so any setup done through `db_conn` must be committed
-# BEFORE the route is hit, or the route's connection won't see it yet (both
-# run at the default READ COMMITTED isolation level). Reading state back
-# through `db_conn` afterward needs no extra commit: a fresh statement on an
+# the Flask route each check out their OWN separate connection from the pool
+# (Fase 1d: db.get_conn() is pooled, but still hands out a distinct
+# connection/session per checkout -- pooling only reuses the underlying
+# sockets, it doesn't merge separate `with db.get_conn() as conn:` blocks
+# into one), so any setup done through `db_conn` must be committed BEFORE the
+# route is hit, or the route's connection won't see it yet (both run at the
+# default READ COMMITTED isolation level). Reading state back through
+# `db_conn` afterward needs no extra commit: a fresh statement on an
 # already-open connection sees whatever the route's own connection already
 # committed.
 # ----------------------------------------------------------------------------

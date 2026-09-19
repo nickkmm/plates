@@ -237,15 +237,12 @@ def run_backfills(conn: psycopg.Connection[DictRow]) -> None:
 
 
 def main() -> None:
-    conn = db.get_conn()
-    try:
+    with db.get_conn() as conn:
         _ensure_schema_migrations_table(conn)
         newly_applied = apply_sql_migrations(conn)
         for version in newly_applied:
             print(f"applied {version}")
         run_backfills(conn)
-    finally:
-        conn.close()
     print("schema_migrate: up to date.")
 
 

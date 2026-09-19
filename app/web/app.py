@@ -361,31 +361,24 @@ def ingest_post():
             # delete every plate currently under this order_number outright,
             # so nothing already there can register as "already existing"
             # against the fresh rows being inserted in its place.
-            summary = replace_order(rows[0].order_number, rows)
-        else:
-            # Order-number collision check runs BEFORE the plate-number dup
-            # check: a reposición placeholder order re-saved via a re-uploaded
-            # PDF has plate_number=NULL, so it would sail right through the
-            # plate check and silently create a second production_orders row
-            # under the same order_number (see replace_order's docstring for
-            # the real WCY449/pedido 1030 case this guards against).
             with db.get_conn() as conn:
+                summary = replace_order(conn, rows[0].order_number, rows)
+        else:
+            # One connection for the whole route from here down: the
+            # order-number collision check, the plate-number dup check, and
+            # the eventual insert all need to see each other's work within a
+            # single transaction (previously each opened its own connection,
+            # so a single POST /ingest ran across several separate
+            # transactions -- not atomic).
+            with db.get_conn() as conn:
+                # Order-number collision check runs BEFORE the plate-number dup
+                # check: a reposición placeholder order re-saved via a re-uploaded
+                # PDF has plate_number=NULL, so it would sail right through the
+                # plate check and silently create a second production_orders row
+                # under the same order_number (see replace_order's docstring for
+                # the real WCY449/pedido 1030 case this guards against).
                 order_duplicates = db.find_orders_by_number(conn, rows[0].order_number)
-            if order_duplicates and not request.form.get("confirm_order_duplicate"):
-                header = {
-                    "order_date": request.form.get("order_date", ""),
-                    "order_number": request.form.get("order_number", ""),
-                    "requested_by": request.form.get("requested_by", ""),
-                }
-                lines = _sticky_lines_from_form(request.form)
-            else:
-                order_duplicates = None  # not a collision the user needs to see anymore
-                dup_plate_numbers = find_duplicate_plate_numbers(rows)
-                if dup_plate_numbers and not request.form.get("confirm_duplicate"):
-                    with db.get_conn() as conn:
-                        duplicates = {
-                            pn: db.find_orders_for_plate(conn, pn) for pn in sorted(dup_plate_numbers)
-                        }
+                if order_duplicates and not request.form.get("confirm_order_duplicate"):
                     header = {
                         "order_date": request.form.get("order_date", ""),
                         "order_number": request.form.get("order_number", ""),
@@ -393,7 +386,20 @@ def ingest_post():
                     }
                     lines = _sticky_lines_from_form(request.form)
                 else:
-                    summary = process_rows(rows)
+                    order_duplicates = None  # not a collision the user needs to see anymore
+                    dup_plate_numbers = find_duplicate_plate_numbers(conn, rows)
+                    if dup_plate_numbers and not request.form.get("confirm_duplicate"):
+                        duplicates = {
+                            pn: db.find_orders_for_plate(conn, pn) for pn in sorted(dup_plate_numbers)
+                        }
+                        header = {
+                            "order_date": request.form.get("order_date", ""),
+                            "order_number": request.form.get("order_number", ""),
+                            "requested_by": request.form.get("requested_by", ""),
+                        }
+                        lines = _sticky_lines_from_form(request.form)
+                    else:
+                        summary = process_rows(conn, rows)
     except Exception as e:  # surface validation/DB errors without crashing
         error = f"Error: {e}"
 
@@ -625,7 +631,7 @@ def record_save(order_id):
                     # and duplicating the is_real_plate/is_voided filter inline here risked
                     # drifting from process_rows'/replace_order's actual definition of
                     # "possible duplicate".
-                    is_dup = normalized.plate_number in find_duplicate_plate_numbers([row])
+                    is_dup = normalized.plate_number in find_duplicate_plate_numbers(conn, [row])
                     db.insert_plate(conn, order_id=order_id, row=normalized, is_possible_duplicate=is_dup)
 
             db.recalc_inventory(conn)
