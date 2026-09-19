@@ -112,7 +112,7 @@ def landing_url() -> str:
     """
     if session.get("role") not in FULL_ACCESS_ROLES:
         return url_for("records.records")
-    return url_for("ingest")
+    return url_for("ingest.ingest")
 
 
 def _redirect_to_login():

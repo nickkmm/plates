@@ -64,7 +64,10 @@ class TestConsultOnly:
         def boom(*args, **kwargs):
             raise AssertionError("process_rows must never run from the search-pdf route")
 
-        monkeypatch.setattr("app.web.app.process_rows", boom)
+        # records.py (where this route lives) doesn't import process_rows at all --
+        # patch the canonical source in app.core.ingestion so this still catches a
+        # future regression that reaches it via `ingestion.process_rows(...)`.
+        monkeypatch.setattr("app.core.ingestion.process_rows", boom)
 
         before = row_counts(db_conn)
         resp = upload(authenticated_client, build_pedido_pdf())

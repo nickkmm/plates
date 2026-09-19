@@ -34,7 +34,7 @@
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
-  <form id="pdfForm" method="post" action="{{ url_for('ingest_pdf') }}" enctype="multipart/form-data">
+  <form id="pdfForm" method="post" action="{{ url_for('ingest.ingest_pdf') }}" enctype="multipart/form-data">
     <fieldset>
       <legend>Archivo</legend>
       <label>PDF del pedido
@@ -56,7 +56,7 @@
     <li>Se abre el formulario de siempre, ya lleno, para que <strong>revises y corrijas</strong>.</li>
     <li>Recién ahí, con "Guardar orden", se registra. Nada se guarda antes de que revises.</li>
   </ol>
-  <p><a href="{{ url_for('ingest') }}" class="btn-link add">Ingresar manualmente</a></p>
+  <p><a href="{{ url_for('ingest.ingest') }}" class="btn-link add">Ingresar manualmente</a></p>
 
   <script>
     (function () {

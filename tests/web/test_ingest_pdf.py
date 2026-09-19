@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from psycopg.rows import tuple_row
 
 from app.core.pdf_extract import parse_pedido_pdf
-from app.web.app import _form_from_pedido
+from app.web.blueprints.ingest import _form_from_pedido
 from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf
 
 
@@ -111,7 +111,7 @@ class TestParsedReview:
         def boom(*args, **kwargs):
             raise AssertionError("process_rows must not run during the PDF review step")
 
-        monkeypatch.setattr("app.web.app.process_rows", boom)
+        monkeypatch.setattr("app.web.blueprints.ingest.process_rows", boom)
 
         resp = upload(authenticated_client, build_pedido_pdf())
         assert resp.status_code == 200
