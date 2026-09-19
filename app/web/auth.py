@@ -125,7 +125,7 @@ def _redirect_to_login():
     next_url = request.full_path
     if next_url.endswith("?"):
         next_url = next_url[:-1]
-    return redirect(url_for("login", next=next_url))
+    return redirect(url_for("auth_routes.login", next=next_url))
 
 
 def login_required(view):

@@ -22,7 +22,7 @@
   </style>
 </head>
 <body>
-  <form class="card" method="post" action="{{ url_for('login') }}">
+  <form class="card" method="post" action="{{ url_for('auth_routes.login') }}">
     <div class="brand">INGSE</div>
     <h1>Iniciar sesión</h1>
     {% if error %}<div class="error">{{ error }}</div>{% endif %}

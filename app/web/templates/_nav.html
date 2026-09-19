@@ -13,5 +13,5 @@
   <a href="{{ url_for('inventory.inventory') }}" class="{{ 'on' if request.endpoint=='inventory.inventory' }}">Inventario</a>
   {% endif %}
   <a href="{{ url_for('records') }}" class="{{ 'on' if request.endpoint in ('records','record_detail') }}">Registros</a>
-  <form method="post" action="{{ url_for('logout') }}" class="logout"><button type="submit" title="Cerrar sesión">Salir</button></form>
+  <form method="post" action="{{ url_for('auth_routes.logout') }}" class="logout"><button type="submit" title="Cerrar sesión">Salir</button></form>
 </nav>
