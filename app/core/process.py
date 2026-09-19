@@ -196,8 +196,8 @@ def replace_order(order_number: str, rows: list[ExtractedRow]) -> Summary:
         # that's 0, 1, or 2+ rows (WCY449/pedido 1030 shows 2+ really happens).
         existing = db.find_orders_by_number(conn, order_number)
         for match in existing:
-            db.delete_order(conn, match["id"])
-            summary.plates_deleted += match["n_plates"]
+            db.delete_order(conn, match.id)
+            summary.plates_deleted += match.n_plates
         summary.orders_replaced = len(existing)
 
         live_candidates = {

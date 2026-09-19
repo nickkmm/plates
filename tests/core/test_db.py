@@ -288,10 +288,10 @@ class TestRecentOrders:
         rows = db.recent_orders(db_conn)
         assert len(rows) == 1
         row = rows[0]
-        assert row["order_number"] == "500"
-        assert row["n_plates"] == 4
-        assert row["total_qty"] == 4
-        assert row["plates"] == "AAA111, reposición, anulada, sin placa"
+        assert row.order_number == "500"
+        assert row.n_plates == 4
+        assert row.total_qty == 4
+        assert row.plates == "AAA111, reposición, anulada, sin placa"
 
     def test_order_with_no_plates_shows_zero_counts_and_no_plates_label(self, db_conn):
         """A LEFT JOIN with zero matching plates still produces exactly one
@@ -303,9 +303,9 @@ class TestRecentOrders:
         test_summarizes_plate_labels_per_row_kind below)."""
         db.insert_order(db_conn, order_number="501", order_date=date(2026, 1, 1), requested_by="PEDRO")
         rows = db.recent_orders(db_conn)
-        assert rows[0]["n_plates"] == 0
-        assert rows[0]["total_qty"] == 0
-        assert rows[0]["plates"] is None
+        assert rows[0].n_plates == 0
+        assert rows[0].total_qty == 0
+        assert rows[0].plates is None
 
     def test_cities_aggregates_the_orders_distinct_plate_cities(self, db_conn):
         order_id = db.insert_order(db_conn, order_number="510", order_date=date(2026, 1, 1),
@@ -313,7 +313,7 @@ class TestRecentOrders:
         for city in ("CALI", "COLOMBIA", "CALI"):  # repeat -> deduped
             db.insert_plate(db_conn, order_id=order_id, row=make_row(city=city),
                             is_possible_duplicate=False)
-        assert sorted(db.recent_orders(db_conn)[0]["cities"]) == ["CALI", "COLOMBIA"]
+        assert sorted(db.recent_orders(db_conn)[0].cities) == ["CALI", "COLOMBIA"]
 
     def test_sorted_by_order_date_not_by_when_it_was_inserted(self, db_conn):
         """A correction entered today for a months-old order (e.g. fixing a
@@ -322,7 +322,7 @@ class TestRecentOrders:
         only a tiebreaker for orders sharing the same order_date."""
         db.insert_order(db_conn, order_number="520", order_date=date(2026, 1, 1), requested_by="PEDRO")
         db.insert_order(db_conn, order_number="521", order_date=date(2026, 6, 15), requested_by="PEDRO")
-        assert [r["order_number"] for r in db.recent_orders(db_conn)] == ["521", "520"]
+        assert [r.order_number for r in db.recent_orders(db_conn)] == ["521", "520"]
 
 
 class TestFindOrdersByNumber:
@@ -350,12 +350,12 @@ class TestFindOrdersByNumber:
 
         matches = db.find_orders_by_number(db_conn, "1100")
         assert len(matches) == 1
-        assert matches[0]["id"] == order_id
-        assert matches[0]["order_number"] == "1100"
-        assert matches[0]["requested_by"] == "PEDRO"
-        assert matches[0]["n_plates"] == 1
-        assert matches[0]["total_qty"] == 1
-        assert matches[0]["plates"] == "FON111"
+        assert matches[0].id == order_id
+        assert matches[0].order_number == "1100"
+        assert matches[0].requested_by == "PEDRO"
+        assert matches[0].n_plates == 1
+        assert matches[0].total_qty == 1
+        assert matches[0].plates == "FON111"
 
     def test_returns_every_match_when_two_or_more_orders_share_the_number(self, db_conn):
         """This already happens for real (WCY449 / pedido 1030, see
@@ -366,7 +366,7 @@ class TestFindOrdersByNumber:
                                      requested_by="MARIA")
 
         matches = db.find_orders_by_number(db_conn, "1101")
-        assert {m["id"] for m in matches} == {first_id, second_id}
+        assert {m.id for m in matches} == {first_id, second_id}
 
     def test_other_order_numbers_are_not_returned(self, db_conn):
         db.insert_order(db_conn, order_number="1102", order_date=date(2026, 1, 1),
@@ -374,7 +374,7 @@ class TestFindOrdersByNumber:
         db.insert_order(db_conn, order_number="1103", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
         matches = db.find_orders_by_number(db_conn, "1102")
-        assert [m["order_number"] for m in matches] == ["1102"]
+        assert [m.order_number for m in matches] == ["1102"]
 
 
 class TestSearchPlatesByNumber:
@@ -446,25 +446,25 @@ class TestSearchPlatesByNumber:
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(city="PASTO"),
                         is_possible_duplicate=False)
-        assert db.recent_orders(db_conn)[0]["cities"] == ["PASTO"]
+        assert db.recent_orders(db_conn)[0].cities == ["PASTO"]
 
     def test_cities_is_empty_when_no_plate_has_one(self, db_conn):
         order_id = db.insert_order(db_conn, order_number="512", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(city=None),
                         is_possible_duplicate=False)
-        assert db.recent_orders(db_conn)[0]["cities"] == []
+        assert db.recent_orders(db_conn)[0].cities == []
 
     def test_cities_is_empty_for_an_order_with_no_plates_at_all(self, db_conn):
         db.insert_order(db_conn, order_number="513", order_date=date(2026, 1, 1),
                         requested_by="PEDRO")
-        assert db.recent_orders(db_conn)[0]["cities"] == []
+        assert db.recent_orders(db_conn)[0].cities == []
 
     def test_most_recently_inserted_order_first(self, db_conn):
         db.insert_order(db_conn, order_number="600", order_date=date(2026, 1, 1), requested_by="PEDRO")
         db.insert_order(db_conn, order_number="601", order_date=date(2026, 1, 1), requested_by="PEDRO")
         rows = db.recent_orders(db_conn)
-        assert [r["order_number"] for r in rows] == ["601", "600"]
+        assert [r.order_number for r in rows] == ["601", "600"]
 
     def test_limit_caps_number_of_rows_returned(self, db_conn):
         for i in range(5):
@@ -484,13 +484,13 @@ class TestSearchOrdersByNumber:
                          requested_by="PEDRO")
         results = db.search_orders_by_number(db_conn, "800")
         assert len(results) == 1
-        assert results[0]["order_number"] == "800"
-        assert results[0]["requested_by"] == "PEDRO"
+        assert results[0].order_number == "800"
+        assert results[0].requested_by == "PEDRO"
 
     def test_partial_match(self, db_conn):
         db.insert_order(db_conn, order_number="80042", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
-        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "004")] == ["80042"]
+        assert [r.order_number for r in db.search_orders_by_number(db_conn, "004")] == ["80042"]
 
     def test_query_is_not_cleaned_like_a_plate_number(self, db_conn):
         """order_number is plain text/digits, not a plate -- unlike
@@ -499,20 +499,20 @@ class TestSearchOrdersByNumber:
         order_number that literally contains them."""
         db.insert_order(db_conn, order_number="80 1", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
-        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "80 1")] == ["80 1"]
+        assert [r.order_number for r in db.search_orders_by_number(db_conn, "80 1")] == ["80 1"]
         assert db.search_orders_by_number(db_conn, "801") == []
 
     def test_leading_and_trailing_whitespace_is_stripped(self, db_conn):
         db.insert_order(db_conn, order_number="802", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
-        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "  802  ")] == ["802"]
+        assert [r.order_number for r in db.search_orders_by_number(db_conn, "  802  ")] == ["802"]
 
     def test_case_insensitive(self, db_conn):
         """Most order_number values are digits, but ILIKE is used (not LIKE)
         so a non-numeric order_number still matches regardless of case."""
         db.insert_order(db_conn, order_number="ABC-803", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
-        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "abc-803")] == ["ABC-803"]
+        assert [r.order_number for r in db.search_orders_by_number(db_conn, "abc-803")] == ["ABC-803"]
 
     def test_no_match_returns_empty_list(self, db_conn):
         assert db.search_orders_by_number(db_conn, "ZZZ999") == []
@@ -527,17 +527,17 @@ class TestSearchOrdersByNumber:
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="QRS111", city="CALI"),
                          is_possible_duplicate=False)
         results = db.search_orders_by_number(db_conn, "804")
-        assert results[0]["n_plates"] == 1
-        assert results[0]["total_qty"] == 1
-        assert results[0]["plates"] == "QRS111"
-        assert results[0]["cities"] == ["CALI"]
+        assert results[0].n_plates == 1
+        assert results[0].total_qty == 1
+        assert results[0].plates == "QRS111"
+        assert results[0].cities == ["CALI"]
 
     def test_most_recent_order_first(self, db_conn):
         db.insert_order(db_conn, order_number="900-A", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
         db.insert_order(db_conn, order_number="900-B", order_date=date(2026, 2, 1),
                          requested_by="PEDRO")
-        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "900")] == \
+        assert [r.order_number for r in db.search_orders_by_number(db_conn, "900")] == \
             ["900-B", "900-A"]
 
     def test_limit_caps_number_of_rows_returned(self, db_conn):
