@@ -34,10 +34,10 @@ from app.core.normalize import clean_plate, is_real_plate, normalize_row, valida
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
 from app.web import auth
 from app.web.auth import consulta_allowed, login_required
+from app.web.blueprints.inventory import bp as inventory_bp
 from app.web.blueprints.review import bp as review_bp
 from app.web.helpers import (
     FORM_PLATE_TYPES,
-    INVENTORY_CATS,
     _options,
     _padded,
     _validate_order_header,
@@ -56,6 +56,7 @@ if not SECRET_KEY:
     )
 app.secret_key = SECRET_KEY
 
+app.register_blueprint(inventory_bp)
 app.register_blueprint(review_bp)
 
 # Mark the session cookie Secure only behind HTTPS (set COOKIE_SECURE=1 in
@@ -408,33 +409,6 @@ def ingest_pdf():
         categories=FORM_PLATE_TYPES, today=today_iso(),
         header=header, lines=lines, notices=notices, order_duplicates=order_duplicates,
     )
-
-
-@app.get("/inventory")
-@login_required
-def inventory():
-    with db.get_conn() as conn:
-        rows = db.inventory_view(conn)
-        ornamental = db.ornamental_count(conn)
-    categories = sorted({*INVENTORY_CATS, *(r["category"] for r in rows)})
-    return render_template("inventory.html", rows=rows, categories=categories,
-                           ornamental=ornamental)
-
-
-@app.post("/inventory/alistado")
-@login_required
-def inventory_alistado():
-    with db.get_conn() as conn:
-        db.insert_blank_preparation(
-            conn,
-            prep_date=request.form.get("prep_date") or None,
-            category=request.form["category"].strip(),
-            quantity=int(request.form.get("quantity") or 0),
-            prepared_by=(request.form.get("prepared_by") or "").strip() or None,
-        )
-        db.recalc_inventory(conn)
-        conn.commit()
-    return redirect(url_for("inventory"))
 
 
 @app.get("/records")
