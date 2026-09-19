@@ -11,6 +11,8 @@ from __future__ import annotations
 import io
 from urllib.parse import urlparse
 
+from psycopg.rows import tuple_row
+
 from app.core.pdf_extract import parse_pedido_pdf
 from app.web.app import _form_from_pedido
 from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf
@@ -35,7 +37,7 @@ def rendered_line_rows(html: str) -> str:
 
 
 def order_count(conn) -> int:
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute("SELECT count(*) FROM production_orders")
         return cur.fetchone()[0]
 
@@ -218,7 +220,7 @@ class TestSavingWhatThePdfProduced:
         assert resp.status_code == 200
         assert "Registrado" in resp.get_data(as_text=True)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT order_number, requested_by FROM production_orders")
             assert cur.fetchall() == [("9001", "CLIENTE DEMO")]
             cur.execute(
@@ -252,7 +254,7 @@ class TestSavingWhatThePdfProduced:
             "city": [line["city"] for line in lines],
         })
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders")
             assert cur.fetchone() == (1,)
             cur.execute("SELECT plate_number, city FROM plates ORDER BY id")

@@ -14,6 +14,7 @@ from datetime import date
 from unittest.mock import patch
 
 import pytest
+from psycopg.rows import dict_row, tuple_row
 
 from app.core import db
 from app.core.models import ExtractedRow
@@ -34,6 +35,7 @@ class TestGetConn:
         mock_connect.assert_called_once_with(
             host="myhost", port="1234", dbname="mydb",
             user="myuser", password="mypassword",
+            row_factory=dict_row,
         )
 
     def test_host_defaults_to_db_when_unset(self, monkeypatch):
@@ -94,7 +96,7 @@ def _insert_plate_get_id(conn, order_id: int, **row_kwargs: object) -> int:
     is_dup = bool(row_kwargs.pop("is_possible_duplicate", False))
     row = make_row(**row_kwargs)
     db.insert_plate(conn, order_id=order_id, row=row, is_possible_duplicate=is_dup)
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute("SELECT id FROM plates WHERE order_id = %s ORDER BY id DESC LIMIT 1", (order_id,))
         return cur.fetchone()[0]
 
@@ -107,7 +109,7 @@ class TestInsertPlate:
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(city="MEDELLIN"),
                         is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT city FROM plates WHERE order_id = %s", (order_id,))
             assert cur.fetchone()[0] == "MEDELLIN"
 
@@ -116,7 +118,7 @@ class TestInsertPlate:
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(city=None),
                         is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT city FROM plates WHERE order_id = %s", (order_id,))
             assert cur.fetchone()[0] is None
 
@@ -126,7 +128,7 @@ class TestInsertPlate:
         for city in ("CALI", "PASTO"):
             db.insert_plate(db_conn, order_id=order_id, row=make_row(city=city),
                             is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT city FROM plates WHERE order_id = %s ORDER BY id", (order_id,))
             assert [r[0] for r in cur.fetchall()] == ["CALI", "PASTO"]
 
@@ -599,7 +601,7 @@ class TestDeleteOrder:
 
         db.delete_order(db_conn, order_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE id = %s", (order_id,))
             assert cur.fetchone()[0] == 0
             cur.execute("SELECT count(*) FROM plates WHERE order_id = %s", (order_id,))
@@ -611,7 +613,7 @@ class TestDeleteOrder:
         delete_id = db.insert_order(db_conn, order_number="1002", order_date=date(2026, 1, 1),
                                      requested_by="PEDRO")
         db.delete_order(db_conn, delete_id)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE id = %s", (keep_id,))
             assert cur.fetchone()[0] == 1
 
@@ -668,7 +670,7 @@ class TestUpdatePlate:
         db.update_plate(db_conn, plate_id, plate_type="MOTO PARTICULAR", plate_number="NEW222",
                          quantity=9, is_voided=True)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_type, plate_number, quantity, is_voided, is_possible_duplicate "
                 "FROM plates WHERE id = %s",
@@ -684,7 +686,7 @@ class TestUpdatePlate:
         db.update_plate(db_conn, plate_id, plate_type="CARRO PARTICULAR", plate_number=None,
                          quantity=1, is_voided=False)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone() == (None,)
 
@@ -702,7 +704,7 @@ class TestUpdatePlateFull:
             is_plate_annulled=True, is_batch_replacement=False,
         )
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_type, plate_number, city, quantity, is_voided, "
                 "is_plate_annulled, is_possible_duplicate FROM plates WHERE id = %s",
@@ -728,7 +730,7 @@ class TestUpdatePlateFull:
             is_plate_annulled=False, is_batch_replacement=False,
         )
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_number, is_batch_replacement FROM plates WHERE id = %s",
                 (plate_id,),
@@ -747,7 +749,7 @@ class TestUpdatePlateFull:
             is_plate_annulled=False, is_batch_replacement=False,
         )
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_to, city FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone() == (None, None)
 
@@ -761,7 +763,7 @@ class TestResolvePlate:
 
         db.resolve_plate(db_conn, plate_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_number, quantity, is_possible_duplicate FROM plates WHERE id = %s",
                 (plate_id,),
@@ -786,7 +788,7 @@ class TestDeletePlate:
 
         db.delete_plate(db_conn, plate_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone()[0] == 0
 
@@ -800,7 +802,7 @@ class TestDeletePlate:
 
         db.delete_plate(db_conn, deleted_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT is_possible_duplicate FROM plates WHERE id = %s", (sibling_id,))
             assert cur.fetchone() == (False,)
 
@@ -814,7 +816,7 @@ class TestDeletePlate:
 
         db.delete_plate(db_conn, deleted_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT is_possible_duplicate FROM plates WHERE id = ANY(%s) ORDER BY id",
                 ([s1, s2],),
@@ -831,7 +833,7 @@ class TestDeletePlate:
 
         db.delete_plate(db_conn, deleted_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT is_possible_duplicate FROM plates WHERE id = %s", (clean_id,))
             assert cur.fetchone() == (False,)
 
@@ -847,7 +849,7 @@ class TestDeletePlate:
 
         db.delete_plate(db_conn, deleted_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT is_possible_duplicate FROM plates WHERE id = %s", (other_id,))
             assert cur.fetchone() == (True,)  # untouched -- no plate_number to match on
 

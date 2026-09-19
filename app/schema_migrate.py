@@ -45,6 +45,7 @@ import os
 from collections import defaultdict
 
 import psycopg
+from psycopg.rows import DictRow
 
 from app.core import db
 from app.core.normalize import normalize_requested_by
@@ -65,7 +66,7 @@ def _migration_files() -> list[str]:
     return sorted(glob.glob(os.path.join(_MIGRATIONS_DIR, "*.sql")))
 
 
-def _ensure_schema_migrations_table(conn: psycopg.Connection) -> None:
+def _ensure_schema_migrations_table(conn: psycopg.Connection[DictRow]) -> None:
     """Create the bookkeeping table if this is the first time the runner sees
     this database (an old production DB predates schema_migrations entirely).
     """
@@ -81,20 +82,20 @@ def _ensure_schema_migrations_table(conn: psycopg.Connection) -> None:
     conn.commit()
 
 
-def _applied_versions(conn: psycopg.Connection) -> set[str]:
+def _applied_versions(conn: psycopg.Connection[DictRow]) -> set[str]:
     with conn.cursor() as cur:
         cur.execute("SELECT version FROM schema_migrations")
-        return {row[0] for row in cur.fetchall()}
+        return {row["version"] for row in cur.fetchall()}
 
 
-def _record_version(cur: psycopg.Cursor, version: str) -> None:
+def _record_version(cur: psycopg.Cursor[DictRow], version: str) -> None:
     cur.execute(
         "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING",
         (version,),
     )
 
 
-def apply_sql_migrations(conn: psycopg.Connection) -> list[str]:
+def apply_sql_migrations(conn: psycopg.Connection[DictRow]) -> list[str]:
     """Apply every not-yet-applied app/migrations/*.sql file, in order.
 
     Each file's SQL and its schema_migrations record are committed together
@@ -124,13 +125,13 @@ def apply_sql_migrations(conn: psycopg.Connection) -> list[str]:
     return newly_applied
 
 
-def _distinct_requested_by(conn: psycopg.Connection) -> list[str]:
+def _distinct_requested_by(conn: psycopg.Connection[DictRow]) -> list[str]:
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT requested_by FROM production_orders")
-        return [row[0] for row in cur.fetchall()]
+        return [row["requested_by"] for row in cur.fetchall()]
 
 
-def backfill_clientes(conn: psycopg.Connection) -> None:
+def backfill_clientes(conn: psycopg.Connection[DictRow]) -> None:
     """One-time backfill of `clientes` from historical `requested_by` values.
 
     Algorithm (see the Fase 1 plan for the exact rationale):
@@ -171,7 +172,7 @@ def backfill_clientes(conn: psycopg.Connection) -> None:
                 )
                 row = cur.fetchone()
                 assert row is not None, "INSERT ... RETURNING id always yields a row"
-                customer_id = row[0]
+                customer_id = row["id"]
                 for raw in raws:
                     cur.execute(
                         """
@@ -193,7 +194,7 @@ def backfill_clientes(conn: psycopg.Connection) -> None:
         )
 
 
-def backfill_usuarios(conn: psycopg.Connection) -> None:
+def backfill_usuarios(conn: psycopg.Connection[DictRow]) -> None:
     """One-time backfill of `usuarios` from the AUTH_USERS/AUTH_ROLES env vars.
 
     Same username/password_hash pairs as today (werkzeug hashing is
@@ -221,7 +222,7 @@ def backfill_usuarios(conn: psycopg.Connection) -> None:
         raise
 
 
-def run_backfills(conn: psycopg.Connection) -> None:
+def run_backfills(conn: psycopg.Connection[DictRow]) -> None:
     """Run each backfill step that hasn't been recorded as applied yet."""
     applied = _applied_versions(conn)
     if BACKFILL_CLIENTES_VERSION not in applied:

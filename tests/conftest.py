@@ -95,6 +95,7 @@ os.environ.setdefault("POSTGRES_USER", "plates_user")
 
 import psycopg  # noqa: E402
 import pytest  # noqa: E402
+from psycopg.rows import DictRow, tuple_row  # noqa: E402
 
 from app import schema_migrate  # noqa: E402
 from app.core import db  # noqa: E402
@@ -130,14 +131,14 @@ def _create_database_if_missing() -> None:
         conn.close()
 
 
-def _schema_applied(conn: psycopg.Connection) -> bool:
-    with conn.cursor() as cur:
+def _schema_applied(conn: psycopg.Connection[DictRow]) -> bool:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute("SELECT to_regclass('public.plates') IS NOT NULL")
         row = cur.fetchone()
         return bool(row and row[0])
 
 
-def _apply_schema(conn: psycopg.Connection) -> None:
+def _apply_schema(conn: psycopg.Connection[DictRow]) -> None:
     with open(_SCHEMA_PATH, encoding="utf-8") as f:
         schema_sql = f.read()
     with conn.cursor() as cur:

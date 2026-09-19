@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from psycopg.rows import tuple_row
 
 from app.core import db
 from app.core.models import ExtractedRow
@@ -45,7 +46,7 @@ class TestNormalOrder:
         assert summary.blank_preparations == 0
         assert summary.possible_duplicates == 0
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT order_number, requested_by FROM production_orders")
             assert cur.fetchall() == [("100", "PEDRO")]
 
@@ -61,7 +62,7 @@ class TestNormalOrder:
         assert summary.orders_inserted == 1  # one order_number -> one production_orders row
         assert summary.plates_inserted == 2
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders")
             assert cur.fetchone()[0] == 1
             cur.execute("SELECT count(*) FROM plates")
@@ -88,7 +89,7 @@ class TestInventoryRecalc:
         ]
         process_rows(rows)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (8,)
 
@@ -98,7 +99,7 @@ class TestInventoryRecalc:
         rows = [make_row(order_number="901", plate_number="AAA200", plate_type="ORNAMENTAL", quantity=7)]
         process_rows(rows)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT COALESCE(SUM(consumed), 0) FROM inventory_categories")
             assert cur.fetchone() == (0,)
 
@@ -109,7 +110,7 @@ class TestInventoryRecalc:
         ]
         process_rows(rows)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT COALESCE(consumed, 0) FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             row = cur.fetchone()
             assert (row[0] if row else 0) == 0
@@ -129,7 +130,7 @@ class TestAlistamiento:
         assert summary.plates_inserted == 0
         assert summary.orders_inserted == 0  # alistado rows never create an order
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT category, quantity, prepared_by FROM blank_preparations")
             assert cur.fetchall() == [("MOTO PARTICULAR", 500, "GILMER")]
             cur.execute("SELECT count(*) FROM plates")
@@ -180,7 +181,7 @@ class TestDuplicateDetection:
         # batch_counts[...] > 1 applies uniformly, there's no "first seen" pass.
         assert summary.possible_duplicates == 2
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT is_possible_duplicate FROM plates ORDER BY id")
             assert [r[0] for r in cur.fetchall()] == [True, True]
 
@@ -193,7 +194,7 @@ class TestDuplicateDetection:
         summary2 = process_rows(second)
         assert summary2.possible_duplicates == 1
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT o.order_number, p.is_possible_duplicate FROM plates p "
                 "JOIN production_orders o ON o.id = p.order_id ORDER BY p.id"
@@ -230,7 +231,7 @@ class TestFindDuplicatePlateNumbers:
         rows = [make_row(order_number="900", plate_number="FRESH1", plate_type="CARRO PARTICULAR")]
         assert find_duplicate_plate_numbers(rows) == set()
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM plates")
             assert cur.fetchone() == (0,)  # read-only: nothing got inserted
 
@@ -379,7 +380,7 @@ class TestReplaceOrder:
         assert summary.orders_inserted == 1
         assert summary.plates_inserted == 1
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '1010'")
             assert cur.fetchone()[0] == 1  # the old placeholder order is gone, replaced by one new one
             cur.execute(
@@ -422,7 +423,7 @@ class TestReplaceOrder:
         assert summary.orders_inserted == 1
         assert summary.plates_inserted == 2
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '1020'")
             assert cur.fetchone()[0] == 1
             cur.execute(
@@ -456,7 +457,7 @@ class TestReplaceOrder:
                          is_possible_duplicate=False)
         db.recalc_inventory(db_conn)
         db_conn.commit()
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (40,)  # sanity check before replacing
 
@@ -466,7 +467,7 @@ class TestReplaceOrder:
         ]
         replace_order("1040", new_rows)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             # 40 total across the two new rows -- NOT 80 (40 old + 40 new)
             assert cur.fetchone() == (40,)
@@ -492,7 +493,7 @@ class TestReplaceOrder:
         summary = replace_order("1051", new_rows)
         assert summary.possible_duplicates == 1
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT p.plate_number, p.is_possible_duplicate FROM plates p "
                 "JOIN production_orders o ON o.id = p.order_id "
