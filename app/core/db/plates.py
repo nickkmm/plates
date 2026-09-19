@@ -14,10 +14,12 @@ contract that applies to every function here.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from decimal import Decimal
 
 import psycopg
 from psycopg.rows import DictRow
 
+from app.core.db.pricing import current_prices
 from app.core.models import ExtractedRow
 from app.core.normalize import clean_plate
 
@@ -63,16 +65,23 @@ def find_orders_for_plate(conn: psycopg.Connection[DictRow], plate_number: str) 
 
 def insert_plate(conn: psycopg.Connection[DictRow], *, order_id: int, row: ExtractedRow,
                  is_possible_duplicate: bool) -> None:
-    """Insert one plates row linked to order_id."""
+    """Insert one plates row linked to order_id.
+
+    row.unit_price/reason/vehicle_brand (Fase 2) are written as given --
+    this function does NOT apply the tariff-snapshot fallback itself (that's
+    app.core.ingestion's job, once per batch, before calling this per row);
+    it just persists whatever the row already carries, same as every other
+    field here.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO plates (
                 order_id, plate_type, plate_number, plate_to, is_batch_replacement,
                 is_voided, is_plate_annulled, quantity, material, prepared_by,
-                is_possible_duplicate, city
+                is_possible_duplicate, city, unit_price, reason, vehicle_brand
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 order_id,
@@ -87,6 +96,9 @@ def insert_plate(conn: psycopg.Connection[DictRow], *, order_id: int, row: Extra
                 row.prepared_by,
                 is_possible_duplicate,
                 row.city,
+                row.unit_price,
+                row.reason,
+                row.vehicle_brand,
             ),
         )
 
@@ -149,18 +161,51 @@ def review_rows(conn: psycopg.Connection[DictRow]) -> list[dict]:
         return cur.fetchall()
 
 
+def _resnapshot_unit_price(
+    cur: psycopg.Cursor[DictRow], plate_id: int, new_plate_type: str
+) -> Decimal | None:
+    """The unit_price re-snapshot rule (see PLAN_ARQUITECTURA_Y_POS.md /
+    docs/DATABASE.md), shared by update_plate and update_plate_full -- both
+    let plate_type change, so both need it:
+
+      - plate_type UNCHANGED -> unit_price is left exactly as it was,
+        regardless of any other field changing (e.g. quantity) -- the total
+        is always unit_price * quantity, computed on read, never stored.
+      - plate_type CHANGED -> re-take the CURRENT suggested tariff for the
+        NEW type (via pricing.current_prices), same as a brand-new plate.
+        Stays None if that type has no configured tariff yet -- never a
+        silent 0 (a NULL unit_price raises an explicit /cuadre notice).
+
+    Reads the plate's existing plate_type/unit_price on the SAME cursor
+    (before the caller's own UPDATE runs), so this must be called first.
+    """
+    cur.execute("SELECT plate_type, unit_price FROM plates WHERE id = %s", (plate_id,))
+    current = cur.fetchone()
+    old_plate_type = current["plate_type"] if current else None
+    old_unit_price = current["unit_price"] if current else None
+    if old_plate_type == new_plate_type:
+        return old_unit_price
+    return current_prices(cur.connection).get(new_plate_type)
+
+
 def update_plate(conn: psycopg.Connection[DictRow], plate_id: int, *, plate_type: str,
                  plate_number: str | None, quantity: int, is_voided: bool) -> None:
-    """Edit a plate row and clear its review flag (treated as reviewed)."""
+    """Edit a plate row and clear its review flag (treated as reviewed).
+
+    Used by the /review duplicate-review queue, which also allows changing
+    plate_type -- so this applies the unit_price re-snapshot rule too (see
+    _resnapshot_unit_price).
+    """
     with conn.cursor() as cur:
+        new_unit_price = _resnapshot_unit_price(cur, plate_id, plate_type)
         cur.execute(
             """
             UPDATE plates
             SET plate_type = %s, plate_number = %s, quantity = %s,
-                is_voided = %s, is_possible_duplicate = false
+                is_voided = %s, is_possible_duplicate = false, unit_price = %s
             WHERE id = %s
             """,
-            (plate_type, plate_number, quantity, is_voided, plate_id),
+            (plate_type, plate_number, quantity, is_voided, new_unit_price, plate_id),
         )
 
 
@@ -174,6 +219,8 @@ def update_plate_full(conn: psycopg.Connection[DictRow], plate_id: int, *, plate
     form's fields): this also lets a range end, city, and the "placa anulada"
     waste flag be corrected after the order was already saved. Clears
     is_possible_duplicate too, same "editing counts as reviewed" convention.
+    Also applies the unit_price re-snapshot rule (see _resnapshot_unit_price)
+    since this route can change plate_type too.
 
     is_batch_replacement is a required param (not left untouched) so that
     editing a reposición row's plate_number in place to a real plate number
@@ -182,16 +229,18 @@ def update_plate_full(conn: psycopg.Connection[DictRow], plate_id: int, *, plate
     mislabeled "reposición" forever.
     """
     with conn.cursor() as cur:
+        new_unit_price = _resnapshot_unit_price(cur, plate_id, plate_type)
         cur.execute(
             """
             UPDATE plates
             SET plate_type = %s, plate_number = %s, plate_to = %s, city = %s,
                 quantity = %s, is_voided = %s, is_plate_annulled = %s,
-                is_batch_replacement = %s, is_possible_duplicate = false
+                is_batch_replacement = %s, is_possible_duplicate = false,
+                unit_price = %s
             WHERE id = %s
             """,
             (plate_type, plate_number, plate_to, city, quantity, is_voided,
-             is_plate_annulled, is_batch_replacement, plate_id),
+             is_plate_annulled, is_batch_replacement, new_unit_price, plate_id),
         )
 
 

@@ -39,6 +39,19 @@ def make_row(**overrides: object) -> ExtractedRow:
     return ExtractedRow(**defaults)
 
 
+def _insert_order(conn, *, order_number: str, order_date, requested_by: str) -> int:
+    """Back-compat shim for this file's "just need an order header to exist"
+    setup calls -- see the identical helper (and its full rationale) in
+    tests/core/test_db.py."""
+    return db.insert_order(
+        conn,
+        row=ExtractedRow(order_number=order_number, order_date=order_date, requested_by=requested_by,
+                          plate_type="MOTO PARTICULAR"),
+        customer_id=None,
+        created_by=None,
+    )
+
+
 def row_counts(conn) -> tuple[int, int]:
     with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute("SELECT count(*) FROM production_orders")
@@ -78,7 +91,7 @@ class TestConsultOnly:
     def test_saves_nothing_even_when_a_plate_already_exists(
         self, authenticated_client, db_conn
     ):
-        order_id = db.insert_order(
+        order_id = _insert_order(
             db_conn, order_number="EXIST-1", order_date=date(2026, 1, 1), requested_by="CLIENTE DEMO"
         )
         db.insert_plate(
@@ -100,7 +113,7 @@ class TestLookupResults:
     def test_an_existing_plate_is_reported_as_found_with_a_link(
         self, authenticated_client, db_conn
     ):
-        order_id = db.insert_order(
+        order_id = _insert_order(
             db_conn, order_number="EXIST-2", order_date=date(2026, 1, 1), requested_by="CLIENTE DEMO"
         )
         db.insert_plate(
