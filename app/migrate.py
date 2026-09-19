@@ -21,9 +21,9 @@ import pandas as pd
 from pydantic import ValidationError
 
 from app.core import db
+from app.core.ingestion import is_alistado, process_rows
 from app.core.models import ExtractedRow
 from app.core.normalize import clean_plate
-from app.core.process import _is_alistado, process_rows
 
 # Alistamiento (blanks prepared) reconciled against the physical book, Feb–Jun 2026.
 # This REPLACES the Excel's ALISTAMIENTO rows, which were unreliable: MAT-only rows
@@ -229,14 +229,14 @@ def main(argv: list[str] | None = None) -> int:
         # this batch's own ALISTAMIENTO rows via process_rows's normal handling
         # (same path the live web form uses), instead of RECONCILED_ALISTAMIENTO
         # (which only covers the original Feb-Jun historical baseline).
-        alistado_n = sum(1 for r in rows if _is_alistado(r))
+        alistado_n = sum(1 for r in rows if is_alistado(r))
         print(f"{alistado_n} Excel ALISTAMIENTO rows in range; loading as-is (not reconciled).")
         summary = process_rows(rows)
         blank_preps_label = f"{summary.blank_preparations} (from Excel, unreconciled)"
     else:
         # The Excel's ALISTAMIENTO rows are unreliable, so discard them and load the
         # reconciled set (verified against the book). Plate rows still come from Excel.
-        plate_rows = [r for r in rows if not _is_alistado(r)]
+        plate_rows = [r for r in rows if not is_alistado(r)]
         discarded = len(rows) - len(plate_rows)
         print(f"Discarded {discarded} Excel ALISTAMIENTO rows; "
               f"loading {len(RECONCILED_ALISTAMIENTO)} reconciled ones.")

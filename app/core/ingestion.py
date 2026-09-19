@@ -33,7 +33,7 @@ class Summary(BaseModel):
     plates_deleted: int = 0
 
 
-def _is_alistado(row: ExtractedRow) -> bool:
+def is_alistado(row: ExtractedRow) -> bool:
     """ALISTAMIENTO rows record blanks prepared, not plates produced.
 
     In the data the marker is in SOLICITADO POR (requested_by); a few rows also
@@ -50,7 +50,7 @@ def find_duplicate_plate_numbers(rows: list[ExtractedRow]) -> set[str]:
     before saving, not just after.
     """
     normalized = [normalize_row(r) for r in rows]
-    plate_rows = [r for r in normalized if not _is_alistado(r)]
+    plate_rows = [r for r in normalized if not is_alistado(r)]
     live_candidates = {
         r.plate_number for r in plate_rows if is_real_plate(r.plate_number) and not r.is_voided
     }
@@ -70,8 +70,8 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
     normalized = [normalize_row(r) for r in rows]
 
     # Split ALISTAMIENTO (blanks prepared) from plate rows.
-    alistado_rows = [r for r in normalized if _is_alistado(r)]
-    plate_rows = [r for r in normalized if not _is_alistado(r)]
+    alistado_rows = [r for r in normalized if is_alistado(r)]
+    plate_rows = [r for r in normalized if not is_alistado(r)]
 
     # Plate numbers appearing more than once within this same batch are also
     # suspicious, not just ones already in the DB. Only real plate identifiers

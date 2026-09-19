@@ -1351,7 +1351,7 @@ class TestIngestOrderDuplicateWarning:
     placeholder order has plate_number=NULL, so it would otherwise sail
     straight through the plate check and silently create a second
     production_orders row under the same order_number (see
-    app.core.process.replace_order's docstring for the real WCY449/pedido
+    app.core.ingestion.replace_order's docstring for the real WCY449/pedido
     1030 case)."""
 
     def test_colliding_order_number_blocks_save_and_shows_warning(
