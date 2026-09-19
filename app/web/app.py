@@ -23,25 +23,25 @@ the read-only 'consulta' role -- see app.web.auth.consulta_allowed.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import timedelta
 
 from flask import Flask, redirect, render_template, request, session, url_for
 
 from app.core import db
 from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
 from app.core.models import ExtractedRow
-from app.core.normalize import (
-    INVENTORY_CATEGORIES,
-    PLATE_TYPES,
-    clean_plate,
-    is_real_plate,
-    normalize_row,
-    validate_plate,
-)
+from app.core.normalize import clean_plate, is_real_plate, normalize_row, validate_plate
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
 from app.web import auth
 from app.web.auth import consulta_allowed, login_required
+from app.web.helpers import (
+    FORM_PLATE_TYPES,
+    INVENTORY_CATS,
+    _options,
+    _padded,
+    _validate_order_header,
+    today_iso,
+)
 
 app = Flask(__name__)
 
@@ -71,42 +71,6 @@ def _inject_full_access_roles() -> dict:
     on role membership (not a hardcoded '!= consulta') -- keeps templates in
     sync automatically if a role's access level ever changes again."""
     return {"full_access_roles": auth.FULL_ACCESS_ROLES}
-
-
-# Plate TYPES are what the user picks per plate (granular, 5). Inventory
-# CATEGORIES are the 3 materials those types discount from (público merged).
-FORM_PLATE_TYPES = list(PLATE_TYPES)
-INVENTORY_CATS = list(INVENTORY_CATEGORIES)
-
-# The container runs in UTC; compute "today" in Colombia so the date default
-# and the future-date validation use local time, not UTC.
-BOGOTA = ZoneInfo("America/Bogota")
-
-
-def _today_iso() -> str:
-    return datetime.now(BOGOTA).date().isoformat()
-
-
-def _options(conn):
-    return db.distinct_requested_by(conn), db.distinct_cities(conn)
-
-
-def _padded(values: list[str], size: int) -> list[str]:
-    """Pad a per-line field list to `size` with blanks.
-
-    The line zips are strict=False, so a request that omits an optional per-line
-    field (city) would otherwise truncate the zip and silently drop plate lines.
-    """
-    return values + [""] * (size - len(values))
-
-
-def _validate_order_header(*, requested_by: str, order_date: str) -> None:
-    """Order-level validations shared by every door that saves a header
-    (brand-new /ingest, and editing an existing order's header)."""
-    if any(ch.isdigit() for ch in requested_by):
-        raise ValueError("'Solicitado por' no debería contener números (parece una placa). Revisá ese campo.")
-    if order_date and order_date > _today_iso():
-        raise ValueError(f"La fecha {order_date} es futura. Corregí la fecha.")
 
 
 def _rows_from_form(form) -> list[ExtractedRow]:
@@ -242,7 +206,7 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
         notices.append("No se pudo leer el N° de orden de producción — completalo antes de guardar.")
     if pedido.order_date is None:
         notices.append("No se pudo leer la fecha del pedido — completala antes de guardar.")
-    elif pedido.order_date.isoformat() > _today_iso():
+    elif pedido.order_date.isoformat() > today_iso():
         notices.append(
             f"La fecha del PDF ({pedido.order_date.isoformat()}) es futura — corregila antes de guardar."
         )
@@ -277,23 +241,10 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
     return header, lines, notices
 
 
-def _landing_url() -> str:
-    """Where a logged-in user lands with no specific ?next= target.
-
-    Full-access roles start at Registrar (today's default). Every other role
-    (read-only: 'consulta', 'produccion') can't reach /ingest at all, so
-    sending it there would just bounce into a 403 -- send it to Registros
-    instead, the one place it can actually use.
-    """
-    if session.get("role") not in auth.FULL_ACCESS_ROLES:
-        return url_for("records")
-    return url_for("ingest")
-
-
 @app.get("/login")
 def login():
     if session.get("user"):
-        return redirect(_landing_url())
+        return redirect(auth.landing_url())
     next_url = request.args.get("next", "")
     return render_template("login.html", next=next_url if auth.is_safe_next(next_url) else "")
 
@@ -308,7 +259,7 @@ def login_post():
         session["user"] = username
         session["role"] = auth.role_for(username)
         session.permanent = True
-        return redirect(next_url if auth.is_safe_next(next_url) else _landing_url())
+        return redirect(next_url if auth.is_safe_next(next_url) else auth.landing_url())
     return (
         render_template(
             "login.html",
@@ -328,7 +279,7 @@ def logout():
 @app.get("/")
 @consulta_allowed
 def index():
-    return redirect(_landing_url())
+    return redirect(auth.landing_url())
 
 
 @app.get("/ingest")
@@ -337,7 +288,7 @@ def ingest():
     with db.get_conn() as conn:
         requesters, cities = _options(conn)
     return render_template("ingest.html", requesters=requesters, cities=cities,
-                           categories=FORM_PLATE_TYPES, today=_today_iso())
+                           categories=FORM_PLATE_TYPES, today=today_iso())
 
 
 @app.post("/ingest")
@@ -407,7 +358,7 @@ def ingest_post():
         requesters, cities = _options(conn)
     return render_template(
         "ingest.html", requesters=requesters, cities=cities,
-        categories=FORM_PLATE_TYPES, today=_today_iso(),
+        categories=FORM_PLATE_TYPES, today=today_iso(),
         summary=summary.model_dump() if summary else None, error=error,
         duplicates=duplicates, order_duplicates=order_duplicates, header=header, lines=lines,
     )
@@ -451,7 +402,7 @@ def ingest_pdf():
         requesters, cities = _options(conn)
     return render_template(
         "ingest.html", requesters=requesters, cities=cities,
-        categories=FORM_PLATE_TYPES, today=_today_iso(),
+        categories=FORM_PLATE_TYPES, today=today_iso(),
         header=header, lines=lines, notices=notices, order_duplicates=order_duplicates,
     )
 
@@ -568,7 +519,7 @@ def record_detail(order_id):
         return redirect(url_for("records"))
     return render_template("record_detail.html", order=order, plates=plates,
                            cities=cities, requesters=requesters, categories=FORM_PLATE_TYPES,
-                           today=_today_iso(), order_voided=_order_voided(plates),
+                           today=today_iso(), order_voided=_order_voided(plates),
                            back_query=back_query)
 
 
@@ -580,7 +531,7 @@ def _record_detail_error(order_id: int, error: str):
         requesters, cities = _options(conn)
     return render_template("record_detail.html", order=order, plates=plates,
                            cities=cities, requesters=requesters, categories=FORM_PLATE_TYPES,
-                           today=_today_iso(), order_voided=_order_voided(plates), error=error), 400
+                           today=today_iso(), order_voided=_order_voided(plates), error=error), 400
 
 
 @app.post("/records/<int:order_id>/save")
