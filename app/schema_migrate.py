@@ -105,7 +105,7 @@ def apply_sql_migrations(conn: psycopg.Connection[DictRow]) -> list[str]:
 
     Each file's SQL and its schema_migrations record are committed together
     as one transaction (explicit conn.commit(), same convention as the rest
-    of app/core/db.py) -- a file that fails partway through is rolled back
+    of app/core/db/) -- a file that fails partway through is rolled back
     whole (conn.close()/the next conn.rollback() discards the uncommitted
     work), never left half-applied-but-marked-done. Returns the list of
     versions newly applied (empty on a no-op re-run).
