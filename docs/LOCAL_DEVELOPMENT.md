@@ -42,9 +42,16 @@ README no cubre.
   `produccionuser`/`produccionpass123` (producción).
 - El fixture `clean_db` hace **`TRUNCATE`** de las 4 tablas antes de cada
   test que depende de él — **no** hay rollback transaccional por test
-  (cada llamada a `db.get_conn()` abre una conexión nueva, sin punto de
-  inyección para compartir una transacción). Correr pytest en paralelo
-  contra el mismo contenedor de Postgres puede generar carreras.
+  todavía. Desde Fase 1d, `db.get_conn()` reusa conexiones de un pool
+  (`psycopg_pool.ConnectionPool`) en vez de abrir un socket nuevo por
+  llamada, y `app/core/ingestion.py` recibe la conexión como parámetro
+  explícito en vez de abrir la suya propia — eso habilita en principio un
+  fixture de rollback por test (envolver todo en una transacción y
+  revertirla al final), pero todavía no se adoptó (ver el fast-follow del
+  paso 10 del plan de Fase 1d); truncar sigue siendo lo que da a cada test
+  el mismo estado inicial sin importar qué haya commiteado el anterior.
+  Correr pytest en paralelo contra el mismo contenedor de Postgres puede
+  generar carreras.
 - **Gotcha silencioso**: si Postgres no está corriendo o no es alcanzable
   en `127.0.0.1:5433`, los tests dependientes de BD se **saltan**
   (`pytest.skip`), no fallan. Una corrida "en verde" con muchos `skipped`

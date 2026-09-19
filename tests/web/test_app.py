@@ -13,6 +13,8 @@ from __future__ import annotations
 from datetime import date
 from urllib.parse import parse_qs, urlparse
 
+from psycopg.rows import tuple_row
+
 from app.core import db
 from app.core.models import ExtractedRow
 
@@ -216,11 +218,14 @@ class TestLoginPageRendersWhenNotAuthenticated:
 # ----------------------------------------------------------------------------
 # Everything below needs both an authenticated client AND a real Postgres
 # connection (`db_conn`/`clean_db` -- see tests/conftest.py). `db_conn` and
-# the Flask route each open their OWN separate connection (db.get_conn() has
-# no injection point), so any setup done through `db_conn` must be committed
-# BEFORE the route is hit, or the route's connection won't see it yet (both
-# run at the default READ COMMITTED isolation level). Reading state back
-# through `db_conn` afterward needs no extra commit: a fresh statement on an
+# the Flask route each check out their OWN separate connection from the pool
+# (Fase 1d: db.get_conn() is pooled, but still hands out a distinct
+# connection/session per checkout -- pooling only reuses the underlying
+# sockets, it doesn't merge separate `with db.get_conn() as conn:` blocks
+# into one), so any setup done through `db_conn` must be committed BEFORE the
+# route is hit, or the route's connection won't see it yet (both run at the
+# default READ COMMITTED isolation level). Reading state back through
+# `db_conn` afterward needs no extra commit: a fresh statement on an
 # already-open connection sees whatever the route's own connection already
 # committed.
 # ----------------------------------------------------------------------------
@@ -261,7 +266,7 @@ class TestReviewUpdateRoute:
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="UPD111", quantity=1),
                          is_possible_duplicate=True)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'UPD111'")
             plate_id = cur.fetchone()[0]
         db_conn.commit()
@@ -273,7 +278,7 @@ class TestReviewUpdateRoute:
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/review"
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_type, plate_number, quantity, is_voided, is_possible_duplicate "
                 "FROM plates WHERE id = %s", (plate_id,),
@@ -285,7 +290,7 @@ class TestReviewUpdateRoute:
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="UPD333"),
                          is_possible_duplicate=True)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'UPD333'")
             plate_id = cur.fetchone()[0]
         db_conn.commit()
@@ -295,7 +300,7 @@ class TestReviewUpdateRoute:
             "plate_number": "UPD333", "quantity": "1", "is_voided": "on",
         })
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT is_voided FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone() == (True,)
 
@@ -308,7 +313,7 @@ class TestReviewUpdateRoute:
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="UPD444", quantity=5),
                          is_possible_duplicate=True)
         db.recalc_inventory(db_conn)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'UPD444'")
             plate_id = cur.fetchone()[0]
         db_conn.commit()
@@ -318,7 +323,7 @@ class TestReviewUpdateRoute:
             "plate_number": "UPD444", "quantity": "20",
         })
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (20,)
 
@@ -329,7 +334,7 @@ class TestReviewResolveRoute:
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="RES111", quantity=3),
                          is_possible_duplicate=True)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'RES111'")
             plate_id = cur.fetchone()[0]
         db_conn.commit()
@@ -338,7 +343,7 @@ class TestReviewResolveRoute:
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/review"
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_number, quantity, is_possible_duplicate FROM plates WHERE id = %s",
                 (plate_id,),
@@ -353,7 +358,7 @@ class TestReviewDeleteRoute:
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DEL111", quantity=7),
                          is_possible_duplicate=True)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'DEL111'")
             plate_id = cur.fetchone()[0]
         db_conn.commit()
@@ -362,7 +367,7 @@ class TestReviewDeleteRoute:
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/review"
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone()[0] == 0
 
@@ -383,7 +388,7 @@ class TestReviewDeleteRoute:
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DEL222", quantity=7),
                          is_possible_duplicate=True)
         db.recalc_inventory(db_conn)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (7,)  # sanity check before deletion
             cur.execute("SELECT id FROM plates WHERE plate_number = 'DEL222'")
@@ -392,7 +397,7 @@ class TestReviewDeleteRoute:
 
         authenticated_client.post("/review/delete", data={"plate_id": str(plate_id)})
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM plates")
             assert cur.fetchone()[0] == 0  # the plate really is gone
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
@@ -407,14 +412,14 @@ class TestReviewDeleteRoute:
                          is_possible_duplicate=True)
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="SIB999"),
                          is_possible_duplicate=True)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'SIB999' ORDER BY id")
             first_id, second_id = [r[0] for r in cur.fetchall()]
         db_conn.commit()
 
         authenticated_client.post("/review/delete", data={"plate_id": str(first_id)})
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT is_possible_duplicate FROM plates WHERE id = %s", (second_id,))
             assert cur.fetchone() == (False,)
 
@@ -450,7 +455,7 @@ class TestInventoryAlistadoRoute:
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/inventory"
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT category, quantity, prepared_by FROM blank_preparations")
             assert cur.fetchall() == [("MOTO PARTICULAR", 250, "GILMER")]
             cur.execute("SELECT prepared FROM inventory_categories WHERE category = 'MOTO PARTICULAR'")
@@ -699,7 +704,7 @@ class TestRecordSaveRoute:
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV100", quantity=1),
                          is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV100'")
             plate_id = cur.fetchone()[0]
         db_conn.commit()
@@ -713,7 +718,7 @@ class TestRecordSaveRoute:
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == f"/records/{order_id}"
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT order_number, order_date, requested_by FROM production_orders WHERE id = %s",
                 (order_id,),
@@ -726,7 +731,7 @@ class TestRecordSaveRoute:
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV200", quantity=1),
                          is_possible_duplicate=True)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV200'")
             plate_id = cur.fetchone()[0]
         db_conn.commit()
@@ -738,7 +743,7 @@ class TestRecordSaveRoute:
             "quantity": ["7"], "is_plate_annulled": [""],
         })
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_type, plate_number, city, quantity, is_possible_duplicate "
                 "FROM plates WHERE id = %s", (plate_id,),
@@ -762,7 +767,7 @@ class TestRecordSaveRoute:
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV301", quantity=1),
                          is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV300'")
             id_300 = cur.fetchone()[0]
             cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV301'")
@@ -778,7 +783,7 @@ class TestRecordSaveRoute:
             "quantity": ["1", "1"], "is_plate_annulled": ["", ""],
         })
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number, is_voided FROM plates WHERE order_id = %s ORDER BY id",
                         (order_id,))
             assert cur.fetchall() == [("SAV300", True), ("SAV301", True)]
@@ -804,7 +809,7 @@ class TestRecordSaveRoute:
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV400", quantity=1),
                          is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV400'")
             existing_id = cur.fetchone()[0]
         db_conn.commit()
@@ -818,7 +823,7 @@ class TestRecordSaveRoute:
         })
         assert resp.status_code == 302
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM plates WHERE order_id = %s", (order_id,))
             assert cur.fetchone()[0] == 2
             cur.execute("SELECT plate_type, quantity, order_id FROM plates WHERE plate_number = 'ADD50D'")
@@ -836,7 +841,7 @@ class TestRecordSaveRoute:
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV600", quantity=1),
                          is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV500'")
             keep_id = cur.fetchone()[0]
         db_conn.commit()
@@ -849,7 +854,7 @@ class TestRecordSaveRoute:
             "quantity": ["1"], "is_plate_annulled": [""],
         })
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number FROM plates WHERE order_id = %s", (order_id,))
             assert [r[0] for r in cur.fetchall()] == ["SAV500"]
 
@@ -868,7 +873,7 @@ class TestRecordSaveRoute:
         })
         assert resp.status_code == 302
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM plates WHERE order_id = %s", (order_id,))
             assert cur.fetchone()[0] == 0
             cur.execute("SELECT count(*) FROM production_orders WHERE id = %s", (order_id,))
@@ -894,7 +899,7 @@ class TestRecordSaveRoute:
             "quantity": ["1"], "is_plate_annulled": [""],
         })
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT is_possible_duplicate FROM plates WHERE order_id = %s AND plate_number = 'SAV800'",
                 (other_order_id,),
@@ -915,7 +920,7 @@ class TestRecordSaveRoute:
             "quantity": ["15"], "is_plate_annulled": [""],
         })
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (15,)
 
@@ -937,7 +942,7 @@ class TestRecordSaveRoute:
         assert resp.status_code == 400
         assert b"Error" in resp.data
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             # the whole save is one transaction: the header edit didn't stick
             # either, and the original plate is untouched.
             cur.execute("SELECT order_number FROM production_orders WHERE id = %s", (order_id,))
@@ -982,7 +987,7 @@ class TestRecordsDeleteRoute:
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/records"
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE id = %s", (order_id,))
             assert cur.fetchone()[0] == 0
             cur.execute("SELECT count(*) FROM plates WHERE order_id = %s", (order_id,))
@@ -1007,14 +1012,14 @@ class TestRecordsDeleteRoute:
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD201", quantity=8),
                          is_possible_duplicate=False)
         db.recalc_inventory(db_conn)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (11,)  # sanity check before deletion
         db_conn.commit()
 
         authenticated_client.post("/records/delete", data={"order_id": str(delete_order)})
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (3,)  # correctly dropped to just the surviving order
 
@@ -1031,7 +1036,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT order_number, requested_by FROM production_orders")
             assert cur.fetchall() == [("3000", "PEDRO")]
             cur.execute("SELECT plate_number, plate_type, quantity, city FROM plates")
@@ -1052,7 +1057,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders")
             assert cur.fetchone() == (1,)  # still ONE order
             cur.execute("SELECT plate_number, city FROM plates ORDER BY id")
@@ -1069,7 +1074,7 @@ class TestIngestPostRoute:
             "quantity": ["1", "1"],
             "city": ["", ""],
         })
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number, city FROM plates ORDER BY id")
             # the carro line stays blank -- only nationwide types get the default
             assert cur.fetchall() == [("ABC12D", "COLOMBIA"), ("BBB222", None)]
@@ -1085,7 +1090,7 @@ class TestIngestPostRoute:
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["AAA111"], "plate_to": [""], "quantity": ["1"],
         })
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number, city FROM plates")
             assert cur.fetchall() == [("AAA111", None)]
 
@@ -1099,7 +1104,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number, plate_to FROM plates")
             assert cur.fetchall() == [("AAA100", "AAA105")]
 
@@ -1112,7 +1117,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert "Agregá al menos una placa".encode() in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders")
             assert cur.fetchone()[0] == 0
 
@@ -1126,7 +1131,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Error" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders")
             assert cur.fetchone()[0] == 0
 
@@ -1140,7 +1145,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"futura" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders")
             assert cur.fetchone()[0] == 0
 
@@ -1154,7 +1159,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"desde" in resp.data and b"hasta" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders")
             assert cur.fetchone()[0] == 0
 
@@ -1170,7 +1175,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_number, plate_to, is_batch_replacement, is_voided FROM plates"
             )
@@ -1188,7 +1193,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_number, plate_to, is_batch_replacement, is_voided FROM plates"
             )
@@ -1204,7 +1209,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number, plate_to FROM plates")
             assert cur.fetchall() == [("MUESTRA", None)]
 
@@ -1220,7 +1225,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number, plate_to, is_plate_annulled FROM plates")
             assert cur.fetchall() == [("AAA200", None, True)]
 
@@ -1237,7 +1242,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number, is_plate_annulled FROM plates")
             assert cur.fetchall() == [(None, True)]
 
@@ -1254,7 +1259,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number FROM plates")
             assert cur.fetchall() == [(None,)]
 
@@ -1271,7 +1276,7 @@ class TestIngestPostRoute:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number FROM plates")
             assert cur.fetchall() == [("AAA300",)]  # only the filled-in line landed
 
@@ -1297,7 +1302,7 @@ class TestIngestDuplicateWarning:
         assert b"4000" in resp.data  # points to the order where it already exists
         assert b'value="MARIA"' in resp.data  # typed header data preserved
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '4001'")
             assert cur.fetchone()[0] == 0  # second order was NOT saved
 
@@ -1318,7 +1323,7 @@ class TestIngestDuplicateWarning:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT is_possible_duplicate FROM plates p "
                 "JOIN production_orders o ON o.id = p.order_id WHERE o.order_number = '4003'"
@@ -1338,7 +1343,7 @@ class TestIngestDuplicateWarning:
         assert b"ya existen" in resp.data
         assert "mismo envío".encode() in resp.data  # no prior order to link to, just a same-batch repeat
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '4004'")
             assert cur.fetchone()[0] == 0
 
@@ -1349,7 +1354,7 @@ class TestIngestOrderDuplicateWarning:
     placeholder order has plate_number=NULL, so it would otherwise sail
     straight through the plate check and silently create a second
     production_orders row under the same order_number (see
-    app.core.process.replace_order's docstring for the real WCY449/pedido
+    app.core.ingestion.replace_order's docstring for the real WCY449/pedido
     1030 case)."""
 
     def test_colliding_order_number_blocks_save_and_shows_warning(
@@ -1371,7 +1376,7 @@ class TestIngestOrderDuplicateWarning:
         assert b"ya existe" in resp.data
         assert b'value="PEDRO"' in resp.data  # typed header data preserved
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '5000'")
             assert cur.fetchone()[0] == 1  # still just the original placeholder order
             cur.execute(
@@ -1401,7 +1406,7 @@ class TestIngestOrderDuplicateWarning:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '5001'")
             assert cur.fetchone()[0] == 2  # two orders now share this number
             cur.execute(
@@ -1429,7 +1434,7 @@ class TestIngestOrderDuplicateWarning:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '5002'")
             assert cur.fetchone()[0] == 1  # exactly one order, not two
             cur.execute(
@@ -1469,7 +1474,7 @@ class TestIngestOrderDuplicateWarning:
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '5003'")
             assert cur.fetchone()[0] == 1  # both pre-existing orders fused into one
             cur.execute(
@@ -1493,7 +1498,7 @@ class TestIngestOrderDuplicateWarning:
         assert b"Registrado" in resp.data
         assert b"ya existe" not in resp.data
 
-        with db.get_conn() as conn, conn.cursor() as cur:
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '5004'")
             assert cur.fetchone()[0] == 1
             cur.execute("SELECT plate_number FROM plates WHERE order_id = ("

@@ -13,6 +13,8 @@ import io
 from datetime import date
 from urllib.parse import urlparse
 
+from psycopg.rows import tuple_row
+
 from app.core import db
 from app.core.models import ExtractedRow
 from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf
@@ -38,7 +40,7 @@ def make_row(**overrides: object) -> ExtractedRow:
 
 
 def row_counts(conn) -> tuple[int, int]:
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute("SELECT count(*) FROM production_orders")
         orders = cur.fetchone()[0]
         cur.execute("SELECT count(*) FROM plates")
@@ -62,7 +64,10 @@ class TestConsultOnly:
         def boom(*args, **kwargs):
             raise AssertionError("process_rows must never run from the search-pdf route")
 
-        monkeypatch.setattr("app.web.app.process_rows", boom)
+        # records.py (where this route lives) doesn't import process_rows at all --
+        # patch the canonical source in app.core.ingestion so this still catches a
+        # future regression that reaches it via `ingestion.process_rows(...)`.
+        monkeypatch.setattr("app.core.ingestion.process_rows", boom)
 
         before = row_counts(db_conn)
         resp = upload(authenticated_client, build_pedido_pdf())

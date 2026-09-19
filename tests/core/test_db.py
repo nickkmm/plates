@@ -1,26 +1,32 @@
 """Unit tests for app.core.db that don't need a real Postgres connection.
 
-get_conn() reads DB_HOST/DB_PORT/POSTGRES_* straight from os.environ on every
-call (see module docstring in app/core/db.py) and passes them through to
-psycopg.connect(). These tests mock psycopg.connect to verify exactly which
-arguments get_conn() builds, including its DB_HOST/DB_PORT fallback defaults
--- which tests/conftest.py always overrides for safety, so nothing else in
-this suite exercises that fallback path.
+_conninfo_kwargs() reads DB_HOST/DB_PORT/POSTGRES_* straight from os.environ
+on every call (see module docstring in app/core/db/__init__.py) and returns
+them as the kwargs get_conn()'s connection pool connects with. These tests
+call _conninfo_kwargs() directly to verify exactly which arguments it builds,
+including its DB_HOST/DB_PORT fallback defaults -- which tests/conftest.py
+always overrides for safety, so nothing else in this suite exercises that
+fallback path. (Pre-Fase-1d, get_conn() itself called psycopg.connect()
+directly and these tests mocked that; since the pool, get_conn() is a
+@contextmanager generator that doesn't build the pool -- or call
+psycopg.connect() at all -- until entered with `with`, and the pool is built
+once and reused rather than reading the environment per connection, so
+_conninfo_kwargs() is now the right unit to test this against.)
 """
 
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import patch
 
 import pytest
+from psycopg.rows import dict_row, tuple_row
 
 from app.core import db
 from app.core.models import ExtractedRow
 from app.core.normalize import INVENTORY_CATEGORIES
 
 
-class TestGetConn:
+class TestConninfoKwargs:
     def test_passes_through_all_env_vars(self, monkeypatch):
         monkeypatch.setenv("DB_HOST", "myhost")
         monkeypatch.setenv("DB_PORT", "1234")
@@ -28,13 +34,11 @@ class TestGetConn:
         monkeypatch.setenv("POSTGRES_USER", "myuser")
         monkeypatch.setenv("POSTGRES_PASSWORD", "mypassword")
 
-        with patch("app.core.db.psycopg.connect") as mock_connect:
-            db.get_conn()
-
-        mock_connect.assert_called_once_with(
-            host="myhost", port="1234", dbname="mydb",
-            user="myuser", password="mypassword",
-        )
+        assert db._conninfo_kwargs() == {
+            "host": "myhost", "port": "1234", "dbname": "mydb",
+            "user": "myuser", "password": "mypassword",
+            "row_factory": dict_row,
+        }
 
     def test_host_defaults_to_db_when_unset(self, monkeypatch):
         monkeypatch.delenv("DB_HOST", raising=False)
@@ -42,10 +46,7 @@ class TestGetConn:
         monkeypatch.setenv("POSTGRES_USER", "myuser")
         monkeypatch.setenv("POSTGRES_PASSWORD", "mypassword")
 
-        with patch("app.core.db.psycopg.connect") as mock_connect:
-            db.get_conn()
-
-        assert mock_connect.call_args.kwargs["host"] == "db"
+        assert db._conninfo_kwargs()["host"] == "db"
 
     def test_port_defaults_to_5432_when_unset(self, monkeypatch):
         monkeypatch.delenv("DB_PORT", raising=False)
@@ -53,25 +54,22 @@ class TestGetConn:
         monkeypatch.setenv("POSTGRES_USER", "myuser")
         monkeypatch.setenv("POSTGRES_PASSWORD", "mypassword")
 
-        with patch("app.core.db.psycopg.connect") as mock_connect:
-            db.get_conn()
-
-        assert mock_connect.call_args.kwargs["port"] == "5432"
+        assert db._conninfo_kwargs()["port"] == "5432"
 
     def test_missing_required_postgres_db_raises(self, monkeypatch):
         monkeypatch.delenv("POSTGRES_DB", raising=False)
         monkeypatch.setenv("POSTGRES_USER", "myuser")
         monkeypatch.setenv("POSTGRES_PASSWORD", "mypassword")
 
-        with patch("app.core.db.psycopg.connect"), pytest.raises(KeyError):
-            db.get_conn()
+        with pytest.raises(KeyError):
+            db._conninfo_kwargs()
 
 
 # ----------------------------------------------------------------------------
 # Everything below needs a real Postgres connection (see tests/conftest.py:
 # `db_conn` truncates all 4 tables via `clean_db`, then hands back a live
 # connection). These call db.py's own insert_order/insert_plate/
-# insert_blank_preparation for setup -- deliberately bypassing app.core.process
+# insert_blank_preparation for setup -- deliberately bypassing app.core.ingestion
 # and app.core.normalize -- so a failure here points at db.py itself, not at
 # normalization or the ingestion pipeline (already covered elsewhere).
 # ----------------------------------------------------------------------------
@@ -94,7 +92,7 @@ def _insert_plate_get_id(conn, order_id: int, **row_kwargs: object) -> int:
     is_dup = bool(row_kwargs.pop("is_possible_duplicate", False))
     row = make_row(**row_kwargs)
     db.insert_plate(conn, order_id=order_id, row=row, is_possible_duplicate=is_dup)
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute("SELECT id FROM plates WHERE order_id = %s ORDER BY id DESC LIMIT 1", (order_id,))
         return cur.fetchone()[0]
 
@@ -107,7 +105,7 @@ class TestInsertPlate:
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(city="MEDELLIN"),
                         is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT city FROM plates WHERE order_id = %s", (order_id,))
             assert cur.fetchone()[0] == "MEDELLIN"
 
@@ -116,7 +114,7 @@ class TestInsertPlate:
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(city=None),
                         is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT city FROM plates WHERE order_id = %s", (order_id,))
             assert cur.fetchone()[0] is None
 
@@ -126,7 +124,7 @@ class TestInsertPlate:
         for city in ("CALI", "PASTO"):
             db.insert_plate(db_conn, order_id=order_id, row=make_row(city=city),
                             is_possible_duplicate=False)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT city FROM plates WHERE order_id = %s ORDER BY id", (order_id,))
             assert [r[0] for r in cur.fetchall()] == ["CALI", "PASTO"]
 
@@ -286,10 +284,10 @@ class TestRecentOrders:
         rows = db.recent_orders(db_conn)
         assert len(rows) == 1
         row = rows[0]
-        assert row["order_number"] == "500"
-        assert row["n_plates"] == 4
-        assert row["total_qty"] == 4
-        assert row["plates"] == "AAA111, reposición, anulada, sin placa"
+        assert row.order_number == "500"
+        assert row.n_plates == 4
+        assert row.total_qty == 4
+        assert row.plates == "AAA111, reposición, anulada, sin placa"
 
     def test_order_with_no_plates_shows_zero_counts_and_no_plates_label(self, db_conn):
         """A LEFT JOIN with zero matching plates still produces exactly one
@@ -301,9 +299,9 @@ class TestRecentOrders:
         test_summarizes_plate_labels_per_row_kind below)."""
         db.insert_order(db_conn, order_number="501", order_date=date(2026, 1, 1), requested_by="PEDRO")
         rows = db.recent_orders(db_conn)
-        assert rows[0]["n_plates"] == 0
-        assert rows[0]["total_qty"] == 0
-        assert rows[0]["plates"] is None
+        assert rows[0].n_plates == 0
+        assert rows[0].total_qty == 0
+        assert rows[0].plates is None
 
     def test_cities_aggregates_the_orders_distinct_plate_cities(self, db_conn):
         order_id = db.insert_order(db_conn, order_number="510", order_date=date(2026, 1, 1),
@@ -311,7 +309,7 @@ class TestRecentOrders:
         for city in ("CALI", "COLOMBIA", "CALI"):  # repeat -> deduped
             db.insert_plate(db_conn, order_id=order_id, row=make_row(city=city),
                             is_possible_duplicate=False)
-        assert sorted(db.recent_orders(db_conn)[0]["cities"]) == ["CALI", "COLOMBIA"]
+        assert sorted(db.recent_orders(db_conn)[0].cities) == ["CALI", "COLOMBIA"]
 
     def test_sorted_by_order_date_not_by_when_it_was_inserted(self, db_conn):
         """A correction entered today for a months-old order (e.g. fixing a
@@ -320,7 +318,7 @@ class TestRecentOrders:
         only a tiebreaker for orders sharing the same order_date."""
         db.insert_order(db_conn, order_number="520", order_date=date(2026, 1, 1), requested_by="PEDRO")
         db.insert_order(db_conn, order_number="521", order_date=date(2026, 6, 15), requested_by="PEDRO")
-        assert [r["order_number"] for r in db.recent_orders(db_conn)] == ["521", "520"]
+        assert [r.order_number for r in db.recent_orders(db_conn)] == ["521", "520"]
 
 
 class TestFindOrdersByNumber:
@@ -348,12 +346,12 @@ class TestFindOrdersByNumber:
 
         matches = db.find_orders_by_number(db_conn, "1100")
         assert len(matches) == 1
-        assert matches[0]["id"] == order_id
-        assert matches[0]["order_number"] == "1100"
-        assert matches[0]["requested_by"] == "PEDRO"
-        assert matches[0]["n_plates"] == 1
-        assert matches[0]["total_qty"] == 1
-        assert matches[0]["plates"] == "FON111"
+        assert matches[0].id == order_id
+        assert matches[0].order_number == "1100"
+        assert matches[0].requested_by == "PEDRO"
+        assert matches[0].n_plates == 1
+        assert matches[0].total_qty == 1
+        assert matches[0].plates == "FON111"
 
     def test_returns_every_match_when_two_or_more_orders_share_the_number(self, db_conn):
         """This already happens for real (WCY449 / pedido 1030, see
@@ -364,7 +362,7 @@ class TestFindOrdersByNumber:
                                      requested_by="MARIA")
 
         matches = db.find_orders_by_number(db_conn, "1101")
-        assert {m["id"] for m in matches} == {first_id, second_id}
+        assert {m.id for m in matches} == {first_id, second_id}
 
     def test_other_order_numbers_are_not_returned(self, db_conn):
         db.insert_order(db_conn, order_number="1102", order_date=date(2026, 1, 1),
@@ -372,7 +370,7 @@ class TestFindOrdersByNumber:
         db.insert_order(db_conn, order_number="1103", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
         matches = db.find_orders_by_number(db_conn, "1102")
-        assert [m["order_number"] for m in matches] == ["1102"]
+        assert [m.order_number for m in matches] == ["1102"]
 
 
 class TestSearchPlatesByNumber:
@@ -444,25 +442,25 @@ class TestSearchPlatesByNumber:
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(city="PASTO"),
                         is_possible_duplicate=False)
-        assert db.recent_orders(db_conn)[0]["cities"] == ["PASTO"]
+        assert db.recent_orders(db_conn)[0].cities == ["PASTO"]
 
     def test_cities_is_empty_when_no_plate_has_one(self, db_conn):
         order_id = db.insert_order(db_conn, order_number="512", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(city=None),
                         is_possible_duplicate=False)
-        assert db.recent_orders(db_conn)[0]["cities"] == []
+        assert db.recent_orders(db_conn)[0].cities == []
 
     def test_cities_is_empty_for_an_order_with_no_plates_at_all(self, db_conn):
         db.insert_order(db_conn, order_number="513", order_date=date(2026, 1, 1),
                         requested_by="PEDRO")
-        assert db.recent_orders(db_conn)[0]["cities"] == []
+        assert db.recent_orders(db_conn)[0].cities == []
 
     def test_most_recently_inserted_order_first(self, db_conn):
         db.insert_order(db_conn, order_number="600", order_date=date(2026, 1, 1), requested_by="PEDRO")
         db.insert_order(db_conn, order_number="601", order_date=date(2026, 1, 1), requested_by="PEDRO")
         rows = db.recent_orders(db_conn)
-        assert [r["order_number"] for r in rows] == ["601", "600"]
+        assert [r.order_number for r in rows] == ["601", "600"]
 
     def test_limit_caps_number_of_rows_returned(self, db_conn):
         for i in range(5):
@@ -482,13 +480,13 @@ class TestSearchOrdersByNumber:
                          requested_by="PEDRO")
         results = db.search_orders_by_number(db_conn, "800")
         assert len(results) == 1
-        assert results[0]["order_number"] == "800"
-        assert results[0]["requested_by"] == "PEDRO"
+        assert results[0].order_number == "800"
+        assert results[0].requested_by == "PEDRO"
 
     def test_partial_match(self, db_conn):
         db.insert_order(db_conn, order_number="80042", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
-        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "004")] == ["80042"]
+        assert [r.order_number for r in db.search_orders_by_number(db_conn, "004")] == ["80042"]
 
     def test_query_is_not_cleaned_like_a_plate_number(self, db_conn):
         """order_number is plain text/digits, not a plate -- unlike
@@ -497,20 +495,20 @@ class TestSearchOrdersByNumber:
         order_number that literally contains them."""
         db.insert_order(db_conn, order_number="80 1", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
-        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "80 1")] == ["80 1"]
+        assert [r.order_number for r in db.search_orders_by_number(db_conn, "80 1")] == ["80 1"]
         assert db.search_orders_by_number(db_conn, "801") == []
 
     def test_leading_and_trailing_whitespace_is_stripped(self, db_conn):
         db.insert_order(db_conn, order_number="802", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
-        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "  802  ")] == ["802"]
+        assert [r.order_number for r in db.search_orders_by_number(db_conn, "  802  ")] == ["802"]
 
     def test_case_insensitive(self, db_conn):
         """Most order_number values are digits, but ILIKE is used (not LIKE)
         so a non-numeric order_number still matches regardless of case."""
         db.insert_order(db_conn, order_number="ABC-803", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
-        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "abc-803")] == ["ABC-803"]
+        assert [r.order_number for r in db.search_orders_by_number(db_conn, "abc-803")] == ["ABC-803"]
 
     def test_no_match_returns_empty_list(self, db_conn):
         assert db.search_orders_by_number(db_conn, "ZZZ999") == []
@@ -525,17 +523,17 @@ class TestSearchOrdersByNumber:
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="QRS111", city="CALI"),
                          is_possible_duplicate=False)
         results = db.search_orders_by_number(db_conn, "804")
-        assert results[0]["n_plates"] == 1
-        assert results[0]["total_qty"] == 1
-        assert results[0]["plates"] == "QRS111"
-        assert results[0]["cities"] == ["CALI"]
+        assert results[0].n_plates == 1
+        assert results[0].total_qty == 1
+        assert results[0].plates == "QRS111"
+        assert results[0].cities == ["CALI"]
 
     def test_most_recent_order_first(self, db_conn):
         db.insert_order(db_conn, order_number="900-A", order_date=date(2026, 1, 1),
                          requested_by="PEDRO")
         db.insert_order(db_conn, order_number="900-B", order_date=date(2026, 2, 1),
                          requested_by="PEDRO")
-        assert [r["order_number"] for r in db.search_orders_by_number(db_conn, "900")] == \
+        assert [r.order_number for r in db.search_orders_by_number(db_conn, "900")] == \
             ["900-B", "900-A"]
 
     def test_limit_caps_number_of_rows_returned(self, db_conn):
@@ -599,7 +597,7 @@ class TestDeleteOrder:
 
         db.delete_order(db_conn, order_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE id = %s", (order_id,))
             assert cur.fetchone()[0] == 0
             cur.execute("SELECT count(*) FROM plates WHERE order_id = %s", (order_id,))
@@ -611,7 +609,7 @@ class TestDeleteOrder:
         delete_id = db.insert_order(db_conn, order_number="1002", order_date=date(2026, 1, 1),
                                      requested_by="PEDRO")
         db.delete_order(db_conn, delete_id)
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE id = %s", (keep_id,))
             assert cur.fetchone()[0] == 1
 
@@ -668,7 +666,7 @@ class TestUpdatePlate:
         db.update_plate(db_conn, plate_id, plate_type="MOTO PARTICULAR", plate_number="NEW222",
                          quantity=9, is_voided=True)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_type, plate_number, quantity, is_voided, is_possible_duplicate "
                 "FROM plates WHERE id = %s",
@@ -684,7 +682,7 @@ class TestUpdatePlate:
         db.update_plate(db_conn, plate_id, plate_type="CARRO PARTICULAR", plate_number=None,
                          quantity=1, is_voided=False)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone() == (None,)
 
@@ -702,7 +700,7 @@ class TestUpdatePlateFull:
             is_plate_annulled=True, is_batch_replacement=False,
         )
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_type, plate_number, city, quantity, is_voided, "
                 "is_plate_annulled, is_possible_duplicate FROM plates WHERE id = %s",
@@ -728,7 +726,7 @@ class TestUpdatePlateFull:
             is_plate_annulled=False, is_batch_replacement=False,
         )
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_number, is_batch_replacement FROM plates WHERE id = %s",
                 (plate_id,),
@@ -747,7 +745,7 @@ class TestUpdatePlateFull:
             is_plate_annulled=False, is_batch_replacement=False,
         )
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_to, city FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone() == (None, None)
 
@@ -761,7 +759,7 @@ class TestResolvePlate:
 
         db.resolve_plate(db_conn, plate_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT plate_number, quantity, is_possible_duplicate FROM plates WHERE id = %s",
                 (plate_id,),
@@ -775,7 +773,7 @@ class TestResolvePlate:
 class TestDeletePlate:
     """delete_plate also auto-clears a surviving sibling's review flag when
     exactly one other flagged row shares its plate_number -- see
-    app/core/db.py's docstring. This was a real bug found and fixed during
+    app/core/db/plates.py's docstring. This was a real bug found and fixed during
     manual duplicate-review cleanup; these tests pin down the exact
     threshold (1 remaining -> cleared, 2+ remaining -> left alone)."""
 
@@ -786,7 +784,7 @@ class TestDeletePlate:
 
         db.delete_plate(db_conn, plate_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone()[0] == 0
 
@@ -800,7 +798,7 @@ class TestDeletePlate:
 
         db.delete_plate(db_conn, deleted_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT is_possible_duplicate FROM plates WHERE id = %s", (sibling_id,))
             assert cur.fetchone() == (False,)
 
@@ -814,7 +812,7 @@ class TestDeletePlate:
 
         db.delete_plate(db_conn, deleted_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT is_possible_duplicate FROM plates WHERE id = ANY(%s) ORDER BY id",
                 ([s1, s2],),
@@ -831,7 +829,7 @@ class TestDeletePlate:
 
         db.delete_plate(db_conn, deleted_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT is_possible_duplicate FROM plates WHERE id = %s", (clean_id,))
             assert cur.fetchone() == (False,)
 
@@ -847,7 +845,7 @@ class TestDeletePlate:
 
         db.delete_plate(db_conn, deleted_id)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT is_possible_duplicate FROM plates WHERE id = %s", (other_id,))
             assert cur.fetchone() == (True,)  # untouched -- no plate_number to match on
 

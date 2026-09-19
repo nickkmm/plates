@@ -95,6 +95,7 @@ os.environ.setdefault("POSTGRES_USER", "plates_user")
 
 import psycopg  # noqa: E402
 import pytest  # noqa: E402
+from psycopg.rows import DictRow, tuple_row  # noqa: E402
 
 from app import schema_migrate  # noqa: E402
 from app.core import db  # noqa: E402
@@ -130,14 +131,14 @@ def _create_database_if_missing() -> None:
         conn.close()
 
 
-def _schema_applied(conn: psycopg.Connection) -> bool:
-    with conn.cursor() as cur:
+def _schema_applied(conn: psycopg.Connection[DictRow]) -> bool:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute("SELECT to_regclass('public.plates') IS NOT NULL")
         row = cur.fetchone()
         return bool(row and row[0])
 
 
-def _apply_schema(conn: psycopg.Connection) -> None:
+def _apply_schema(conn: psycopg.Connection[DictRow]) -> None:
     with open(_SCHEMA_PATH, encoding="utf-8") as f:
         schema_sql = f.read()
     with conn.cursor() as cur:
@@ -167,12 +168,9 @@ def _db_ready() -> bool:
         return False
     try:
         _create_database_if_missing()
-        conn = db.get_conn()
-        try:
+        with db.get_conn() as conn:
             if not _schema_applied(conn):
                 _apply_schema(conn)
-        finally:
-            conn.close()
         schema_migrate.main()
         return True
     except psycopg.Error:
@@ -186,9 +184,12 @@ def clean_db(_db_ready: bool):
     Skips the test if the shared Postgres / `plates_test` isn't reachable,
     rather than failing outright -- keeps `app/core` pure-logic tests runnable
     with zero DB dependency while still exercising real DB code when
-    available (see task notes: no per-test transaction rollback here because
-    `db.get_conn()` opens a fresh connection per call with no injection
-    point, so tests instead get a truncated table set).
+    available. Still TRUNCATEs rather than relying on a rollback for
+    isolation: `db.get_conn()` is a pooled connection now (Fase 1d), so a
+    rollback-per-test fixture is possible in principle, but this project
+    hasn't adopted one yet (see the Fase 1d plan's step 10 fast-follow) --
+    truncating keeps every test's starting state identical regardless of
+    what a previous test committed.
 
     Reseeds `inventory_categories` with the 3 fixed materials right after
     truncating it (mirroring init.sql/0002_reference_integrity.sql, which
@@ -203,28 +204,20 @@ def clean_db(_db_ready: bool):
     """
     if not _db_ready:
         pytest.skip("Postgres test database not reachable at 127.0.0.1:5433 (plates_test)")
-    conn = db.get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
-            cur.executemany(
-                "INSERT INTO inventory_categories (category) VALUES (%s)",
-                [(category,) for category in INVENTORY_CATEGORIES],
-            )
-        conn.commit()
-    finally:
-        conn.close()
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
+        cur.executemany(
+            "INSERT INTO inventory_categories (category) VALUES (%s)",
+            [(category,) for category in INVENTORY_CATEGORIES],
+        )
     yield
 
 
 @pytest.fixture
 def db_conn(clean_db: None):
     """A live connection to the clean test database, for test setup/assertions."""
-    conn = db.get_conn()
-    try:
+    with db.get_conn() as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 @pytest.fixture

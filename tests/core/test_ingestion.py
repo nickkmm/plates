@@ -1,11 +1,12 @@
-"""Tests for app.core.process.process_rows -- the single ingestion backend.
+"""Tests for app.core.ingestion.process_rows -- the single ingestion backend.
 
 Needs a real Postgres connection (see tests/conftest.py: `db_conn` truncates
 all 4 tables first via `clean_db`, then hands back a connection for setup/
-assertions). process_rows() itself always opens its OWN connection via
-db.get_conn() -- there is no injection point -- so these tests verify
-results by querying the DB afterwards rather than inspecting a passed-in
-session.
+assertions). Since Fase 1d, process_rows/replace_order/find_duplicate_
+plate_numbers all take that same `db_conn` as their first argument (they no
+longer open their own connection internally -- see app/core/ingestion.py's
+module docstring), so these tests both drive the call under test AND read
+back its effects through the identical session/transaction.
 """
 
 from __future__ import annotations
@@ -13,10 +14,11 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from psycopg.rows import tuple_row
 
 from app.core import db
+from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
 from app.core.models import ExtractedRow
-from app.core.process import find_duplicate_plate_numbers, process_rows, replace_order
 
 
 def make_row(**overrides: object) -> ExtractedRow:
@@ -38,14 +40,14 @@ class TestNormalOrder:
                 plate_type="CARRO PARTICULAR", plate_number="HMF922",
             )
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
 
         assert summary.orders_inserted == 1
         assert summary.plates_inserted == 1
         assert summary.blank_preparations == 0
         assert summary.possible_duplicates == 0
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT order_number, requested_by FROM production_orders")
             assert cur.fetchall() == [("100", "PEDRO")]
 
@@ -57,11 +59,11 @@ class TestNormalOrder:
             make_row(order_number="101", plate_number="AAA111", plate_type="CARRO PARTICULAR"),
             make_row(order_number="101", plate_number="AAA112", plate_type="CARRO PARTICULAR"),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.orders_inserted == 1  # one order_number -> one production_orders row
         assert summary.plates_inserted == 2
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders")
             assert cur.fetchone()[0] == 1
             cur.execute("SELECT count(*) FROM plates")
@@ -72,7 +74,7 @@ class TestNormalOrder:
             make_row(order_number="102", plate_number="BBB111", plate_type="CARRO PARTICULAR"),
             make_row(order_number="103", plate_number="BBB112", plate_type="CARRO PARTICULAR"),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.orders_inserted == 2
 
 
@@ -86,9 +88,9 @@ class TestInventoryRecalc:
             make_row(order_number="900", plate_number="AAA100", plate_type="CARRO PARTICULAR", quantity=3),
             make_row(order_number="900", plate_number="AAA101", plate_type="CARRO PARTICULAR", quantity=5),
         ]
-        process_rows(rows)
+        process_rows(db_conn, rows)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (8,)
 
@@ -96,9 +98,9 @@ class TestInventoryRecalc:
         """ORNAMENTAL plates are a counter only -- they must not add to any
         inventory_categories.consumed row (inventory_category() -> None)."""
         rows = [make_row(order_number="901", plate_number="AAA200", plate_type="ORNAMENTAL", quantity=7)]
-        process_rows(rows)
+        process_rows(db_conn, rows)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT COALESCE(SUM(consumed), 0) FROM inventory_categories")
             assert cur.fetchone() == (0,)
 
@@ -107,9 +109,9 @@ class TestInventoryRecalc:
             make_row(order_number="902", plate_number="ANULADA ORDEN", plate_type="CARRO PARTICULAR",
                       quantity=9),
         ]
-        process_rows(rows)
+        process_rows(db_conn, rows)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT COALESCE(consumed, 0) FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             row = cur.fetchone()
             assert (row[0] if row else 0) == 0
@@ -123,13 +125,13 @@ class TestAlistamiento:
                 quantity=500, prepared_by="GILMER",
             )
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
 
         assert summary.blank_preparations == 1
         assert summary.plates_inserted == 0
         assert summary.orders_inserted == 0  # alistado rows never create an order
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT category, quantity, prepared_by FROM blank_preparations")
             assert cur.fetchall() == [("MOTO PARTICULAR", 500, "GILMER")]
             cur.execute("SELECT count(*) FROM plates")
@@ -154,7 +156,7 @@ class TestAlistamiento:
                 quantity=100, prepared_by="ALISTAMIENTO JUNIO",
             )
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.blank_preparations == 1
         assert summary.plates_inserted == 0
 
@@ -165,7 +167,7 @@ class TestAlistamiento:
             make_row(order_number="203", requested_by="ALISTAMIENTO", plate_type="CARRO PARTICULAR",
                       quantity=200),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.blank_preparations == 2
 
 
@@ -175,25 +177,25 @@ class TestDuplicateDetection:
             make_row(order_number="300", plate_number="HMF922", plate_type="CARRO PARTICULAR"),
             make_row(order_number="301", plate_number="HMF922", plate_type="CARRO PARTICULAR"),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         # Both rows share the plate, so BOTH are flagged (not just the 2nd) --
         # batch_counts[...] > 1 applies uniformly, there's no "first seen" pass.
         assert summary.possible_duplicates == 2
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT is_possible_duplicate FROM plates ORDER BY id")
             assert [r[0] for r in cur.fetchall()] == [True, True]
 
     def test_plate_already_in_db_flags_the_new_one_only(self, db_conn):
         first = [make_row(order_number="400", plate_number="ABC123", plate_type="CARRO PARTICULAR")]
-        summary1 = process_rows(first)
+        summary1 = process_rows(db_conn, first)
         assert summary1.possible_duplicates == 0
 
         second = [make_row(order_number="401", plate_number="ABC123", plate_type="CARRO PARTICULAR")]
-        summary2 = process_rows(second)
+        summary2 = process_rows(db_conn, second)
         assert summary2.possible_duplicates == 1
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT o.order_number, p.is_possible_duplicate FROM plates p "
                 "JOIN production_orders o ON o.id = p.order_id ORDER BY p.id"
@@ -206,7 +208,7 @@ class TestDuplicateDetection:
             make_row(order_number="500", plate_number="MUESTRA", plate_type="CARRO PARTICULAR"),
             make_row(order_number="500", plate_number="MUESTRA", plate_type="CARRO PARTICULAR"),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.possible_duplicates == 0
 
     def test_voided_row_does_not_count_toward_duplicate_flag(self, db_conn):
@@ -218,7 +220,7 @@ class TestDuplicateDetection:
                       is_voided=True),
             make_row(order_number="601", plate_number="DUP001", plate_type="CARRO PARTICULAR"),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.possible_duplicates == 0
 
 
@@ -228,30 +230,32 @@ class TestFindDuplicatePlateNumbers:
 
     def test_empty_when_nothing_conflicts(self, db_conn):
         rows = [make_row(order_number="900", plate_number="FRESH1", plate_type="CARRO PARTICULAR")]
-        assert find_duplicate_plate_numbers(rows) == set()
+        assert find_duplicate_plate_numbers(db_conn, rows) == set()
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM plates")
             assert cur.fetchone() == (0,)  # read-only: nothing got inserted
 
     def test_flags_plate_already_in_db(self, db_conn):
-        process_rows([make_row(order_number="901", plate_number="OLD001", plate_type="CARRO PARTICULAR")])
+        process_rows(
+            db_conn, [make_row(order_number="901", plate_number="OLD001", plate_type="CARRO PARTICULAR")]
+        )
         rows = [make_row(order_number="902", plate_number="OLD001", plate_type="CARRO PARTICULAR")]
-        assert find_duplicate_plate_numbers(rows) == {"OLD001"}
+        assert find_duplicate_plate_numbers(db_conn, rows) == {"OLD001"}
 
     def test_flags_plate_repeated_within_the_same_batch(self, db_conn):
         rows = [
             make_row(order_number="903", plate_number="NEW777", plate_type="CARRO PARTICULAR"),
             make_row(order_number="904", plate_number="NEW777", plate_type="CARRO PARTICULAR"),
         ]
-        assert find_duplicate_plate_numbers(rows) == {"NEW777"}
+        assert find_duplicate_plate_numbers(db_conn, rows) == {"NEW777"}
 
     def test_sample_tokens_never_flagged(self, db_conn):
         rows = [
             make_row(order_number="905", plate_number="MUESTRA", plate_type="CARRO PARTICULAR"),
             make_row(order_number="906", plate_number="MUESTRA", plate_type="CARRO PARTICULAR"),
         ]
-        assert find_duplicate_plate_numbers(rows) == set()
+        assert find_duplicate_plate_numbers(db_conn, rows) == set()
 
     def test_voided_row_not_flagged_and_does_not_taint_a_live_match(self, db_conn):
         rows = [
@@ -259,13 +263,13 @@ class TestFindDuplicatePlateNumbers:
                       is_voided=True),
             make_row(order_number="908", plate_number="VOID001", plate_type="CARRO PARTICULAR"),
         ]
-        assert find_duplicate_plate_numbers(rows) == set()
+        assert find_duplicate_plate_numbers(db_conn, rows) == set()
 
 
 class TestSummaryCounters:
     def test_batch_replacement_counted(self, db_conn):
         rows = [make_row(order_number="800", plate_number="REPOSICION", plate_type="CARRO PARTICULAR")]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.batch_replacements == 1
         assert summary.plates_inserted == 1
 
@@ -277,7 +281,7 @@ class TestSummaryCounters:
             make_row(order_number="810", plate_number="REPOSICION", plate_type="CARRO PARTICULAR"),
             make_row(order_number="811", plate_number="REPOSICION", plate_type="MOTO PARTICULAR"),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.batch_replacements == 2
 
     def test_plate_annulled_counted(self, db_conn):
@@ -288,7 +292,7 @@ class TestSummaryCounters:
             make_row(order_number="801", plate_number="HMF930", plate_type="CARRO PARTICULAR",
                       is_plate_annulled=True)
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.plate_annulled == 1
 
     def test_plate_annulled_counter_accumulates_across_rows(self, db_conn):
@@ -298,12 +302,12 @@ class TestSummaryCounters:
             make_row(order_number="804", plate_number="HMF932", plate_type="CARRO PARTICULAR",
                       is_plate_annulled=True),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.plate_annulled == 2
 
     def test_voided_counted(self, db_conn):
         rows = [make_row(order_number="802", plate_number="ANULADA ORDEN", plate_type="CARRO PARTICULAR")]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.voided == 1
 
     def test_voided_counter_accumulates_across_rows(self, db_conn):
@@ -311,7 +315,7 @@ class TestSummaryCounters:
             make_row(order_number="805", plate_number="ANULADA ORDEN", plate_type="CARRO PARTICULAR"),
             make_row(order_number="806", plate_number="ANULADA ORDEN", plate_type="MOTO PARTICULAR"),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.voided == 2
 
 
@@ -323,7 +327,7 @@ class TestReviewNotes:
             make_row(order_number="700", requested_by="JUAN", plate_number="ZZZ112",
                       plate_type="CARRO PARTICULAR"),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert len(summary.review_notes) == 1
         assert "700" in summary.review_notes[0]
         assert summary.orders_inserted == 1  # still a single order row
@@ -336,7 +340,7 @@ class TestReviewNotes:
             make_row(order_number="701", requested_by="PEDRO", plate_number="YYY112",
                       plate_type="CARRO PARTICULAR"),
         ]
-        summary = process_rows(rows)
+        summary = process_rows(db_conn, rows)
         assert summary.review_notes == []
 
 
@@ -353,11 +357,11 @@ class TestReplaceOrder:
             make_row(order_number="1001", plate_number="AAA112", plate_type="CARRO PARTICULAR"),
         ]
         with pytest.raises(ValueError, match="order_number"):
-            replace_order("1000", rows)
+            replace_order(db_conn, "1000", rows)
 
     def test_rejects_an_empty_row_list(self, db_conn):
         with pytest.raises(ValueError):
-            replace_order("1000", [])
+            replace_order(db_conn, "1000", [])
 
     def test_replaces_a_single_existing_order_leaving_only_the_new_one(self, db_conn):
         old_id = db.insert_order(db_conn, order_number="1010", order_date=date(2026, 1, 1),
@@ -372,14 +376,14 @@ class TestReplaceOrder:
             make_row(order_number="1010", order_date=date(2026, 1, 5), requested_by="MARIA",
                       plate_type="CARRO PARTICULAR", plate_number="WCY449"),
         ]
-        summary = replace_order("1010", new_rows)
+        summary = replace_order(db_conn, "1010", new_rows)
 
         assert summary.orders_replaced == 1
         assert summary.plates_deleted == 1
         assert summary.orders_inserted == 1
         assert summary.plates_inserted == 1
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '1010'")
             assert cur.fetchone()[0] == 1  # the old placeholder order is gone, replaced by one new one
             cur.execute(
@@ -415,14 +419,14 @@ class TestReplaceOrder:
             make_row(order_number="1020", plate_type="CARRO PARTICULAR", plate_number="NEW100"),
             make_row(order_number="1020", plate_type="CARRO PARTICULAR", plate_number="NEW101"),
         ]
-        summary = replace_order("1020", new_rows)
+        summary = replace_order(db_conn, "1020", new_rows)
 
         assert summary.orders_replaced == 2
         assert summary.plates_deleted == 2
         assert summary.orders_inserted == 1
         assert summary.plates_inserted == 2
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '1020'")
             assert cur.fetchone()[0] == 1
             cur.execute(
@@ -436,7 +440,7 @@ class TestReplaceOrder:
 
     def test_replacing_a_number_with_no_existing_order_just_inserts(self, db_conn):
         rows = [make_row(order_number="1030", plate_type="CARRO PARTICULAR", plate_number="FRESH1")]
-        summary = replace_order("1030", rows)
+        summary = replace_order(db_conn, "1030", rows)
         assert summary.orders_replaced == 0
         assert summary.plates_deleted == 0
         assert summary.orders_inserted == 1
@@ -456,7 +460,7 @@ class TestReplaceOrder:
                          is_possible_duplicate=False)
         db.recalc_inventory(db_conn)
         db_conn.commit()
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (40,)  # sanity check before replacing
 
@@ -464,9 +468,9 @@ class TestReplaceOrder:
             make_row(order_number="1040", plate_type="CARRO PARTICULAR", plate_number="INV100", quantity=20),
             make_row(order_number="1040", plate_type="CARRO PARTICULAR", plate_number="INV101", quantity=20),
         ]
-        replace_order("1040", new_rows)
+        replace_order(db_conn, "1040", new_rows)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             # 40 total across the two new rows -- NOT 80 (40 old + 40 new)
             assert cur.fetchone() == (40,)
@@ -475,7 +479,9 @@ class TestReplaceOrder:
         """A plate number that's still live elsewhere in the DB (NOT part of
         the order being replaced) must still get flagged on the new row --
         replacing one order must not blind the normal cross-order dup check."""
-        process_rows([make_row(order_number="1050", plate_type="CARRO PARTICULAR", plate_number="LIVE001")])
+        process_rows(
+            db_conn, [make_row(order_number="1050", plate_type="CARRO PARTICULAR", plate_number="LIVE001")]
+        )
 
         old_id = db.insert_order(db_conn, order_number="1051", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
@@ -489,10 +495,10 @@ class TestReplaceOrder:
             make_row(order_number="1051", plate_type="CARRO PARTICULAR", plate_number="LIVE001"),
             make_row(order_number="1051", plate_type="CARRO PARTICULAR", plate_number="FRESH2"),
         ]
-        summary = replace_order("1051", new_rows)
+        summary = replace_order(db_conn, "1051", new_rows)
         assert summary.possible_duplicates == 1
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT p.plate_number, p.is_possible_duplicate FROM plates p "
                 "JOIN production_orders o ON o.id = p.order_id "
@@ -513,5 +519,53 @@ class TestReplaceOrder:
             make_row(order_number="1060", plate_type="CARRO PARTICULAR", plate_number="REPT01"),
             make_row(order_number="1060", plate_type="CARRO PARTICULAR", plate_number="REPT01"),
         ]
-        summary = replace_order("1060", new_rows)
+        summary = replace_order(db_conn, "1060", new_rows)
         assert summary.possible_duplicates == 2
+
+
+class TestAtomicity:
+    """Fase 1d's whole point for threading `conn` explicitly instead of each
+    function opening its own: `with db.get_conn() as conn: process_rows(conn,
+    rows)` must be all-or-nothing. Before Fase 1d, process_rows opened (and
+    committed) its own connection, so this exact scenario -- the first
+    order's insert_plate genuinely succeeding before the second one blows up
+    -- would have left the first order committed and orphaned instead of
+    rolled back with everything else.
+    """
+
+    def test_exception_partway_through_process_rows_rolls_back_the_whole_batch(
+        self, db_conn, monkeypatch
+    ):
+        rows = [
+            make_row(order_number="9000", plate_number="ATOM001", plate_type="CARRO PARTICULAR"),
+            make_row(order_number="9001", plate_number="ATOM002", plate_type="CARRO PARTICULAR"),
+        ]
+
+        # order "9000" has exactly one plate row, so this is the SECOND
+        # insert_plate call overall -- it's for order "9001", by which point
+        # "9000"'s order + plate have already been (uncommitted-ly) inserted
+        # in this same transaction.
+        real_insert_plate = db.insert_plate
+        calls = {"n": 0}
+
+        def _boom(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("simulated failure partway through process_rows")
+            return real_insert_plate(*args, **kwargs)
+
+        monkeypatch.setattr(db, "insert_plate", _boom)
+
+        with pytest.raises(RuntimeError, match="simulated failure"), db.get_conn() as conn:
+            process_rows(conn, rows)
+
+        # A fresh read (via the unrelated db_conn fixture connection) must see
+        # NEITHER order -- not even "9000", whose own insert_plate call never
+        # raised anything.
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "SELECT count(*) FROM production_orders WHERE order_number IN ('9000', '9001')"
+            )
+            assert cur.fetchone() == (0,)
+            cur.execute("SELECT count(*) FROM plates WHERE plate_number IN ('ATOM001', 'ATOM002')")
+            assert cur.fetchone() == (0,)
