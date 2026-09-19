@@ -1276,14 +1276,22 @@ class TestGetUserByUsername:
 
 
 class TestListUsers:
+    """`users` is never actually empty under `db_conn`/`clean_db` (Fase 2's
+    conftest.py pre-seeds its own 4 test identities into it on every test --
+    see tests/conftest.py's clean_db docstring) -- these tests check the two
+    NEW ones added here appear, not the table's total contents."""
+
     def test_returns_every_user_ordered_by_id(self, db_conn):
         first = db.create_user(db_conn, username="a1", password_hash="h", role="admin")
         second = db.create_user(db_conn, username="a2", password_hash="h", role="consulta")
         users = db.list_users(db_conn)
-        assert [u.id for u in users] == [first, second]
+        ids = [u.id for u in users]
+        assert ids == sorted(ids)  # ordered by id
+        assert ids[-2:] == [first, second]  # the two just-created users are last
 
-    def test_empty_when_no_users(self, db_conn):
-        assert db.list_users(db_conn) == []
+    def test_seeded_test_users_are_present(self, db_conn):
+        usernames = {u.username for u in db.list_users(db_conn)}
+        assert {"testuser", "consultauser", "produccionuser", "puntoventauser"} <= usernames
 
 
 class TestCurrentPrices:

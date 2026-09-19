@@ -55,3 +55,14 @@ def produccion_client(client, produccion_credentials):
     username, password = produccion_credentials
     client.post("/login", data={"username": username, "password": password})
     return client
+
+
+@pytest.fixture
+def punto_venta_client(client, punto_venta_credentials):
+    """A test client logged in as the new (Fase 2) 'punto_venta'-role test
+    user (see tests/conftest.py's PUNTO_VENTA_USERNAME/PUNTO_VENTA_PASSWORD)
+    -- POS_ROLES access (admin + punto_venta), narrower than admin but wider
+    than the read-only consulta/produccion roles."""
+    username, password = punto_venta_credentials
+    client.post("/login", data={"username": username, "password": password})
+    return client

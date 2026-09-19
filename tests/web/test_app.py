@@ -48,10 +48,13 @@ class TestLoginRequired:
 
 
 class TestLogin:
-    def test_valid_credentials_authenticate_without_touching_db(self, client, test_credentials):
-        """`/` itself never queries the DB (it just redirects to /ingest) --
-        so this proves the session was accepted using only the Location
-        header, no DB fixture required."""
+    def test_valid_credentials_authenticate_and_reach_ingest(self, client, test_credentials):
+        """Fase 2: logging in now DOES touch the DB (it queries `users`), via
+        the `test_credentials` fixture's own `clean_db` dependency -- this
+        used to be DB-free (AUTH_USERS was an env var). `/` itself still
+        never queries the DB on its own (it just redirects to /ingest), so
+        this proves the session was accepted using only the Location
+        header."""
         username, password = test_credentials
         resp = client.post("/login", data={"username": username, "password": password})
         assert resp.status_code == 302
@@ -93,7 +96,11 @@ class TestLogin:
         resp2 = client.get("/")
         assert urlparse(resp2.headers["Location"]).path == "/login"
 
-    def test_unknown_username_does_not_authenticate(self, client):
+    def test_unknown_username_does_not_authenticate(self, client, clean_db):
+        """Fase 2: authenticate() queries `users` for this username even
+        though it doesn't exist -- needs a real (reachable) DB, hence
+        `clean_db` (this test has no credentials fixture to inherit it
+        from)."""
         resp = client.post("/login", data={"username": "ghost", "password": "whatever"})
         assert resp.status_code == 401
 
