@@ -15,14 +15,39 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import date
 
 import psycopg
 from psycopg import sql
-from psycopg.rows import DictRow, dict_row
+from psycopg.rows import DictRow, class_row, dict_row
 
 from app.core.models import ExtractedRow
 from app.core.normalize import INVENTORY_CATEGORIES, clean_plate, inventory_category
+
+
+@dataclass
+class OrderSummary:
+    """One "order + aggregated plates" row, the shared shape returned by
+    recent_orders/find_orders_by_number/search_orders_by_number and rendered
+    by _orders_table.html (twice, via records.html) and ingest.html.
+
+    `cities` is never NULL (COALESCE'd to '{}' in SQL) -- an order with no
+    plates, or none with a city, gets an empty list, not None. `plates` CAN be
+    None: a LEFT JOIN against an order with zero plate rows at all produces
+    one all-NULL joined row, which string_agg has nothing to aggregate from
+    (see recent_orders' docstring/tests for the 'sin placa' vs NULL
+    distinction this is guarding).
+    """
+
+    id: int
+    order_number: str
+    order_date: date
+    requested_by: str
+    cities: list[str]
+    n_plates: int
+    total_qty: int
+    plates: str | None
 
 
 def get_conn() -> psycopg.Connection[DictRow]:
@@ -299,7 +324,7 @@ _ORDER_SUMMARY_GROUP_ORDER = sql.SQL(
 )
 
 
-def recent_orders(conn: psycopg.Connection[DictRow], limit: int = 50) -> list[dict]:
+def recent_orders(conn: psycopg.Connection[DictRow], limit: int = 50) -> list[OrderSummary]:
     """Orders sorted by their real business date, most recent first.
 
     Sorted by order_date, NOT created_at/insertion time -- a correction
@@ -311,7 +336,7 @@ def recent_orders(conn: psycopg.Connection[DictRow], limit: int = 50) -> list[di
     city column): a list, so a mixed carro+moto order legitimately reads
     e.g. ['CALI', 'COLOMBIA']. The template decides how to render it.
     """
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=class_row(OrderSummary)) as cur:
         cur.execute(
             _ORDER_SUMMARY_SELECT + _ORDER_SUMMARY_GROUP_ORDER + sql.SQL(" LIMIT %s"),
             (limit,),
@@ -319,7 +344,7 @@ def recent_orders(conn: psycopg.Connection[DictRow], limit: int = 50) -> list[di
         return cur.fetchall()
 
 
-def find_orders_by_number(conn: psycopg.Connection[DictRow], order_number: str) -> list[dict]:
+def find_orders_by_number(conn: psycopg.Connection[DictRow], order_number: str) -> list[OrderSummary]:
     """Existing production_orders rows with this EXACT order_number.
 
     Same row shape as recent_orders() (id, order_number, order_date,
@@ -333,7 +358,7 @@ def find_orders_by_number(conn: psycopg.Connection[DictRow], order_number: str) 
     app.core.process.replace_order, which fuses every match this returns into
     exactly one order.
     """
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=class_row(OrderSummary)) as cur:
         cur.execute(
             _ORDER_SUMMARY_SELECT + sql.SQL(" WHERE o.order_number = %s ") + _ORDER_SUMMARY_GROUP_ORDER,
             (order_number,),
@@ -369,7 +394,9 @@ def search_plates_by_number(conn: psycopg.Connection[DictRow], query: str, limit
         return cur.fetchall()
 
 
-def search_orders_by_number(conn: psycopg.Connection[DictRow], query: str, limit: int = 200) -> list[dict]:
+def search_orders_by_number(
+    conn: psycopg.Connection[DictRow], query: str, limit: int = 200
+) -> list[OrderSummary]:
     """Find orders anywhere in the DB by (partial) order_number, not just the
     recent-orders page -- lets the person look up a specific old order without
     scrolling past everything newer than it.
@@ -383,7 +410,7 @@ def search_orders_by_number(conn: psycopg.Connection[DictRow], query: str, limit
     order first, same tiebreaking as recent_orders().
     """
     needle = f"%{query.strip()}%"
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=class_row(OrderSummary)) as cur:
         cur.execute(
             _ORDER_SUMMARY_SELECT
             + sql.SQL(" WHERE o.order_number ILIKE %s ")
