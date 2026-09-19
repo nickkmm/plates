@@ -22,14 +22,19 @@ flowchart TD
     I --> J[(commit)]
 ```
 
-Todo el pipeline corre en **una sola transacción** por llamada — un fallo a
-mitad de camino revierte tanto los inserts como cualquier borrado (en el
-caso de `replace_order`, ver más abajo).
+Todo el pipeline corre en **una sola transacción** por llamada: el
+llamador abre `with db.get_conn() as conn:` y se lo pasa explícito a
+`ingestion.process_rows(conn, rows)` / `replace_order(conn, ...)` — un
+fallo a mitad de camino revierte tanto los inserts como cualquier borrado
+(en el caso de `replace_order`, ver más abajo). Antes de la Fase 1d cada
+una de esas funciones abría su propia conexión por separado (un solo `POST
+/ingest` corría en varias transacciones no atómicas entre sí); ver la nota
+de "Contrato de transacción" más abajo.
 
 ## `models.py`
 
 Esquema pydantic de una línea del libro/pedido, compartido tal cual por
-cada puerta de ingesta para que `process.py` solo tenga que manejar una
+cada puerta de ingesta para que `ingestion.py` solo tenga que manejar una
 forma de dato.
 
 - **`ExtractedRow`** — `order_number` (str, no int: hay valores como
@@ -133,34 +138,59 @@ de que llegue a `process_rows`.
   "fiel, no inteligente": nunca valida formatos de placa ni reglas de
   negocio, eso es trabajo de `normalize.py` y del humano que revisa.
 
-## `process.py`
+## `ingestion.py` (antes `process.py`, renombrado en la Fase 1d)
 
 El único backend de ingesta al que convergen todas las puertas. Dado un
 batch de `ExtractedRow`: normaliza, detecta duplicados, agrupa por orden,
 inserta, recalcula inventario — todo en una transacción.
+
+**Toma `conn` como primer parámetro explícito** en sus tres funciones
+públicas (`process_rows(conn, rows)`, `replace_order(conn, order_number,
+rows)`, `find_duplicate_plate_numbers(conn, rows)`) y nunca comitea ni
+hace rollback — el mismo contrato que sigue todo `app/core/db/` (ver más
+abajo). Antes de la Fase 1d cada una abría su propia `db.get_conn()`
+internamente, así que un solo `POST /ingest` corría en 3-4 transacciones
+separadas (el chequeo de duplicados y el insert que se supone protege no
+eran atómicos entre sí); el llamador (la ruta Flask) ahora abre **una
+sola** `with db.get_conn() as conn:` que envuelve el chequeo y el insert
+juntos. Ver `tests/core/test_ingestion.py`'s test de atomicidad (una
+excepción a mitad de `process_rows` revierte el batch entero) para el caso
+concreto que esto cierra.
 
 - **`Summary`** — conteos devueltos al llamador: `orders_inserted`,
   `plates_inserted`, `blank_preparations`, `possible_duplicates`,
   `voided`, `plate_annulled`, `batch_replacements`, `review_notes`, más
   `orders_replaced`/`plates_deleted` que solo pone `replace_order` (nunca
   `process_rows`, que jamás borra nada).
-- **`find_duplicate_plate_numbers(rows)`** — dry run de solo lectura:
-  devuelve el conjunto de números de placa que *quedarían* marcados como
-  posible duplicado si se insertaran ahora. Lo usa el formulario `/ingest`
-  para avisar antes de guardar.
-- **`process_rows(rows) -> Summary`** — normaliza cada fila → separa
+- **`find_duplicate_plate_numbers(conn, rows)`** — dry run de solo
+  lectura: devuelve el conjunto de números de placa que *quedarían*
+  marcados como posible duplicado si se insertaran ahora. Lo usa el
+  formulario `/ingest` para avisar antes de guardar, en la misma
+  transacción que el guardado real.
+- **`process_rows(conn, rows) -> Summary`** — normaliza cada fila → separa
   ALISTAMIENTO de placas reales → cuenta repetidos dentro del batch →
-  abre una conexión: inserta cada fila de alistamiento, calcula qué placas
-  ya existen en vivo, agrupa las placas por `order_number` (un
-  `insert_order` por grupo, usando fecha/solicitante de la *primera* fila
-  del grupo), inserta cada placa marcando `is_possible_duplicate` →
-  `recalc_inventory` → commit.
-- **`replace_order(order_number, rows) -> Summary`** — acción explícita,
-  opt-in (botón "Reemplazar" en `/ingest`): borra **todas** las órdenes
-  existentes que coincidan con `order_number` (puede haber 2+, no hay
-  `UNIQUE`) junto con sus placas, y luego inserta una sola orden nueva a
-  partir de `rows`. Exige que todas las `rows` compartan el mismo
+  inserta cada fila de alistamiento, calcula qué placas ya existen en
+  vivo, agrupa las placas por `order_number` (un `insert_order` por grupo,
+  usando fecha/solicitante de la *primera* fila del grupo), inserta cada
+  placa marcando `is_possible_duplicate` → `recalc_inventory`. No comitea:
+  eso lo hace el `with db.get_conn()` del llamador al salir limpio.
+- **`replace_order(conn, order_number, rows) -> Summary`** — acción
+  explícita, opt-in (botón "Reemplazar" en `/ingest`): borra **todas** las
+  órdenes existentes que coincidan con `order_number` (puede haber 2+, no
+  hay `UNIQUE`) junto con sus placas, y luego inserta una sola orden nueva
+  a partir de `rows`. Exige que todas las `rows` compartan el mismo
   `order_number` (si no, `ValueError`) y que haya al menos una fila.
+- **`is_alistado(row)`** (pública desde la Fase 1d, antes `_is_alistado`
+  privada — `app/migrate.py` la importa cruzando el límite del módulo) —
+  detecta una fila ALISTAMIENTO mirando tanto `requested_by` como
+  `prepared_by`.
+- El filtro `is_real_plate(...) and not is_voided` y el bloque de conteo
+  por fila estaban duplicados 8-9 veces entre `process_rows`/
+  `replace_order` (y una novena copia divergente, directo en
+  `app/web/app.py`, que violaba la regla de este mismo archivo de no tener
+  lógica de negocio fuera de `core/`) — factorizados en los helpers
+  privados `_dedup_candidates(rows)` y `_count_row(summary, row, is_dup)`,
+  usados por ambas funciones; la ruta web ahora pasa por acá también.
 
 **Lo más difícil de entender:**
 
@@ -184,12 +214,25 @@ inserta, recalcula inventario — todo en una transacción.
   un batch multi-orden); `replace_order` está deliberadamente limitado a
   un solo `order_number` y no puede abarcar varias órdenes.
 
-## `db.py`
+## `db/` (paquete — antes un solo `db.py` plano, dividido en la Fase 1d)
 
 Todo el SQL crudo (psycopg 3, sin ORM) para `production_orders`, `plates`,
-`blank_preparations` e `inventory_categories`. Config de conexión desde
-variables de entorno (`DB_HOST` default `"db"` — **nunca usar ese default
-en Docker Compose**, ver [`ARCHITECTURE.md`](ARCHITECTURE.md)).
+`blank_preparations` e `inventory_categories`, dividido por dominio en vez
+de un único archivo de 556 líneas:
+
+| Módulo | Qué contiene |
+|---|---|
+| `db/__init__.py` | `get_conn()` (ver pool más abajo) + re-export explícito de cada función pública de los 3 submódulos — `db.insert_order(...)`, `db.recalc_inventory(...)`, etc. siguen llamándose exactamente igual desde fuera del paquete. |
+| `db/orders.py` | CRUD de `production_orders` + `OrderSummary` (dataclass tipado, `class_row`) — la forma de fila compartida por `recent_orders`/`find_orders_by_number`/`search_orders_by_number`. |
+| `db/plates.py` | CRUD de `plates`, incluida `distinct_cities` (agrupada acá por simetría con `distinct_requested_by` de `orders.py`, aunque ambas leen `plates`). |
+| `db/inventory.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
+
+Config de conexión desde variables de entorno (`DB_HOST` default `"db"` —
+**nunca usar ese default en Docker Compose**, ver
+[`ARCHITECTURE.md`](ARCHITECTURE.md)) más `DB_POOL_MIN_SIZE`/
+`DB_POOL_MAX_SIZE` (default `1`/`5`, ver "Pool de conexiones" abajo).
+Cada conexión se abre con `row_factory=dict_row` — toda fila que devuelve
+una consulta es un dict por nombre de columna, nunca una tupla posicional.
 
 **Contrato de transacción**: cada función de acá recibe una conexión ya
 abierta (`conn`) y **nunca hace commit ni rollback** — quien llama es
@@ -199,6 +242,19 @@ detrás de una interfaz deja visible en la firma quién controla el
 commit, que es justamente el punto que un bug real (varias funciones de
 `ingestion.py` abriendo cada una su propia conexión, ver más abajo) puso
 en evidencia.
+
+**Pool de conexiones (Fase 1d)**: `get_conn()` ya no abre un socket nuevo
+en cada llamada — es un `@contextmanager` que envuelve un
+`psycopg_pool.ConnectionPool`, construido de forma perezosa (recién en la
+primera llamada real, nunca al importar el módulo, porque
+`tests/conftest.py` importa este paquete incluso sin `POSTGRES_PASSWORD`
+seteada). `with db.get_conn() as conn:` se comporta exactamente igual que
+antes en los ~21 call sites existentes (commit en salida limpia, rollback
+en excepción) — solo que ahora reusa una conexión del pool en vez de abrir
+una nueva. Gunicorn corre sin `--preload`, así que cada worker arma su
+propio pool en su primer request (si algún día se agrega `--preload`, ese
+razonamiento se rompe y la construcción del pool debe moverse a un hook
+`post_fork`).
 
 **Escrituras — órdenes/placas**
 
