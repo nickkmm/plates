@@ -111,7 +111,7 @@ def landing_url() -> str:
     instead, the one place it can actually use.
     """
     if session.get("role") not in FULL_ACCESS_ROLES:
-        return url_for("records")
+        return url_for("records.records")
     return url_for("ingest")
 
 

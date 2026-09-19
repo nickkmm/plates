@@ -55,7 +55,7 @@
       <li>
         Orden <strong>{{ o.order_number }}</strong> ({{ o.order_date }}, {{ o.requested_by }}) —
         {{ o.n_plates }} placa(s), cant. total {{ o.total_qty }}{% if o.plates %}: {{ o.plates }}{% endif %}
-        <a class="ver-btn" href="{{ url_for('record_detail', order_id=o.id) }}" target="_blank">ver pedido</a>
+        <a class="ver-btn" href="{{ url_for('records.record_detail', order_id=o.id) }}" target="_blank">ver pedido</a>
       </li>
       {% endfor %}
     </ul>
@@ -79,7 +79,7 @@
           ya registrada en
           {% for o in orders %}
             pedido {{ o.order_number }} ({{ o.order_date }}, {{ o.requested_by }}, {{ o.plate_type }}, cant. {{ o.quantity }})
-            <a class="ver-btn" href="{{ url_for('record_detail', order_id=o.order_id) }}" target="_blank">ver pedido</a>{% if not loop.last %}, {% endif %}
+            <a class="ver-btn" href="{{ url_for('records.record_detail', order_id=o.order_id) }}" target="_blank">ver pedido</a>{% if not loop.last %}, {% endif %}
           {% endfor %}
         {% else %}
           aparece repetida dentro de este mismo envío (revisá las líneas de abajo).
