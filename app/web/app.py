@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import Flask, redirect, render_template, request, url_for
 
 from app.core import db
 from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
@@ -34,6 +34,7 @@ from app.core.normalize import clean_plate, is_real_plate, normalize_row, valida
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
 from app.web import auth
 from app.web.auth import consulta_allowed, login_required
+from app.web.blueprints.auth_routes import bp as auth_routes_bp
 from app.web.blueprints.inventory import bp as inventory_bp
 from app.web.blueprints.review import bp as review_bp
 from app.web.helpers import (
@@ -56,6 +57,7 @@ if not SECRET_KEY:
     )
 app.secret_key = SECRET_KEY
 
+app.register_blueprint(auth_routes_bp)
 app.register_blueprint(inventory_bp)
 app.register_blueprint(review_bp)
 
@@ -243,41 +245,6 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
         for line in pedido.lines
     ]
     return header, lines, notices
-
-
-@app.get("/login")
-def login():
-    if session.get("user"):
-        return redirect(auth.landing_url())
-    next_url = request.args.get("next", "")
-    return render_template("login.html", next=next_url if auth.is_safe_next(next_url) else "")
-
-
-@app.post("/login")
-def login_post():
-    username = (request.form.get("username") or "").strip()
-    password = request.form.get("password") or ""
-    next_url = request.form.get("next") or ""
-    if auth.verify_credentials(username, password):
-        session.clear()
-        session["user"] = username
-        session["role"] = auth.role_for(username)
-        session.permanent = True
-        return redirect(next_url if auth.is_safe_next(next_url) else auth.landing_url())
-    return (
-        render_template(
-            "login.html",
-            error="Usuario o contraseña incorrectos.",
-            next=next_url if auth.is_safe_next(next_url) else "",
-        ),
-        401,
-    )
-
-
-@app.route("/logout", methods=["GET", "POST"])
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
 
 
 @app.get("/")
