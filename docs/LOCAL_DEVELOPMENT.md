@@ -65,10 +65,12 @@ README no cubre.
 
 | Variable | Dónde se usa | Nota |
 |---|---|---|
-| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Compose (`db`), `app/core/db.py` | Sin default para la password — nunca hardcodeada en ningún lado. |
-| `DB_HOST` | `app/core/db.py` | Default de código `"db"` — en Compose se **sobreescribe** a `plates-db-1`. Nunca usar el default en un entorno con la red `edge`. |
-| `DB_PORT` | `app/core/db.py` | `5432` dentro del contenedor; `5433` es solo el mapeo de host. |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Compose (`db`), `app/core/db/` | Sin default para la password — nunca hardcodeada en ningún lado. |
+| `DB_HOST` | `app/core/db/` | Default de código `"db"` — en Compose se **sobreescribe** a `plates-db-1`. Nunca usar el default en un entorno con la red `edge`. |
+| `DB_PORT` | `app/core/db/` | `5432` dentro del contenedor; `5433` es solo el mapeo de host. |
+| `DB_POOL_MIN_SIZE` / `DB_POOL_MAX_SIZE` | `app/core/db/__init__.py` | Tamaño del `psycopg_pool.ConnectionPool` por worker de gunicorn. Default `1`/`5` — con 2 workers, máx. 10 conexiones desde la app. |
 | `SECRET_KEY` | `app/web/app.py` | Obligatoria — `RuntimeError` al arrancar si falta. |
 | `AUTH_USERS` | `app/web/auth.py` | `usuario:hash` separados por coma. El hash trae `$` → hay que escaparlo como `$$` en `.env` o Compose lo corrompe al interpolar variables (ya documentado en el README raíz). |
 | `AUTH_ROLES` | `app/web/auth.py` | `usuario:rol` separados por coma. **No está en `.env.example` hoy** — cualquier usuario sin entrada acá es `admin` por defecto. |
 | `COOKIE_SECURE` | `app/web/app.py` | `1` en producción (HTTPS) para marcar la cookie `Secure`; apagada en dev local sobre HTTP plano. |
+| `SENTRY_DSN` | `app/web/app.py` | Opcional — si no está seteada, Sentry ni se inicializa (dev local y tests nunca mandan nada). |

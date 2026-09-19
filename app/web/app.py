@@ -26,7 +26,9 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 
+import sentry_sdk
 from flask import Flask, redirect
+from sentry_sdk.integrations.flask import FlaskIntegration
 
 from app.web import auth
 from app.web.auth import consulta_allowed
@@ -35,6 +37,11 @@ from app.web.blueprints.ingest import bp as ingest_bp
 from app.web.blueprints.inventory import bp as inventory_bp
 from app.web.blueprints.records import bp as records_bp
 from app.web.blueprints.review import bp as review_bp
+
+# Sentry: only if SENTRY_DSN is set, so dev/local/tests never send anything.
+_SENTRY_DSN = os.environ.get("SENTRY_DSN")
+if _SENTRY_DSN:
+    sentry_sdk.init(dsn=_SENTRY_DSN, integrations=[FlaskIntegration()])
 
 app = Flask(__name__)
 
