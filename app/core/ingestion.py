@@ -42,6 +42,40 @@ def is_alistado(row: ExtractedRow) -> bool:
     return "ALISTAM" in row.requested_by.upper() or "ALISTAM" in (row.prepared_by or "").upper()
 
 
+def _dedup_candidates(rows: list[ExtractedRow]) -> tuple[set[str], Counter[str]]:
+    """Real (non-voided) plate_numbers among `rows`, as both a set (candidates
+    to check against the DB via db.existing_plate_numbers) and a Counter (to
+    catch a number repeated more than once within the same batch, which is
+    suspicious even if it's never been seen before).
+
+    "Real" means is_real_plate(r.plate_number) and not r.is_voided --
+    samples/serials/INGSE placeholders repeat legitimately and are never
+    duplicates, and a voided line was never actually produced. This exact
+    filter used to be copied across 6 separate comprehensions in this module
+    (find_duplicate_plate_numbers/process_rows/replace_order each computed
+    both a live_candidates set AND a batch_counts Counter from it
+    separately); the two remaining copies are each function's own per-row
+    `is_dup` check just below, which needs the same filter combined with
+    already_present/batch_counts and so isn't naturally expressed here.
+    """
+    real_numbers = [r.plate_number for r in rows if is_real_plate(r.plate_number) and not r.is_voided]
+    return set(real_numbers), Counter(real_numbers)
+
+
+def _count_row(summary: Summary, row: ExtractedRow, is_dup: bool) -> None:
+    """Update summary's per-inserted-row counters -- this whole block used to
+    be duplicated between process_rows and replace_order."""
+    summary.plates_inserted += 1
+    if is_dup:
+        summary.possible_duplicates += 1
+    if row.is_voided:
+        summary.voided += 1
+    if row.is_plate_annulled:
+        summary.plate_annulled += 1
+    if row.is_batch_replacement:
+        summary.batch_replacements += 1
+
+
 def find_duplicate_plate_numbers(rows: list[ExtractedRow]) -> set[str]:
     """Read-only: which plate_numbers in this batch would be flagged
     is_possible_duplicate if inserted right now (already in the DB, or
@@ -51,12 +85,7 @@ def find_duplicate_plate_numbers(rows: list[ExtractedRow]) -> set[str]:
     """
     normalized = [normalize_row(r) for r in rows]
     plate_rows = [r for r in normalized if not is_alistado(r)]
-    live_candidates = {
-        r.plate_number for r in plate_rows if is_real_plate(r.plate_number) and not r.is_voided
-    }
-    batch_counts = Counter(
-        r.plate_number for r in plate_rows if is_real_plate(r.plate_number) and not r.is_voided
-    )
+    live_candidates, batch_counts = _dedup_candidates(plate_rows)
     with db.get_conn() as conn:
         already_present = db.existing_plate_numbers(conn, live_candidates)
     return {pn for pn in live_candidates if pn in already_present or batch_counts[pn] > 1}
@@ -76,9 +105,7 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
     # Plate numbers appearing more than once within this same batch are also
     # suspicious, not just ones already in the DB. Only real plate identifiers
     # count — samples/serials/INGSE repeat legitimately and are not duplicates.
-    batch_counts = Counter(
-        r.plate_number for r in plate_rows if is_real_plate(r.plate_number) and not r.is_voided
-    )
+    live_candidates, batch_counts = _dedup_candidates(plate_rows)
 
     summary = Summary()
 
@@ -94,9 +121,6 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
             )
             summary.blank_preparations += 1
 
-        live_candidates = {
-            r.plate_number for r in plate_rows if is_real_plate(r.plate_number) and not r.is_voided
-        }
         already_present = db.existing_plate_numbers(conn, live_candidates)
 
         # Group plate rows by order_number, preserving order.
@@ -127,15 +151,7 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
                     and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
                 )
                 db.insert_plate(conn, order_id=order_id, row=r, is_possible_duplicate=is_dup)
-                summary.plates_inserted += 1
-                if is_dup:
-                    summary.possible_duplicates += 1
-                if r.is_voided:
-                    summary.voided += 1
-                if r.is_plate_annulled:
-                    summary.plate_annulled += 1
-                if r.is_batch_replacement:
-                    summary.batch_replacements += 1
+                _count_row(summary, r, is_dup)
 
         db.recalc_inventory(conn)
         conn.commit()
@@ -184,9 +200,7 @@ def replace_order(order_number: str, rows: list[ExtractedRow]) -> Summary:
 
     # Same within-batch duplicate check process_rows makes (only real plate
     # identifiers count -- samples/serials/INGSE repeat legitimately).
-    batch_counts = Counter(
-        r.plate_number for r in normalized if is_real_plate(r.plate_number) and not r.is_voided
-    )
+    live_candidates, batch_counts = _dedup_candidates(normalized)
 
     summary = Summary()
 
@@ -200,9 +214,6 @@ def replace_order(order_number: str, rows: list[ExtractedRow]) -> Summary:
             summary.plates_deleted += match.n_plates
         summary.orders_replaced = len(existing)
 
-        live_candidates = {
-            r.plate_number for r in normalized if is_real_plate(r.plate_number) and not r.is_voided
-        }
         already_present = db.existing_plate_numbers(conn, live_candidates)
 
         head = normalized[0]
@@ -221,15 +232,7 @@ def replace_order(order_number: str, rows: list[ExtractedRow]) -> Summary:
                 and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
             )
             db.insert_plate(conn, order_id=order_id, row=r, is_possible_duplicate=is_dup)
-            summary.plates_inserted += 1
-            if is_dup:
-                summary.possible_duplicates += 1
-            if r.is_voided:
-                summary.voided += 1
-            if r.is_plate_annulled:
-                summary.plate_annulled += 1
-            if r.is_batch_replacement:
-                summary.batch_replacements += 1
+            _count_row(summary, r, is_dup)
 
         db.recalc_inventory(conn)
         conn.commit()
