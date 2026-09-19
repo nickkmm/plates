@@ -102,6 +102,19 @@ def is_safe_next(target: str | None) -> bool:
     return not parsed.scheme and not parsed.netloc
 
 
+def landing_url() -> str:
+    """Where a logged-in user lands with no specific ?next= target.
+
+    Full-access roles start at Registrar (today's default). Every other role
+    (read-only: 'consulta', 'produccion') can't reach /ingest at all, so
+    sending it there would just bounce into a 403 -- send it to Registros
+    instead, the one place it can actually use.
+    """
+    if session.get("role") not in FULL_ACCESS_ROLES:
+        return url_for("records.records")
+    return url_for("ingest.ingest")
+
+
 def _redirect_to_login():
     """Bounce to /login (preserving the requested path as ?next=), clearing
     whatever's in the session first. Used for both "never logged in" and "the
@@ -112,7 +125,7 @@ def _redirect_to_login():
     next_url = request.full_path
     if next_url.endswith("?"):
         next_url = next_url[:-1]
-    return redirect(url_for("login", next=next_url))
+    return redirect(url_for("auth_routes.login", next=next_url))
 
 
 def login_required(view):

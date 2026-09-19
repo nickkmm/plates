@@ -34,13 +34,13 @@
   {% include "_nav.html" %}
   <h1>{{ 'Búsqueda' if query else 'Últimas órdenes registradas' }}</h1>
 
-  <form class="search" method="get" action="{{ url_for('records') }}">
+  <form class="search" method="get" action="{{ url_for('records.records') }}">
     <input type="text" name="q" value="{{ query or '' }}" placeholder="Buscar placa u orden, ej. ARN911 o 1234" autofocus>
     <button type="submit">Buscar</button>
-    {% if query %}<a class="clear" href="{{ url_for('records') }}">Limpiar</a>{% endif %}
+    {% if query %}<a class="clear" href="{{ url_for('records.records') }}">Limpiar</a>{% endif %}
   </form>
 
-  <form class="search" method="post" action="{{ url_for('records_search_pdf') }}" enctype="multipart/form-data">
+  <form class="search" method="post" action="{{ url_for('records.records_search_pdf') }}" enctype="multipart/form-data">
     <input type="file" name="pdf" accept="application/pdf,.pdf">
     <button type="submit">Buscar por PDF</button>
   </form>
@@ -61,7 +61,7 @@
               <span style="color:#b50">Ya existe</span> —
               {% for o in r.matches %}
                 pedido {{ o.order_number }} ({{ o.order_date }}, {{ o.requested_by }})
-                <a class="ver" href="{{ url_for('record_detail', order_id=o.order_id) }}">ver pedido</a>{% if not loop.last %}, {% endif %}
+                <a class="ver" href="{{ url_for('records.record_detail', order_id=o.order_id) }}">ver pedido</a>{% if not loop.last %}, {% endif %}
               {% endfor %}
             {% else %}
               <span style="color:#1a9c5b">No encontrada</span>
@@ -105,7 +105,7 @@
             {% elif p.is_batch_replacement %}<span class="muted">reposición</span>
             {% endif %}
           </td>
-          <td class="actions"><a class="ver" href="{{ url_for('record_detail', order_id=p.order_id, q=query or None) }}">Ver pedido</a></td>
+          <td class="actions"><a class="ver" href="{{ url_for('records.record_detail', order_id=p.order_id, q=query or None) }}">Ver pedido</a></td>
         </tr>
         {% endfor %}
       </tbody>

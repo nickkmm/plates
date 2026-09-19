@@ -1,12 +1,13 @@
 """Tests for app.schema_migrate.
 
 Four things are covered:
-  1. The clientes/usuarios backfill algorithm (writing into customers/users
-     since Fase 1c -- see app/schema_migrate.py's module docstring for why
-     the functions/constants involved keep their original Spanish names),
-     against small synthetic data (never real production numbers -- see the
-     Fase 1 plan's hard constraint about not fabricating/fetching real
-     data).
+  1. The customers/users backfill algorithm (backfill_customers/
+     backfill_users, Fase 1d names -- see app/schema_migrate.py's module
+     docstring for why their BACKFILL_*_VERSION string values stay the
+     original Spanish-named literals even though the Python identifiers
+     don't), against small synthetic data (never real production numbers --
+     see the Fase 1 plan's hard constraint about not fabricating/fetching
+     real data).
   2. Idempotency: re-running apply_sql_migrations()/backfill_*()/main() must
      be a no-op the second time.
   3. The schema invariant: a fresh database built from the CURRENT init.sql
@@ -29,6 +30,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from psycopg.rows import tuple_row
 
 from app import schema_migrate
 from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
@@ -94,7 +96,7 @@ _APP_TABLES = (
 
 
 def _insert_order(conn: psycopg.Connection, requested_by: str, order_number: str) -> int:
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(
             "INSERT INTO production_orders (order_number, order_date, requested_by) "
             "VALUES (%s, %s, %s) RETURNING id",
@@ -118,7 +120,7 @@ class TestApplySqlMigrations:
 
     def test_every_migration_file_is_recorded_as_applied(self, db_conn):
         expected = {os.path.basename(p) for p in schema_migrate._migration_files()}
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT version FROM schema_migrations WHERE version LIKE %s", ("%.sql",))
             applied = {row[0] for row in cur.fetchall()}
         assert applied == expected
@@ -128,7 +130,7 @@ class TestApplySqlMigrations:
         everywhere), independent of the schema_migrations bookkeeping that
         normally prevents a second run."""
         sql = (_MIGRATIONS_DIR / "0001_pos_fields.sql").read_text(encoding="utf-8")
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(sql)
             cur.execute(sql)
 
@@ -138,7 +140,7 @@ class TestApplySqlMigrations:
         each ADD CONSTRAINT guarded by a DO block (Postgres has no ADD
         CONSTRAINT IF NOT EXISTS)."""
         sql = (_MIGRATIONS_DIR / "0002_reference_integrity.sql").read_text(encoding="utf-8")
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(sql)
             cur.execute(sql)
 
@@ -154,18 +156,18 @@ class TestApplySqlMigrations:
         OLD Fase-1-era names.
         """
         sql = (_MIGRATIONS_DIR / "0003_rename_to_english.sql").read_text(encoding="utf-8")
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(sql)
             cur.execute(sql)
 
 
 # --------------------------------------------------------------------------
-# backfill_clientes
+# backfill_customers
 # --------------------------------------------------------------------------
 
 
-class TestBackfillClientes:
-    def test_two_spelling_variants_collapse_into_one_cliente(self, db_conn):
+class TestBackfillCustomers:
+    def test_two_spelling_variants_collapse_into_one_customer(self, db_conn):
         """PTOV and PUNTODEVENTA both normalize to PTO.V (normalize.py's
         curated map) -- the grouping key must be the CANONICAL form, not the
         raw string, so both orders end up pointing at the SAME client."""
@@ -173,9 +175,9 @@ class TestBackfillClientes:
         _insert_order(db_conn, "PUNTODEVENTA", "2")
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT name FROM customers")
             assert [row[0] for row in cur.fetchall()] == ["PTO.V"]
             cur.execute("SELECT DISTINCT customer_id FROM production_orders")
@@ -190,9 +192,9 @@ class TestBackfillClientes:
         _insert_order(db_conn, "//", "1")
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM customers")
             assert cur.fetchone()[0] == 0
             cur.execute("SELECT customer_id FROM production_orders WHERE order_number = '1'")
@@ -206,9 +208,9 @@ class TestBackfillClientes:
         _insert_order(db_conn, "MUVA SERGIO", "2")
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT name FROM customers ORDER BY name")
             assert [row[0] for row in cur.fetchall()] == ["MUVA GRANADA", "MUVA SERGIO"]
 
@@ -216,20 +218,20 @@ class TestBackfillClientes:
         _insert_order(db_conn, "PTOV", "1")
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT requested_by FROM production_orders WHERE order_number = '1'")
             assert cur.fetchone()[0] == "PTOV"
 
-    def test_rerun_creates_no_duplicate_clientes(self, db_conn):
+    def test_rerun_creates_no_duplicate_customers(self, db_conn):
         _insert_order(db_conn, "PEDRO", "1")
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM customers")
             assert cur.fetchone()[0] == 1
 
@@ -238,9 +240,9 @@ class TestBackfillClientes:
         flow) must never be silently overwritten by a later backfill run."""
         order_id = _insert_order(db_conn, "PEDRO", "1")
         db_conn.commit()
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM customers WHERE name = 'OTRO'")
             row = cur.fetchone()
             if row is None:
@@ -251,40 +253,40 @@ class TestBackfillClientes:
                         (other_customer_id, order_id))
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT customer_id FROM production_orders WHERE id = %s", (order_id,))
             assert cur.fetchone()[0] == other_customer_id
 
 
 # --------------------------------------------------------------------------
-# backfill_usuarios
+# backfill_users
 # --------------------------------------------------------------------------
 
 
-class TestBackfillUsuarios:
-    def test_creates_one_usuario_per_auth_user_with_matching_role(self, db_conn, monkeypatch):
+class TestBackfillUsers:
+    def test_creates_one_user_per_auth_user_with_matching_role(self, db_conn, monkeypatch):
         monkeypatch.setenv("AUTH_USERS", "alice:pbkdf2:sha256:abc$def,bob:pbkdf2:sha256:xyz")
         monkeypatch.setenv("AUTH_ROLES", "bob:consulta")
 
-        schema_migrate.backfill_usuarios(db_conn)
+        schema_migrate.backfill_users(db_conn)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT username, password_hash, role FROM users ORDER BY username")
             rows = {username: (pw_hash, role) for username, pw_hash, role in cur.fetchall()}
         # alice has no AUTH_ROLES entry -> defaults to admin, same as auth.role_for().
         assert rows["alice"] == ("pbkdf2:sha256:abc$def", "admin")
         assert rows["bob"] == ("pbkdf2:sha256:xyz", "consulta")
 
-    def test_rerun_creates_no_duplicate_usuarios(self, db_conn, monkeypatch):
+    def test_rerun_creates_no_duplicate_users(self, db_conn, monkeypatch):
         monkeypatch.setenv("AUTH_USERS", "alice:hash1")
         monkeypatch.setenv("AUTH_ROLES", "")
 
-        schema_migrate.backfill_usuarios(db_conn)
-        schema_migrate.backfill_usuarios(db_conn)
+        schema_migrate.backfill_users(db_conn)
+        schema_migrate.backfill_users(db_conn)
 
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM users")
             assert cur.fetchone()[0] == 1
 
@@ -305,27 +307,18 @@ class TestMain:
         monkeypatch.setenv("AUTH_USERS", "alice:hash1")
         monkeypatch.setenv("AUTH_ROLES", "")
 
-        conn = schema_migrate.db.get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM schema_migrations")
-            conn.commit()
-        finally:
-            conn.close()
+        with schema_migrate.db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("DELETE FROM schema_migrations")
 
         schema_migrate.main()
         schema_migrate.main()
 
-        conn = schema_migrate.db.get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT count(*) FROM users")
-                row = cur.fetchone()
-                assert row is not None and row[0] == 1
-                cur.execute("SELECT version, count(*) FROM schema_migrations GROUP BY version")
-                counts: dict[str, int] = dict(cur.fetchall())
-        finally:
-            conn.close()
+        with schema_migrate.db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM users")
+            row = cur.fetchone()
+            assert row is not None and row[0] == 1
+            cur.execute("SELECT version, count(*) FROM schema_migrations GROUP BY version")
+            counts: dict[str, int] = dict(cur.fetchall())
         assert all(n == 1 for n in counts.values())
 
 
@@ -335,7 +328,7 @@ class TestMain:
 
 
 def _columns(conn: psycopg.Connection, schema: str) -> set[tuple]:
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(
             """
             SELECT table_name, column_name, data_type, is_nullable, column_default,
@@ -373,7 +366,7 @@ def _constraints(conn: psycopg.Connection, schema: str) -> set[tuple]:
     _columns() already captures this information per-column, so these are
     filtered out rather than compared by (OID-derived) name.
     """
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(
             """
             SELECT table_name, constraint_type, constraint_name
@@ -403,33 +396,33 @@ class TestSchemaInvariant:
         extra fixtures/lock beyond the usual db_conn.
         """
         fresh, migrated = "schema_invariant_fresh", "schema_invariant_migrated"
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {fresh} CASCADE")
             cur.execute(f"DROP SCHEMA IF EXISTS {migrated} CASCADE")
             cur.execute(f"CREATE SCHEMA {fresh}")
             cur.execute(f"CREATE SCHEMA {migrated}")
         db_conn.commit()
         try:
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute(f"SET search_path TO {fresh}")
                 cur.execute(_INIT_SQL)
             db_conn.commit()
 
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute(f"SET search_path TO {migrated}")
                 cur.execute(_OLD_INIT_SQL)
                 for path in sorted(_MIGRATIONS_DIR.glob("*.sql")):
                     cur.execute(path.read_text(encoding="utf-8"))
             db_conn.commit()
 
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute("SET search_path TO public")
             db_conn.commit()
 
             assert _columns(db_conn, fresh) == _columns(db_conn, migrated)
             assert _constraints(db_conn, fresh) == _constraints(db_conn, migrated)
         finally:
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute("SET search_path TO public")
                 cur.execute(f"DROP SCHEMA IF EXISTS {fresh} CASCADE")
                 cur.execute(f"DROP SCHEMA IF EXISTS {migrated} CASCADE")
@@ -538,7 +531,7 @@ class TestRenameToEnglish:
     SCHEMA = "fase1c_rename_test"
 
     def _seed_old_schema(self, conn: psycopg.Connection) -> None:
-        with conn.cursor() as cur:
+        with conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {self.SCHEMA} CASCADE")
             cur.execute(f"CREATE SCHEMA {self.SCHEMA}")
             cur.execute(f"SET search_path TO {self.SCHEMA}")
@@ -578,7 +571,7 @@ class TestRenameToEnglish:
         conn.commit()
 
     def _teardown_schema(self, conn: psycopg.Connection) -> None:
-        with conn.cursor() as cur:
+        with conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SET search_path TO public")
             cur.execute(f"DROP SCHEMA IF EXISTS {self.SCHEMA} CASCADE")
         conn.commit()
@@ -587,7 +580,7 @@ class TestRenameToEnglish:
         """Any of the OLD Spanish POS column names still present (not
         dropped) on production_orders/plates -- empty once the rename is
         complete."""
-        with conn.cursor() as cur:
+        with conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT attname FROM pg_attribute "
                 "WHERE attrelid = to_regclass('production_orders') "
@@ -607,11 +600,11 @@ class TestRenameToEnglish:
     def test_rename_preserves_data_and_drops_old_names(self, db_conn):
         self._seed_old_schema(db_conn)
         try:
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute(_0003_SQL)
             db_conn.commit()
 
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute("SELECT name, type, phone FROM customers ORDER BY name")
                 customer_rows = cur.fetchall()
                 cur.execute("SELECT username, password_hash, role, active FROM users")
@@ -657,11 +650,11 @@ class TestRenameToEnglish:
         expected names)."""
         self._seed_old_schema(db_conn)
         try:
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute(_0003_SQL)
             db_conn.commit()
 
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute(
                     "SELECT conname FROM pg_constraint WHERE conrelid = to_regclass('customers')"
                 )
@@ -697,11 +690,11 @@ class TestRenameToEnglish:
         true because of the guards in the file."""
         self._seed_old_schema(db_conn)
         try:
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute(_0003_SQL)
             db_conn.commit()
 
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute("SELECT name FROM customers ORDER BY name")
                 customers_before = cur.fetchall()
                 cur.execute(
@@ -710,11 +703,11 @@ class TestRenameToEnglish:
                 )
                 order_before = cur.fetchone()
 
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute(_0003_SQL)
             db_conn.commit()
 
-            with db_conn.cursor() as cur:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
                 cur.execute("SELECT name FROM customers ORDER BY name")
                 customers_after = cur.fetchall()
                 cur.execute(
@@ -746,13 +739,13 @@ class TestPlateTypesAndInventoryCategoriesSeed:
     """
 
     def test_plate_types_matches_normalize_plate_types_exactly(self, db_conn):
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_type FROM plate_types")
             seeded = {row[0] for row in cur.fetchall()}
         assert seeded == set(PLATE_TYPES)
 
     def test_inventory_categories_matches_normalize_inventory_categories_exactly(self, db_conn):
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT category FROM inventory_categories")
             seeded = {row[0] for row in cur.fetchall()}
         assert seeded == set(INVENTORY_CATEGORIES)
@@ -770,7 +763,7 @@ class TestReferenceIntegrityConstraints:
     def test_plate_with_invalid_plate_type_is_rejected(self, db_conn):
         order_id = _insert_order(db_conn, "PEDRO", "1")
         db_conn.commit()
-        with pytest.raises(psycopg.errors.ForeignKeyViolation), db_conn.cursor() as cur:
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "INSERT INTO plates (order_id, plate_type) VALUES (%s, %s)",
                 (order_id, "NOT A REAL TYPE"),
@@ -780,7 +773,7 @@ class TestReferenceIntegrityConstraints:
     def test_plate_with_valid_plate_type_still_works(self, db_conn):
         order_id = _insert_order(db_conn, "PEDRO", "1")
         db_conn.commit()
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "INSERT INTO plates (order_id, plate_type) VALUES (%s, %s) RETURNING id",
                 (order_id, "CARRO PARTICULAR"),
@@ -789,7 +782,7 @@ class TestReferenceIntegrityConstraints:
         db_conn.commit()
 
     def test_plate_type_prices_with_invalid_plate_type_is_rejected(self, db_conn):
-        with pytest.raises(psycopg.errors.ForeignKeyViolation), db_conn.cursor() as cur:
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "INSERT INTO plate_type_prices (plate_type, unit_price) VALUES (%s, %s)",
                 ("NOT A REAL TYPE", 1000),
@@ -797,20 +790,20 @@ class TestReferenceIntegrityConstraints:
         db_conn.rollback()
 
     def test_plate_type_prices_with_valid_plate_type_still_works(self, db_conn):
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "INSERT INTO plate_type_prices (plate_type, unit_price) VALUES (%s, %s)",
                 ("CARRO PARTICULAR", 1000),
             )
         db_conn.commit()
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "SELECT unit_price FROM plate_type_prices WHERE plate_type = 'CARRO PARTICULAR'"
             )
             assert cur.fetchone()[0] == 1000
 
     def test_blank_preparation_with_invalid_category_is_rejected(self, db_conn):
-        with pytest.raises(psycopg.errors.ForeignKeyViolation), db_conn.cursor() as cur:
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "INSERT INTO blank_preparations (category, quantity) VALUES (%s, %s)",
                 ("NOT A REAL CATEGORY", 10),
@@ -818,7 +811,7 @@ class TestReferenceIntegrityConstraints:
         db_conn.rollback()
 
     def test_blank_preparation_with_valid_category_still_works(self, db_conn):
-        with db_conn.cursor() as cur:
+        with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute(
                 "INSERT INTO blank_preparations (category, quantity) VALUES (%s, %s) RETURNING id",
                 ("CARRO PARTICULAR", 10),

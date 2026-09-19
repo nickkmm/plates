@@ -8,10 +8,10 @@
 </style>
 <nav class="tabs">
   {% if session.get('role') in full_access_roles %}
-  <a href="{{ url_for('ingest') }}" class="{{ 'on' if request.endpoint in ('ingest','ingest_pdf') }}">Registrar</a>
-  <a href="{{ url_for('review') }}" class="{{ 'on' if request.endpoint=='review' }}">Revisión</a>
-  <a href="{{ url_for('inventory') }}" class="{{ 'on' if request.endpoint=='inventory' }}">Inventario</a>
+  <a href="{{ url_for('ingest.ingest') }}" class="{{ 'on' if request.endpoint in ('ingest.ingest','ingest.ingest_pdf') }}">Registrar</a>
+  <a href="{{ url_for('review.review') }}" class="{{ 'on' if request.endpoint=='review.review' }}">Revisión</a>
+  <a href="{{ url_for('inventory.inventory') }}" class="{{ 'on' if request.endpoint=='inventory.inventory' }}">Inventario</a>
   {% endif %}
-  <a href="{{ url_for('records') }}" class="{{ 'on' if request.endpoint in ('records','record_detail') }}">Registros</a>
-  <form method="post" action="{{ url_for('logout') }}" class="logout"><button type="submit" title="Cerrar sesión">Salir</button></form>
+  <a href="{{ url_for('records.records') }}" class="{{ 'on' if request.endpoint in ('records.records','records.record_detail') }}">Registros</a>
+  <form method="post" action="{{ url_for('auth_routes.logout') }}" class="logout"><button type="submit" title="Cerrar sesión">Salir</button></form>
 </nav>

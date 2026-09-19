@@ -191,6 +191,15 @@ Todo el SQL crudo (psycopg 3, sin ORM) para `production_orders`, `plates`,
 variables de entorno (`DB_HOST` default `"db"` — **nunca usar ese default
 en Docker Compose**, ver [`ARCHITECTURE.md`](ARCHITECTURE.md)).
 
+**Contrato de transacción**: cada función de acá recibe una conexión ya
+abierta (`conn`) y **nunca hace commit ni rollback** — quien llama es
+siempre el dueño de la transacción (`with db.get_conn() as conn: ...`).
+Esto es deliberado (Fase 1d): pasar `conn` explícito en vez de esconderlo
+detrás de una interfaz deja visible en la firma quién controla el
+commit, que es justamente el punto que un bug real (varias funciones de
+`ingestion.py` abriendo cada una su propia conexión, ver más abajo) puso
+en evidencia.
+
 **Escrituras — órdenes/placas**
 
 | Función | Qué hace |

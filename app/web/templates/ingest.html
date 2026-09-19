@@ -38,7 +38,7 @@
 <body>
   {% include "_nav.html" %}
   <h1>Registrar producción de placas</h1>
-  <p><a href="{{ url_for('ingest_pdf') }}" class="btn-link add">Subir PDF</a></p>
+  <p><a href="{{ url_for('ingest.ingest_pdf') }}" class="btn-link add">Subir PDF</a></p>
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
   {% if notices %}
@@ -55,7 +55,7 @@
       <li>
         Orden <strong>{{ o.order_number }}</strong> ({{ o.order_date }}, {{ o.requested_by }}) —
         {{ o.n_plates }} placa(s), cant. total {{ o.total_qty }}{% if o.plates %}: {{ o.plates }}{% endif %}
-        <a class="ver-btn" href="{{ url_for('record_detail', order_id=o.id) }}" target="_blank">ver pedido</a>
+        <a class="ver-btn" href="{{ url_for('records.record_detail', order_id=o.id) }}" target="_blank">ver pedido</a>
       </li>
       {% endfor %}
     </ul>
@@ -79,7 +79,7 @@
           ya registrada en
           {% for o in orders %}
             pedido {{ o.order_number }} ({{ o.order_date }}, {{ o.requested_by }}, {{ o.plate_type }}, cant. {{ o.quantity }})
-            <a class="ver-btn" href="{{ url_for('record_detail', order_id=o.order_id) }}" target="_blank">ver pedido</a>{% if not loop.last %}, {% endif %}
+            <a class="ver-btn" href="{{ url_for('records.record_detail', order_id=o.order_id) }}" target="_blank">ver pedido</a>{% if not loop.last %}, {% endif %}
           {% endfor %}
         {% else %}
           aparece repetida dentro de este mismo envío (revisá las líneas de abajo).
@@ -101,7 +101,7 @@
       <li>Se reemplazó{% if summary.orders_replaced > 1 %}n{% endif %} {{ summary.orders_replaced }} orden(es) existente(s) con este N° ({{ summary.plates_deleted }} placa(s) vieja(s) eliminada(s)) por esta orden nueva.</li>
       {% endif %}
     </ul>
-    {% if summary.possible_duplicates %}<p class="muted">Revisá los duplicados en <a href="{{ url_for('review') }}">Revisión</a>.</p>{% endif %}
+    {% if summary.possible_duplicates %}<p class="muted">Revisá los duplicados en <a href="{{ url_for('review.review') }}">Revisión</a>.</p>{% endif %}
   </div>
   {% endif %}
 
@@ -109,7 +109,7 @@
   <datalist id="requesters">{% for r in requesters %}<option value="{{ r }}">{% endfor %}</datalist>
   <datalist id="cities">{% for c in cities %}<option value="{{ c }}">{% endfor %}</datalist>
 
-  <form method="post" action="{{ url_for('ingest') }}">
+  <form method="post" action="{{ url_for('ingest.ingest') }}">
     <fieldset>
       <legend>Datos de la orden</legend>
       <div class="header">
