@@ -205,6 +205,42 @@ def normalize_plate_type(value: str | None) -> str | None:
     return f                          # MOTO PARTICULAR, CARRO PARTICULAR
 
 
+# Fase 2 (POS) fixed vocabularies -- constant NAMES are English (code/schema
+# identifiers, per CLAUDE.md), the VALUES are the Spanish business terms
+# staff actually type/see. Every one of these is a <select> in the /ingest
+# form (Fase 3), never free text, so normalize_choice below only ever needs
+# to reconcile case/accent variance, never invent a value it wasn't given.
+RECEIPT_TYPES = ("FACTURA", "RECIBO", "OTROS")
+CUSTOMER_TYPES = ("PERSONA NATURAL", "TRÁNSITO", "EMPRESA", "OTROS")
+DOCUMENT_TYPES = ("NIT", "CÉDULA", "OTROS")
+# The plan's draft data had "POSEDOR" -- a typo; the real word is POSEEDOR.
+DOCUMENT_RELATIONS = ("DUEÑO", "POSEEDOR", "OTROS")
+PAYMENT_METHODS = ("EFECTIVO", "TRANSFERENCIA", "CRÉDITO", "OTROS")
+REASONS = ("DETERIORO", "PÉRDIDA", "OTROS")
+
+
+def normalize_choice(value: str | None, allowed: tuple[str, ...]) -> str | None:
+    """Match `value` against a fixed vocabulary (RECEIPT_TYPES, CUSTOMER_TYPES,
+    DOCUMENT_TYPES, DOCUMENT_RELATIONS, PAYMENT_METHODS, REASONS, ...),
+    returning the CANONICAL spelling from `allowed` or None.
+
+    Blank/None -> None. Otherwise compares fold()ed (case/accent-insensitive)
+    against each option in `allowed` and returns that option's real spelling
+    verbatim on a match. No match -> None -- this NEVER guesses/invents a
+    value, same "faithful, not clever" spirit as is_real_plate/pdf_extract:
+    an unrecognized value is the caller's job to surface (e.g. as a PDF
+    extraction notice) so a human picks the right one from the dropdown,
+    rather than silently coercing it to something that might be wrong.
+    """
+    if not value:
+        return None
+    folded = _fold(value)
+    for option in allowed:
+        if _fold(option) == folded:
+            return option
+    return None
+
+
 def clean_plate(value: str) -> str:
     """Uppercase and remove spaces so 'arn 911' -> 'ARN911'."""
     return _WHITESPACE.sub("", value.strip().upper())
