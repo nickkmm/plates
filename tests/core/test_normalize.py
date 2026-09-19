@@ -16,12 +16,19 @@ from app.core.models import ExtractedRow
 from app.core.normalize import (
     _CITY_SPECIFIC_TYPES,
     _PLATE_DESC,
+    CUSTOMER_TYPES,
+    DOCUMENT_RELATIONS,
+    DOCUMENT_TYPES,
     INVENTORY_CATEGORIES,
+    PAYMENT_METHODS,
     PLATE_TYPES,
+    REASONS,
+    RECEIPT_TYPES,
     annulment_kind,
     clean_plate,
     inventory_category,
     is_real_plate,
+    normalize_choice,
     normalize_city,
     normalize_plate_type,
     normalize_requested_by,
@@ -581,3 +588,81 @@ class TestNormalizeRow:
         result = normalize_row(row)
         assert result.is_plate_annulled is True
         assert result.plate_number == "HMF922"
+
+
+# --------------------------------------------------------------------------
+# Fase 2 (POS) fixed vocabularies
+# --------------------------------------------------------------------------
+
+
+class TestPosVocabularies:
+    """Pin down the exact values (and spelling fixes) confirmed with the user
+    in PLAN_ARQUITECTURA_Y_POS.md -- these are load-bearing business data,
+    not just arbitrary constants."""
+
+    def test_receipt_types(self):
+        assert RECEIPT_TYPES == ("FACTURA", "RECIBO", "OTROS")
+
+    def test_customer_types(self):
+        assert CUSTOMER_TYPES == ("PERSONA NATURAL", "TRÁNSITO", "EMPRESA", "OTROS")
+
+    def test_document_types(self):
+        assert DOCUMENT_TYPES == ("NIT", "CÉDULA", "OTROS")
+
+    def test_document_relations_fixes_the_draft_typo(self):
+        """The plan's draft data had 'POSEDOR' -- confirmed as a typo for
+        POSEEDOR; regression guard against reintroducing the typo."""
+        assert DOCUMENT_RELATIONS == ("DUEÑO", "POSEEDOR", "OTROS")
+        assert "POSEDOR" not in DOCUMENT_RELATIONS
+
+    def test_payment_methods(self):
+        assert PAYMENT_METHODS == ("EFECTIVO", "TRANSFERENCIA", "CRÉDITO", "OTROS")
+
+    def test_reasons(self):
+        assert REASONS == ("DETERIORO", "PÉRDIDA", "OTROS")
+
+
+# --------------------------------------------------------------------------
+# normalize_choice
+# --------------------------------------------------------------------------
+
+
+class TestNormalizeChoice:
+    def test_none_is_none(self):
+        assert normalize_choice(None, PAYMENT_METHODS) is None
+
+    def test_empty_string_is_none(self):
+        assert normalize_choice("", PAYMENT_METHODS) is None
+
+    def test_whitespace_only_is_none(self):
+        assert normalize_choice("   ", PAYMENT_METHODS) is None
+
+    def test_exact_match_returned_verbatim(self):
+        assert normalize_choice("EFECTIVO", PAYMENT_METHODS) == "EFECTIVO"
+
+    def test_case_insensitive_match_returns_canonical_spelling(self):
+        assert normalize_choice("efectivo", PAYMENT_METHODS) == "EFECTIVO"
+
+    def test_accent_insensitive_match_returns_canonical_spelling(self):
+        """'credito' (no tilde) must still match CRÉDITO -- a data-entry
+        person is not going to reliably type the accent."""
+        assert normalize_choice("credito", PAYMENT_METHODS) == "CRÉDITO"
+        assert normalize_choice("CREDITO", PAYMENT_METHODS) == "CRÉDITO"
+
+    def test_surrounding_whitespace_is_ignored(self):
+        assert normalize_choice("  otros  ", PAYMENT_METHODS) == "OTROS"
+
+    def test_unrecognized_value_is_none_never_invented(self):
+        """The core "faithful, not clever" guarantee: a value that doesn't
+        match anything in `allowed` must come back None, never coerced to
+        the closest-looking option."""
+        assert normalize_choice("CHEQUE", PAYMENT_METHODS) is None
+
+    def test_works_with_every_declared_vocabulary(self):
+        """Not tied to one specific tuple -- generic over any of the Fase 2
+        vocabularies."""
+        assert normalize_choice("nit", DOCUMENT_TYPES) == "NIT"
+        assert normalize_choice("empresa", CUSTOMER_TYPES) == "EMPRESA"
+        assert normalize_choice("dueno", DOCUMENT_RELATIONS) == "DUEÑO"
+        assert normalize_choice("perdida", REASONS) == "PÉRDIDA"
+        assert normalize_choice("recibo", RECEIPT_TYPES) == "RECIBO"
