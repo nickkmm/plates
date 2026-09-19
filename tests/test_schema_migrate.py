@@ -307,27 +307,18 @@ class TestMain:
         monkeypatch.setenv("AUTH_USERS", "alice:hash1")
         monkeypatch.setenv("AUTH_ROLES", "")
 
-        conn = schema_migrate.db.get_conn()
-        try:
-            with conn.cursor(row_factory=tuple_row) as cur:
-                cur.execute("DELETE FROM schema_migrations")
-            conn.commit()
-        finally:
-            conn.close()
+        with schema_migrate.db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("DELETE FROM schema_migrations")
 
         schema_migrate.main()
         schema_migrate.main()
 
-        conn = schema_migrate.db.get_conn()
-        try:
-            with conn.cursor(row_factory=tuple_row) as cur:
-                cur.execute("SELECT count(*) FROM users")
-                row = cur.fetchone()
-                assert row is not None and row[0] == 1
-                cur.execute("SELECT version, count(*) FROM schema_migrations GROUP BY version")
-                counts: dict[str, int] = dict(cur.fetchall())
-        finally:
-            conn.close()
+        with schema_migrate.db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM users")
+            row = cur.fetchone()
+            assert row is not None and row[0] == 1
+            cur.execute("SELECT version, count(*) FROM schema_migrations GROUP BY version")
+            counts: dict[str, int] = dict(cur.fetchall())
         assert all(n == 1 for n in counts.values())
 
 

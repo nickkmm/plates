@@ -231,7 +231,8 @@ def main(argv: list[str] | None = None) -> int:
         # (which only covers the original Feb-Jun historical baseline).
         alistado_n = sum(1 for r in rows if is_alistado(r))
         print(f"{alistado_n} Excel ALISTAMIENTO rows in range; loading as-is (not reconciled).")
-        summary = process_rows(rows)
+        with db.get_conn() as conn:
+            summary = process_rows(conn, rows)
         blank_preps_label = f"{summary.blank_preparations} (from Excel, unreconciled)"
     else:
         # The Excel's ALISTAMIENTO rows are unreliable, so discard them and load the
@@ -240,14 +241,18 @@ def main(argv: list[str] | None = None) -> int:
         discarded = len(rows) - len(plate_rows)
         print(f"Discarded {discarded} Excel ALISTAMIENTO rows; "
               f"loading {len(RECONCILED_ALISTAMIENTO)} reconciled ones.")
+        # One transaction for both: the reconciled ALISTAMIENTO baseline and the
+        # plate rows land together, or neither does (Fase 1d -- previously
+        # process_rows(plate_rows) opened its own separate connection here,
+        # so a failure partway through process_rows could leave the reconciled
+        # blank_preparations rows committed with no matching plates).
         with db.get_conn() as conn:
             for d, category, qty, by in RECONCILED_ALISTAMIENTO:
                 db.insert_blank_preparation(
                     conn, prep_date=date.fromisoformat(d), category=category,
                     quantity=qty, prepared_by=by,
                 )
-            conn.commit()
-        summary = process_rows(plate_rows)
+            summary = process_rows(conn, plate_rows)
         blank_preps_label = f"{len(RECONCILED_ALISTAMIENTO)} (reconciled)"
 
     print("\n=== Migration summary ===")

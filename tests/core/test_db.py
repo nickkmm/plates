@@ -1,17 +1,22 @@
 """Unit tests for app.core.db that don't need a real Postgres connection.
 
-get_conn() reads DB_HOST/DB_PORT/POSTGRES_* straight from os.environ on every
-call (see module docstring in app/core/db/__init__.py) and passes them through to
-psycopg.connect(). These tests mock psycopg.connect to verify exactly which
-arguments get_conn() builds, including its DB_HOST/DB_PORT fallback defaults
--- which tests/conftest.py always overrides for safety, so nothing else in
-this suite exercises that fallback path.
+_conninfo_kwargs() reads DB_HOST/DB_PORT/POSTGRES_* straight from os.environ
+on every call (see module docstring in app/core/db/__init__.py) and returns
+them as the kwargs get_conn()'s connection pool connects with. These tests
+call _conninfo_kwargs() directly to verify exactly which arguments it builds,
+including its DB_HOST/DB_PORT fallback defaults -- which tests/conftest.py
+always overrides for safety, so nothing else in this suite exercises that
+fallback path. (Pre-Fase-1d, get_conn() itself called psycopg.connect()
+directly and these tests mocked that; since the pool, get_conn() is a
+@contextmanager generator that doesn't build the pool -- or call
+psycopg.connect() at all -- until entered with `with`, and the pool is built
+once and reused rather than reading the environment per connection, so
+_conninfo_kwargs() is now the right unit to test this against.)
 """
 
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import patch
 
 import pytest
 from psycopg.rows import dict_row, tuple_row
@@ -21,7 +26,7 @@ from app.core.models import ExtractedRow
 from app.core.normalize import INVENTORY_CATEGORIES
 
 
-class TestGetConn:
+class TestConninfoKwargs:
     def test_passes_through_all_env_vars(self, monkeypatch):
         monkeypatch.setenv("DB_HOST", "myhost")
         monkeypatch.setenv("DB_PORT", "1234")
@@ -29,14 +34,11 @@ class TestGetConn:
         monkeypatch.setenv("POSTGRES_USER", "myuser")
         monkeypatch.setenv("POSTGRES_PASSWORD", "mypassword")
 
-        with patch("app.core.db.psycopg.connect") as mock_connect:
-            db.get_conn()
-
-        mock_connect.assert_called_once_with(
-            host="myhost", port="1234", dbname="mydb",
-            user="myuser", password="mypassword",
-            row_factory=dict_row,
-        )
+        assert db._conninfo_kwargs() == {
+            "host": "myhost", "port": "1234", "dbname": "mydb",
+            "user": "myuser", "password": "mypassword",
+            "row_factory": dict_row,
+        }
 
     def test_host_defaults_to_db_when_unset(self, monkeypatch):
         monkeypatch.delenv("DB_HOST", raising=False)
@@ -44,10 +46,7 @@ class TestGetConn:
         monkeypatch.setenv("POSTGRES_USER", "myuser")
         monkeypatch.setenv("POSTGRES_PASSWORD", "mypassword")
 
-        with patch("app.core.db.psycopg.connect") as mock_connect:
-            db.get_conn()
-
-        assert mock_connect.call_args.kwargs["host"] == "db"
+        assert db._conninfo_kwargs()["host"] == "db"
 
     def test_port_defaults_to_5432_when_unset(self, monkeypatch):
         monkeypatch.delenv("DB_PORT", raising=False)
@@ -55,18 +54,15 @@ class TestGetConn:
         monkeypatch.setenv("POSTGRES_USER", "myuser")
         monkeypatch.setenv("POSTGRES_PASSWORD", "mypassword")
 
-        with patch("app.core.db.psycopg.connect") as mock_connect:
-            db.get_conn()
-
-        assert mock_connect.call_args.kwargs["port"] == "5432"
+        assert db._conninfo_kwargs()["port"] == "5432"
 
     def test_missing_required_postgres_db_raises(self, monkeypatch):
         monkeypatch.delenv("POSTGRES_DB", raising=False)
         monkeypatch.setenv("POSTGRES_USER", "myuser")
         monkeypatch.setenv("POSTGRES_PASSWORD", "mypassword")
 
-        with patch("app.core.db.psycopg.connect"), pytest.raises(KeyError):
-            db.get_conn()
+        with pytest.raises(KeyError):
+            db._conninfo_kwargs()
 
 
 # ----------------------------------------------------------------------------

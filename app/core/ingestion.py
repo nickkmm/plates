@@ -2,14 +2,27 @@
 
 Every door (paste-JSON, image->API, Excel migration) converges here. Given a
 list of ExtractedRow, this normalizes them, detects duplicates, groups by
-order_number, inserts production_orders + plates in one transaction, recomputes
+order_number, inserts production_orders + plates, recomputes
 inventory_categories, and returns a Summary.
+
+process_rows/replace_order/find_duplicate_plate_numbers all take `conn` as
+their first parameter (Fase 1d) -- they read/write through an already-open
+connection the CALLER owns, exactly like every function in app/core/db/, and
+never commit/rollback it themselves. Before Fase 1d each of the three opened
+its OWN `db.get_conn()` internally, which meant a single logical operation
+(e.g. POST /ingest: check duplicates, then insert) actually ran across
+multiple separate transactions -- not atomic, and the kind of bug that gets
+more expensive to keep doing wrong once real money (unit_price) is on the
+line. See tests/core/test_ingestion.py's atomicity test for the specific
+failure mode this closes.
 """
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
 
+import psycopg
+from psycopg.rows import DictRow
 from pydantic import BaseModel
 
 from app.core import db
@@ -76,7 +89,9 @@ def _count_row(summary: Summary, row: ExtractedRow, is_dup: bool) -> None:
         summary.batch_replacements += 1
 
 
-def find_duplicate_plate_numbers(rows: list[ExtractedRow]) -> set[str]:
+def find_duplicate_plate_numbers(
+    conn: psycopg.Connection[DictRow], rows: list[ExtractedRow]
+) -> set[str]:
     """Read-only: which plate_numbers in this batch would be flagged
     is_possible_duplicate if inserted right now (already in the DB, or
     repeated within the batch itself). Mirrors process_rows' own detection
@@ -86,15 +101,17 @@ def find_duplicate_plate_numbers(rows: list[ExtractedRow]) -> set[str]:
     normalized = [normalize_row(r) for r in rows]
     plate_rows = [r for r in normalized if not is_alistado(r)]
     live_candidates, batch_counts = _dedup_candidates(plate_rows)
-    with db.get_conn() as conn:
-        already_present = db.existing_plate_numbers(conn, live_candidates)
+    already_present = db.existing_plate_numbers(conn, live_candidates)
     return {pn for pn in live_candidates if pn in already_present or batch_counts[pn] > 1}
 
 
-def process_rows(rows: list[ExtractedRow]) -> Summary:
+def process_rows(conn: psycopg.Connection[DictRow], rows: list[ExtractedRow]) -> Summary:
     """Normalize, dedup, insert, and recalc inventory for a batch of rows.
 
-    Runs in a single transaction: either the whole batch lands or none of it.
+    Runs entirely through `conn`, which the caller owns: it neither commits
+    nor rolls back, so `with db.get_conn() as conn: process_rows(conn, rows)`
+    lands the whole batch atomically -- either everything below commits
+    together on a clean exit, or nothing does.
     """
     normalized = [normalize_row(r) for r in rows]
 
@@ -109,57 +126,57 @@ def process_rows(rows: list[ExtractedRow]) -> Summary:
 
     summary = Summary()
 
-    with db.get_conn() as conn:
-        # ALISTAMIENTO -> blank_preparations (feed inventory.prepared)
-        for r in alistado_rows:
-            db.insert_blank_preparation(
-                conn,
-                prep_date=r.order_date,
-                category=r.plate_type,
-                quantity=r.quantity,
-                prepared_by=r.prepared_by,
+    # ALISTAMIENTO -> blank_preparations (feed inventory.prepared)
+    for r in alistado_rows:
+        db.insert_blank_preparation(
+            conn,
+            prep_date=r.order_date,
+            category=r.plate_type,
+            quantity=r.quantity,
+            prepared_by=r.prepared_by,
+        )
+        summary.blank_preparations += 1
+
+    already_present = db.existing_plate_numbers(conn, live_candidates)
+
+    # Group plate rows by order_number, preserving order.
+    groups: dict[str, list[ExtractedRow]] = defaultdict(list)
+    for r in plate_rows:
+        groups[r.order_number].append(r)
+
+    for order_number, group in groups.items():
+        head = group[0]
+        order_id = db.insert_order(
+            conn,
+            order_number=order_number,
+            order_date=head.order_date,
+            requested_by=head.requested_by,
+        )
+        summary.orders_inserted += 1
+
+        # Flag if order-level fields disagree within the group (data smell).
+        if len({r.requested_by for r in group}) > 1:
+            summary.review_notes.append(
+                f"Order {order_number}: multiple requested_by values in the same order."
             )
-            summary.blank_preparations += 1
 
-        already_present = db.existing_plate_numbers(conn, live_candidates)
-
-        # Group plate rows by order_number, preserving order.
-        groups: dict[str, list[ExtractedRow]] = defaultdict(list)
-        for r in plate_rows:
-            groups[r.order_number].append(r)
-
-        for order_number, group in groups.items():
-            head = group[0]
-            order_id = db.insert_order(
-                conn,
-                order_number=order_number,
-                order_date=head.order_date,
-                requested_by=head.requested_by,
+        for r in group:
+            is_dup = bool(
+                is_real_plate(r.plate_number)
+                and not r.is_voided
+                and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
             )
-            summary.orders_inserted += 1
+            db.insert_plate(conn, order_id=order_id, row=r, is_possible_duplicate=is_dup)
+            _count_row(summary, r, is_dup)
 
-            # Flag if order-level fields disagree within the group (data smell).
-            if len({r.requested_by for r in group}) > 1:
-                summary.review_notes.append(
-                    f"Order {order_number}: multiple requested_by values in the same order."
-                )
-
-            for r in group:
-                is_dup = bool(
-                    is_real_plate(r.plate_number)
-                    and not r.is_voided
-                    and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
-                )
-                db.insert_plate(conn, order_id=order_id, row=r, is_possible_duplicate=is_dup)
-                _count_row(summary, r, is_dup)
-
-        db.recalc_inventory(conn)
-        conn.commit()
+    db.recalc_inventory(conn)
 
     return summary
 
 
-def replace_order(order_number: str, rows: list[ExtractedRow]) -> Summary:
+def replace_order(
+    conn: psycopg.Connection[DictRow], order_number: str, rows: list[ExtractedRow]
+) -> Summary:
     """Fuse-replace every existing order under `order_number` with one fresh
     order built from `rows`.
 
@@ -186,7 +203,10 @@ def replace_order(order_number: str, rows: list[ExtractedRow]) -> Summary:
     which existing row to keep: after this runs, order_number exists exactly
     once, full stop.
 
-    Runs in a single transaction: either the whole replace lands or none of it.
+    Runs entirely through `conn`, which the caller owns: it neither commits
+    nor rolls back, so `with db.get_conn() as conn: replace_order(conn, ...)`
+    lands the whole replace atomically -- either everything below commits
+    together on a clean exit, or nothing does.
     """
     if not rows:
         raise ValueError("replace_order needs at least one row.")
@@ -204,37 +224,35 @@ def replace_order(order_number: str, rows: list[ExtractedRow]) -> Summary:
 
     summary = Summary()
 
-    with db.get_conn() as conn:
-        # Fuse: delete every existing order under this order_number (and its
-        # plates) before inserting the replacement -- regardless of whether
-        # that's 0, 1, or 2+ rows (WCY449/pedido 1030 shows 2+ really happens).
-        existing = db.find_orders_by_number(conn, order_number)
-        for match in existing:
-            db.delete_order(conn, match.id)
-            summary.plates_deleted += match.n_plates
-        summary.orders_replaced = len(existing)
+    # Fuse: delete every existing order under this order_number (and its
+    # plates) before inserting the replacement -- regardless of whether
+    # that's 0, 1, or 2+ rows (WCY449/pedido 1030 shows 2+ really happens).
+    existing = db.find_orders_by_number(conn, order_number)
+    for match in existing:
+        db.delete_order(conn, match.id)
+        summary.plates_deleted += match.n_plates
+    summary.orders_replaced = len(existing)
 
-        already_present = db.existing_plate_numbers(conn, live_candidates)
+    already_present = db.existing_plate_numbers(conn, live_candidates)
 
-        head = normalized[0]
-        order_id = db.insert_order(
-            conn,
-            order_number=order_number,
-            order_date=head.order_date,
-            requested_by=head.requested_by,
+    head = normalized[0]
+    order_id = db.insert_order(
+        conn,
+        order_number=order_number,
+        order_date=head.order_date,
+        requested_by=head.requested_by,
+    )
+    summary.orders_inserted = 1
+
+    for r in normalized:
+        is_dup = bool(
+            is_real_plate(r.plate_number)
+            and not r.is_voided
+            and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
         )
-        summary.orders_inserted = 1
+        db.insert_plate(conn, order_id=order_id, row=r, is_possible_duplicate=is_dup)
+        _count_row(summary, r, is_dup)
 
-        for r in normalized:
-            is_dup = bool(
-                is_real_plate(r.plate_number)
-                and not r.is_voided
-                and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
-            )
-            db.insert_plate(conn, order_id=order_id, row=r, is_possible_duplicate=is_dup)
-            _count_row(summary, r, is_dup)
-
-        db.recalc_inventory(conn)
-        conn.commit()
+    db.recalc_inventory(conn)
 
     return summary
