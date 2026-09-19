@@ -11,9 +11,9 @@
       <td>{{ r.cities|join(', ') if r.cities else '—' }}</td>
       <td>{{ r.total_qty }}</td>
       <td class="actions">
-        <a class="ver" href="{{ url_for('record_detail', order_id=r.id, q=query or None) }}">Ver</a>
+        <a class="ver" href="{{ url_for('records.record_detail', order_id=r.id, q=query or None) }}">Ver</a>
         {% if session.get('role') in full_access_roles %}
-        <form method="post" action="{{ url_for('records_delete') }}" style="display:inline"
+        <form method="post" action="{{ url_for('records.records_delete') }}" style="display:inline"
               onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} ({{ r.total_qty }} placa(s))?');">
           <input type="hidden" name="order_id" value="{{ r.id }}">
           <button class="del" type="submit">Eliminar</button>
