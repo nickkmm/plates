@@ -73,7 +73,7 @@ class TestGetConn:
 # Everything below needs a real Postgres connection (see tests/conftest.py:
 # `db_conn` truncates all 4 tables via `clean_db`, then hands back a live
 # connection). These call db.py's own insert_order/insert_plate/
-# insert_blank_preparation for setup -- deliberately bypassing app.core.process
+# insert_blank_preparation for setup -- deliberately bypassing app.core.ingestion
 # and app.core.normalize -- so a failure here points at db.py itself, not at
 # normalization or the ingestion pipeline (already covered elsewhere).
 # ----------------------------------------------------------------------------

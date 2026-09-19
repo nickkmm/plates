@@ -1,18 +1,23 @@
 """Schema migration runner: applies app/migrations/*.sql to an already-
 initialized database, then backfills customers/users from existing data.
 
-(The backfill functions/constants below are still named/spelled
-backfill_clientes/backfill_usuarios/BACKFILL_CLIENTES_VERSION/etc. -- Fase 1c
-(app/migrations/0003_rename_to_english.sql) renamed `clientes`/`usuarios`
-AND the Spanish-named POS columns Fase 1 also added to production_orders/
-plates (cliente_id -> customer_id, creado_por -> created_by, etc. -- see
-that migration file for the full map) to their English equivalents, but
-none of these Python identifiers changed. The BACKFILL_*_VERSION strings in
-particular are left alone on purpose: they are literal values already
-written into production's `schema_migrations` table by the original Fase 1
-run, and changing the string here would make this runner think that
-backfill had never happened, running it again unnecessarily against real
-production.)
+(The backfill functions/constants below are named backfill_customers/
+backfill_users/BACKFILL_CUSTOMERS_VERSION/BACKFILL_USERS_VERSION (Fase 1d,
+renamed from backfill_clientes/backfill_usuarios/BACKFILL_CLIENTES_VERSION/
+BACKFILL_USUARIOS_VERSION -- pure Python-identifier rename, no behavior
+change). Their STRING VALUES are a different story and were deliberately
+NOT touched by that rename: BACKFILL_CUSTOMERS_VERSION is still the literal
+"0002_backfill_clientes", and BACKFILL_USERS_VERSION is still
+"0003_backfill_usuarios" -- those exact strings are already written into
+production's `schema_migrations` table by the original Fase 1 run, and
+changing either one here would make this runner think that backfill had
+never happened, running it again unnecessarily against real production.
+This is unrelated to Fase 1c's `app/migrations/0003_rename_to_english.sql`,
+which renamed the `clientes`/`usuarios` tables themselves -- plus the
+Spanish-named POS columns Fase 1 also added to production_orders/plates
+(cliente_id -> customer_id, creado_por -> created_by, etc.; see that
+migration file for the full map) -- to their English equivalents at the SQL
+level; that rename was already complete before this one.)
 
 Deliberately named `schema_migrate.py`, NOT `migrate.py` -- `app/migrate.py`
 already exists and does something completely different (one-off historical
@@ -25,8 +30,8 @@ Usage:
 Safe to run repeatedly (idempotent): every `.sql` file under app/migrations/
 is applied and recorded in `schema_migrations` inside the SAME transaction
 (so a file that fails partway through is never marked applied), and already-
-applied files/backfill steps are skipped on the next run. The clientes/
-usuarios backfill is plain Python (not a `.sql` file) because grouping
+applied files/backfill steps are skipped on the next run. The customers/
+users backfill is plain Python (not a `.sql` file) because grouping
 requires app.core.normalize.normalize_requested_by -- it is tracked in the
 same `schema_migrations` table under its own synthetic version names, and its
 SQL is additionally written to be idempotent on its own (ON CONFLICT DO
@@ -57,8 +62,8 @@ _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migr
 # schema_migrations alongside the real *.sql filenames so a second run skips
 # them. Numbered to sort right after the schema migration that creates the
 # tables/columns they depend on.
-BACKFILL_CLIENTES_VERSION = "0002_backfill_clientes"
-BACKFILL_USUARIOS_VERSION = "0003_backfill_usuarios"
+BACKFILL_CUSTOMERS_VERSION = "0002_backfill_clientes"
+BACKFILL_USERS_VERSION = "0003_backfill_usuarios"
 
 
 def _migration_files() -> list[str]:
@@ -131,8 +136,8 @@ def _distinct_requested_by(conn: psycopg.Connection[DictRow]) -> list[str]:
         return [row["requested_by"] for row in cur.fetchall()]
 
 
-def backfill_clientes(conn: psycopg.Connection[DictRow]) -> None:
-    """One-time backfill of `clientes` from historical `requested_by` values.
+def backfill_customers(conn: psycopg.Connection[DictRow]) -> None:
+    """One-time backfill of `customers` from historical `requested_by` values.
 
     Algorithm (see the Fase 1 plan for the exact rationale):
       1. Read every distinct requested_by value.
@@ -181,7 +186,7 @@ def backfill_clientes(conn: psycopg.Connection[DictRow]) -> None:
                         """,
                         (customer_id, raw),
                     )
-            _record_version(cur, BACKFILL_CLIENTES_VERSION)
+            _record_version(cur, BACKFILL_CUSTOMERS_VERSION)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -189,13 +194,13 @@ def backfill_clientes(conn: psycopg.Connection[DictRow]) -> None:
 
     if skipped:
         print(
-            f"backfill_clientes: {len(skipped)} requested_by value(s) had no alphanumeric "
+            f"backfill_customers: {len(skipped)} requested_by value(s) had no alphanumeric "
             f"characters and were left with customer_id NULL for manual review: {skipped!r}"
         )
 
 
-def backfill_usuarios(conn: psycopg.Connection[DictRow]) -> None:
-    """One-time backfill of `usuarios` from the AUTH_USERS/AUTH_ROLES env vars.
+def backfill_users(conn: psycopg.Connection[DictRow]) -> None:
+    """One-time backfill of `users` from the AUTH_USERS/AUTH_ROLES env vars.
 
     Same username/password_hash pairs as today (werkzeug hashing is
     unchanged) -- nobody's password is reset. A username with no AUTH_ROLES
@@ -215,7 +220,7 @@ def backfill_usuarios(conn: psycopg.Connection[DictRow]) -> None:
                     """,
                     (username, password_hash, roles.get(username, ROLE_ADMIN)),
                 )
-            _record_version(cur, BACKFILL_USUARIOS_VERSION)
+            _record_version(cur, BACKFILL_USERS_VERSION)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -225,10 +230,10 @@ def backfill_usuarios(conn: psycopg.Connection[DictRow]) -> None:
 def run_backfills(conn: psycopg.Connection[DictRow]) -> None:
     """Run each backfill step that hasn't been recorded as applied yet."""
     applied = _applied_versions(conn)
-    if BACKFILL_CLIENTES_VERSION not in applied:
-        backfill_clientes(conn)
-    if BACKFILL_USUARIOS_VERSION not in applied:
-        backfill_usuarios(conn)
+    if BACKFILL_CUSTOMERS_VERSION not in applied:
+        backfill_customers(conn)
+    if BACKFILL_USERS_VERSION not in applied:
+        backfill_users(conn)
 
 
 def main() -> None:

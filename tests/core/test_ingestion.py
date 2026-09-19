@@ -1,4 +1,4 @@
-"""Tests for app.core.process.process_rows -- the single ingestion backend.
+"""Tests for app.core.ingestion.process_rows -- the single ingestion backend.
 
 Needs a real Postgres connection (see tests/conftest.py: `db_conn` truncates
 all 4 tables first via `clean_db`, then hands back a connection for setup/
@@ -16,8 +16,8 @@ import pytest
 from psycopg.rows import tuple_row
 
 from app.core import db
+from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
 from app.core.models import ExtractedRow
-from app.core.process import find_duplicate_plate_numbers, process_rows, replace_order
 
 
 def make_row(**overrides: object) -> ExtractedRow:

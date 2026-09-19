@@ -355,7 +355,7 @@ def find_orders_by_number(conn: psycopg.Connection[DictRow], order_number: str) 
     order_number has no unique constraint in the schema, and historically
     nothing ever checked for a collision here (only plate_number dedup did),
     so 0, 1, or even 2+ rows are all possible results -- no LIMIT needed. See
-    app.core.process.replace_order, which fuses every match this returns into
+    app.core.ingestion.replace_order, which fuses every match this returns into
     exactly one order.
     """
     with conn.cursor(row_factory=class_row(OrderSummary)) as cur:

@@ -1,12 +1,13 @@
 """Tests for app.schema_migrate.
 
 Four things are covered:
-  1. The clientes/usuarios backfill algorithm (writing into customers/users
-     since Fase 1c -- see app/schema_migrate.py's module docstring for why
-     the functions/constants involved keep their original Spanish names),
-     against small synthetic data (never real production numbers -- see the
-     Fase 1 plan's hard constraint about not fabricating/fetching real
-     data).
+  1. The customers/users backfill algorithm (backfill_customers/
+     backfill_users, Fase 1d names -- see app/schema_migrate.py's module
+     docstring for why their BACKFILL_*_VERSION string values stay the
+     original Spanish-named literals even though the Python identifiers
+     don't), against small synthetic data (never real production numbers --
+     see the Fase 1 plan's hard constraint about not fabricating/fetching
+     real data).
   2. Idempotency: re-running apply_sql_migrations()/backfill_*()/main() must
      be a no-op the second time.
   3. The schema invariant: a fresh database built from the CURRENT init.sql
@@ -161,12 +162,12 @@ class TestApplySqlMigrations:
 
 
 # --------------------------------------------------------------------------
-# backfill_clientes
+# backfill_customers
 # --------------------------------------------------------------------------
 
 
-class TestBackfillClientes:
-    def test_two_spelling_variants_collapse_into_one_cliente(self, db_conn):
+class TestBackfillCustomers:
+    def test_two_spelling_variants_collapse_into_one_customer(self, db_conn):
         """PTOV and PUNTODEVENTA both normalize to PTO.V (normalize.py's
         curated map) -- the grouping key must be the CANONICAL form, not the
         raw string, so both orders end up pointing at the SAME client."""
@@ -174,7 +175,7 @@ class TestBackfillClientes:
         _insert_order(db_conn, "PUNTODEVENTA", "2")
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT name FROM customers")
@@ -191,7 +192,7 @@ class TestBackfillClientes:
         _insert_order(db_conn, "//", "1")
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM customers")
@@ -207,7 +208,7 @@ class TestBackfillClientes:
         _insert_order(db_conn, "MUVA SERGIO", "2")
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT name FROM customers ORDER BY name")
@@ -217,18 +218,18 @@ class TestBackfillClientes:
         _insert_order(db_conn, "PTOV", "1")
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT requested_by FROM production_orders WHERE order_number = '1'")
             assert cur.fetchone()[0] == "PTOV"
 
-    def test_rerun_creates_no_duplicate_clientes(self, db_conn):
+    def test_rerun_creates_no_duplicate_customers(self, db_conn):
         _insert_order(db_conn, "PEDRO", "1")
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM customers")
@@ -239,7 +240,7 @@ class TestBackfillClientes:
         flow) must never be silently overwritten by a later backfill run."""
         order_id = _insert_order(db_conn, "PEDRO", "1")
         db_conn.commit()
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM customers WHERE name = 'OTRO'")
@@ -252,7 +253,7 @@ class TestBackfillClientes:
                         (other_customer_id, order_id))
         db_conn.commit()
 
-        schema_migrate.backfill_clientes(db_conn)
+        schema_migrate.backfill_customers(db_conn)
 
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT customer_id FROM production_orders WHERE id = %s", (order_id,))
@@ -260,16 +261,16 @@ class TestBackfillClientes:
 
 
 # --------------------------------------------------------------------------
-# backfill_usuarios
+# backfill_users
 # --------------------------------------------------------------------------
 
 
-class TestBackfillUsuarios:
-    def test_creates_one_usuario_per_auth_user_with_matching_role(self, db_conn, monkeypatch):
+class TestBackfillUsers:
+    def test_creates_one_user_per_auth_user_with_matching_role(self, db_conn, monkeypatch):
         monkeypatch.setenv("AUTH_USERS", "alice:pbkdf2:sha256:abc$def,bob:pbkdf2:sha256:xyz")
         monkeypatch.setenv("AUTH_ROLES", "bob:consulta")
 
-        schema_migrate.backfill_usuarios(db_conn)
+        schema_migrate.backfill_users(db_conn)
 
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT username, password_hash, role FROM users ORDER BY username")
@@ -278,12 +279,12 @@ class TestBackfillUsuarios:
         assert rows["alice"] == ("pbkdf2:sha256:abc$def", "admin")
         assert rows["bob"] == ("pbkdf2:sha256:xyz", "consulta")
 
-    def test_rerun_creates_no_duplicate_usuarios(self, db_conn, monkeypatch):
+    def test_rerun_creates_no_duplicate_users(self, db_conn, monkeypatch):
         monkeypatch.setenv("AUTH_USERS", "alice:hash1")
         monkeypatch.setenv("AUTH_ROLES", "")
 
-        schema_migrate.backfill_usuarios(db_conn)
-        schema_migrate.backfill_usuarios(db_conn)
+        schema_migrate.backfill_users(db_conn)
+        schema_migrate.backfill_users(db_conn)
 
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM users")
