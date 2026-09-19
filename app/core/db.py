@@ -4,6 +4,10 @@ Connection settings come from environment variables (same ones the Postgres
 container uses, plus DB_HOST/DB_PORT for where to reach it):
     DB_HOST (default "db"), DB_PORT (default "5432"),
     POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
+
+Connections are opened with row_factory=dict_row, so every SELECT below comes
+back as a dict keyed by column name (or list of such dicts) -- never a plain
+positional tuple.
 """
 
 from __future__ import annotations
@@ -14,22 +18,24 @@ from collections.abc import Iterable
 from datetime import date
 
 import psycopg
+from psycopg.rows import DictRow, dict_row
 
 from app.core.models import ExtractedRow
 from app.core.normalize import INVENTORY_CATEGORIES, clean_plate, inventory_category
 
 
-def get_conn() -> psycopg.Connection:
+def get_conn() -> psycopg.Connection[DictRow]:
     return psycopg.connect(
         host=os.environ.get("DB_HOST", "db"),
         port=os.environ.get("DB_PORT", "5432"),
         dbname=os.environ["POSTGRES_DB"],
         user=os.environ["POSTGRES_USER"],
         password=os.environ["POSTGRES_PASSWORD"],
+        row_factory=dict_row,
     )
 
 
-def existing_plate_numbers(conn: psycopg.Connection, candidates: Iterable[str]) -> set[str]:
+def existing_plate_numbers(conn: psycopg.Connection[DictRow], candidates: Iterable[str]) -> set[str]:
     """Return the subset of `candidates` already present as live (non-voided) plates."""
     values = list({c for c in candidates if c})
     if not values:
@@ -44,10 +50,10 @@ def existing_plate_numbers(conn: psycopg.Connection, candidates: Iterable[str]) 
             """,
             (values,),
         )
-        return {r[0] for r in cur.fetchall()}
+        return {r["plate_number"] for r in cur.fetchall()}
 
 
-def find_orders_for_plate(conn: psycopg.Connection, plate_number: str) -> list[dict]:
+def find_orders_for_plate(conn: psycopg.Connection[DictRow], plate_number: str) -> list[dict]:
     """Existing live (non-voided) orders that already used this plate_number.
 
     Used by the /ingest form to show the data-entry person exactly where a
@@ -65,12 +71,10 @@ def find_orders_for_plate(conn: psycopg.Connection, plate_number: str) -> list[d
             """,
             (plate_number,),
         )
-        assert cur.description is not None, "cur.description is always set after a successful SELECT"
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+        return cur.fetchall()
 
 
-def insert_order(conn: psycopg.Connection, *, order_number: str, order_date: date,
+def insert_order(conn: psycopg.Connection[DictRow], *, order_number: str, order_date: date,
                  requested_by: str) -> int:
     """Insert one production_orders row and return its id.
 
@@ -88,10 +92,10 @@ def insert_order(conn: psycopg.Connection, *, order_number: str, order_date: dat
         )
         row = cur.fetchone()
         assert row is not None, "RETURNING id on a successful INSERT always yields a row"
-        return row[0]
+        return row["id"]
 
 
-def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
+def insert_plate(conn: psycopg.Connection[DictRow], *, order_id: int, row: ExtractedRow,
                  is_possible_duplicate: bool) -> None:
     """Insert one plates row linked to order_id."""
     with conn.cursor() as cur:
@@ -121,7 +125,7 @@ def insert_plate(conn: psycopg.Connection, *, order_id: int, row: ExtractedRow,
         )
 
 
-def insert_blank_preparation(conn: psycopg.Connection, *, prep_date: date | str | None, category: str,
+def insert_blank_preparation(conn: psycopg.Connection[DictRow], *, prep_date: date | str | None, category: str,
                              quantity: int, prepared_by: str | None) -> None:
     """Record one ALISTAMIENTO event (blanks prepared / material intake).
 
@@ -141,23 +145,24 @@ def insert_blank_preparation(conn: psycopg.Connection, *, prep_date: date | str 
         )
 
 
-def _consumed_by_material(cur: psycopg.Cursor, *, where: str) -> dict[str, int]:
+def _consumed_by_material(cur: psycopg.Cursor[DictRow], *, where: str) -> dict[str, int]:
     """Sum plate quantities per inventory MATERIAL, mapping types in Python.
 
     Ornamental (and any other no-material type) maps to None and is skipped.
     """
     cur.execute(
-        f"SELECT plate_type, COALESCE(SUM(quantity), 0) FROM plates WHERE {where} GROUP BY plate_type"
+        f"SELECT plate_type, COALESCE(SUM(quantity), 0) AS qty FROM plates "
+        f"WHERE {where} GROUP BY plate_type"
     )
     totals: dict[str, int] = defaultdict(int)
-    for plate_type, qty in cur.fetchall():
-        material = inventory_category(plate_type)
+    for row in cur.fetchall():
+        material = inventory_category(row["plate_type"])
         if material is not None:
-            totals[material] += qty
+            totals[material] += row["qty"]
     return totals
 
 
-def recalc_inventory(conn: psycopg.Connection) -> None:
+def recalc_inventory(conn: psycopg.Connection[DictRow]) -> None:
     """Recompute prepared and consumed per inventory MATERIAL.
 
       prepared = SUM(blank_preparations.quantity) per category.
@@ -189,7 +194,7 @@ def recalc_inventory(conn: psycopg.Connection) -> None:
             )
 
 
-def inventory_view(conn: psycopg.Connection) -> list[dict]:
+def inventory_view(conn: psycopg.Connection[DictRow]) -> list[dict]:
     """Per-material inventory with available = prepared - consumed, plus wasted."""
     with conn.cursor() as cur:
         wasted = _consumed_by_material(cur, where="is_plate_annulled = true")
@@ -197,7 +202,8 @@ def inventory_view(conn: psycopg.Connection) -> list[dict]:
             "SELECT category, prepared, consumed FROM inventory_categories ORDER BY category"
         )
         rows = []
-        for category, prepared, consumed in cur.fetchall():
+        for row in cur.fetchall():
+            category, prepared, consumed = row["category"], row["prepared"], row["consumed"]
             rows.append({
                 "category": category,
                 "prepared": prepared,
@@ -208,19 +214,19 @@ def inventory_view(conn: psycopg.Connection) -> list[dict]:
         return rows
 
 
-def ornamental_count(conn: psycopg.Connection) -> int:
+def ornamental_count(conn: psycopg.Connection[DictRow]) -> int:
     """Total ornamental plates made (no material; just a counter)."""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT COALESCE(SUM(quantity), 0) FROM plates "
+            "SELECT COALESCE(SUM(quantity), 0) AS total FROM plates "
             "WHERE plate_type = 'ORNAMENTAL' AND is_voided = false"
         )
         row = cur.fetchone()
         assert row is not None, "a bare SUM(...) aggregate always yields exactly one row"
-        return row[0]
+        return row["total"]
 
 
-def distinct_requested_by(conn: psycopg.Connection) -> list[str]:
+def distinct_requested_by(conn: psycopg.Connection[DictRow]) -> list[str]:
     """Existing 'solicitado por' values, most frequent first (for the dropdown)."""
     with conn.cursor() as cur:
         cur.execute(
@@ -231,10 +237,10 @@ def distinct_requested_by(conn: psycopg.Connection) -> list[str]:
             """
         )
         # Drop punctuation-only junk like '//'.
-        return [r[0] for r in cur.fetchall() if any(ch.isalnum() for ch in r[0])]
+        return [r["requested_by"] for r in cur.fetchall() if any(ch.isalnum() for ch in r["requested_by"])]
 
 
-def distinct_cities(conn: psycopg.Connection) -> list[str]:
+def distinct_cities(conn: psycopg.Connection[DictRow]) -> list[str]:
     """Existing cities, most frequent first; drops obvious junk/annulment markers."""
     with conn.cursor() as cur:
         cur.execute(
@@ -244,11 +250,11 @@ def distinct_cities(conn: psycopg.Connection) -> list[str]:
             GROUP BY city ORDER BY count(*) DESC, city
             """
         )
-        return [c for c in (r[0] for r in cur.fetchall())
+        return [c for c in (r["city"] for r in cur.fetchall())
                 if any(ch.isalnum() for ch in c) and "ANULAD" not in c.upper()]
 
 
-def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
+def recent_orders(conn: psycopg.Connection[DictRow], limit: int = 50) -> list[dict]:
     """Orders sorted by their real business date, most recent first.
 
     Sorted by order_date, NOT created_at/insertion time -- a correction
@@ -286,12 +292,10 @@ def recent_orders(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
             """,
             (limit,),
         )
-        assert cur.description is not None, "cur.description is always set after a successful SELECT"
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+        return cur.fetchall()
 
 
-def find_orders_by_number(conn: psycopg.Connection, order_number: str) -> list[dict]:
+def find_orders_by_number(conn: psycopg.Connection[DictRow], order_number: str) -> list[dict]:
     """Existing production_orders rows with this EXACT order_number.
 
     Same row shape as recent_orders() (id, order_number, order_date,
@@ -331,12 +335,10 @@ def find_orders_by_number(conn: psycopg.Connection, order_number: str) -> list[d
             """,
             (order_number,),
         )
-        assert cur.description is not None, "cur.description is always set after a successful SELECT"
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+        return cur.fetchall()
 
 
-def search_plates_by_number(conn: psycopg.Connection, query: str, limit: int = 200) -> list[dict]:
+def search_plates_by_number(conn: psycopg.Connection[DictRow], query: str, limit: int = 200) -> list[dict]:
     """Find plates anywhere in the DB by (partial) plate_number, not just the
     recent-orders page -- lets the person check whether a plate was ever
     made before without knowing which order to look under.
@@ -361,12 +363,10 @@ def search_plates_by_number(conn: psycopg.Connection, query: str, limit: int = 2
             """,
             (needle, needle, limit),
         )
-        assert cur.description is not None, "cur.description is always set after a successful SELECT"
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+        return cur.fetchall()
 
 
-def search_orders_by_number(conn: psycopg.Connection, query: str, limit: int = 200) -> list[dict]:
+def search_orders_by_number(conn: psycopg.Connection[DictRow], query: str, limit: int = 200) -> list[dict]:
     """Find orders anywhere in the DB by (partial) order_number, not just the
     recent-orders page -- lets the person look up a specific old order without
     scrolling past everything newer than it.
@@ -407,12 +407,10 @@ def search_orders_by_number(conn: psycopg.Connection, query: str, limit: int = 2
             """,
             (needle, limit),
         )
-        assert cur.description is not None, "cur.description is always set after a successful SELECT"
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+        return cur.fetchall()
 
 
-def order_detail(conn: psycopg.Connection, order_id: int) -> tuple[dict | None, list[dict]]:
+def order_detail(conn: psycopg.Connection[DictRow], order_id: int) -> tuple[dict | None, list[dict]]:
     """Return (order dict, list of its plate dicts) for the detail view."""
     with conn.cursor() as cur:
         cur.execute(
@@ -420,11 +418,9 @@ def order_detail(conn: psycopg.Connection, order_id: int) -> tuple[dict | None, 
             "FROM production_orders WHERE id = %s",
             (order_id,),
         )
-        row = cur.fetchone()
-        if not row:
+        order = cur.fetchone()
+        if not order:
             return None, []
-        assert cur.description is not None, "cur.description is always set after a successful SELECT"
-        order = dict(zip([d[0] for d in cur.description], row, strict=False))
         cur.execute(
             """
             SELECT id, plate_type, plate_number, plate_to, quantity,
@@ -433,13 +429,11 @@ def order_detail(conn: psycopg.Connection, order_id: int) -> tuple[dict | None, 
             """,
             (order_id,),
         )
-        assert cur.description is not None, "cur.description is always set after a successful SELECT"
-        pcols = [d[0] for d in cur.description]
-        plates = [dict(zip(pcols, r, strict=False)) for r in cur.fetchall()]
+        plates = cur.fetchall()
     return order, plates
 
 
-def update_order(conn: psycopg.Connection, order_id: int, *, order_number: str, order_date: date | str,
+def update_order(conn: psycopg.Connection[DictRow], order_id: int, *, order_number: str, order_date: date | str,
                  requested_by: str) -> None:
     """Edit an order's header fields (date/number/solicitado por)."""
     with conn.cursor() as cur:
@@ -450,14 +444,14 @@ def update_order(conn: psycopg.Connection, order_id: int, *, order_number: str, 
         )
 
 
-def delete_order(conn: psycopg.Connection, order_id: int) -> None:
+def delete_order(conn: psycopg.Connection[DictRow], order_id: int) -> None:
     """Delete an order and all its plates (plates first, for the FK)."""
     with conn.cursor() as cur:
         cur.execute("DELETE FROM plates WHERE order_id = %s", (order_id,))
         cur.execute("DELETE FROM production_orders WHERE id = %s", (order_id,))
 
 
-def review_rows(conn: psycopg.Connection) -> list[dict]:
+def review_rows(conn: psycopg.Connection[DictRow]) -> list[dict]:
     """Rows flagged for review: possible duplicates only (real repeated plates)."""
     with conn.cursor() as cur:
         cur.execute(
@@ -470,12 +464,10 @@ def review_rows(conn: psycopg.Connection) -> list[dict]:
             ORDER BY p.plate_number, o.order_date
             """
         )
-        assert cur.description is not None, "cur.description is always set after a successful SELECT"
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, r, strict=False)) for r in cur.fetchall()]
+        return cur.fetchall()
 
 
-def update_plate(conn: psycopg.Connection, plate_id: int, *, plate_type: str,
+def update_plate(conn: psycopg.Connection[DictRow], plate_id: int, *, plate_type: str,
                  plate_number: str | None, quantity: int, is_voided: bool) -> None:
     """Edit a plate row and clear its review flag (treated as reviewed)."""
     with conn.cursor() as cur:
@@ -490,7 +482,7 @@ def update_plate(conn: psycopg.Connection, plate_id: int, *, plate_type: str,
         )
 
 
-def update_plate_full(conn: psycopg.Connection, plate_id: int, *, plate_type: str,
+def update_plate_full(conn: psycopg.Connection[DictRow], plate_id: int, *, plate_type: str,
                       plate_number: str | None, plate_to: str | None, city: str | None,
                       quantity: int, is_voided: bool, is_plate_annulled: bool,
                       is_batch_replacement: bool) -> None:
@@ -521,7 +513,7 @@ def update_plate_full(conn: psycopg.Connection, plate_id: int, *, plate_type: st
         )
 
 
-def resolve_plate(conn: psycopg.Connection, plate_id: int) -> None:
+def resolve_plate(conn: psycopg.Connection[DictRow], plate_id: int) -> None:
     """Mark a flagged plate as reviewed (not a duplicate) without other changes."""
     with conn.cursor() as cur:
         cur.execute(
@@ -530,7 +522,7 @@ def resolve_plate(conn: psycopg.Connection, plate_id: int) -> None:
         )
 
 
-def delete_plate(conn: psycopg.Connection, plate_id: int) -> None:
+def delete_plate(conn: psycopg.Connection[DictRow], plate_id: int) -> None:
     """Delete a plate row (e.g. a clear misread).
 
     If this leaves exactly one other flagged row with the same plate_number,
@@ -541,7 +533,7 @@ def delete_plate(conn: psycopg.Connection, plate_id: int) -> None:
     with conn.cursor() as cur:
         cur.execute("SELECT plate_number FROM plates WHERE id = %s", (plate_id,))
         row = cur.fetchone()
-        plate_number = row[0] if row else None
+        plate_number = row["plate_number"] if row else None
         cur.execute("DELETE FROM plates WHERE id = %s", (plate_id,))
         if plate_number:
             cur.execute(
@@ -552,5 +544,5 @@ def delete_plate(conn: psycopg.Connection, plate_id: int) -> None:
             if len(remaining) == 1:
                 cur.execute(
                     "UPDATE plates SET is_possible_duplicate = false WHERE id = %s",
-                    (remaining[0][0],),
+                    (remaining[0]["id"],),
                 )
