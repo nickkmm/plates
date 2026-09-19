@@ -18,6 +18,7 @@ from collections.abc import Iterable
 from datetime import date
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import DictRow, dict_row
 
 from app.core.models import ExtractedRow
@@ -145,15 +146,23 @@ def insert_blank_preparation(conn: psycopg.Connection[DictRow], *, prep_date: da
         )
 
 
-def _consumed_by_material(cur: psycopg.Cursor[DictRow], *, where: str) -> dict[str, int]:
+_CONSUMED_BY_MATERIAL_SELECT = sql.SQL(
+    "SELECT plate_type, COALESCE(SUM(quantity), 0) AS qty FROM plates WHERE {where} GROUP BY plate_type"
+)
+
+
+def _consumed_by_material(cur: psycopg.Cursor[DictRow], *, where: sql.Composable) -> dict[str, int]:
     """Sum plate quantities per inventory MATERIAL, mapping types in Python.
 
     Ornamental (and any other no-material type) maps to None and is skipped.
+
+    `where` is a psycopg.sql.Composable (e.g. sql.SQL("is_voided = false")), not
+    an f-string -- this is the one query in the module that used to build its
+    WHERE clause via raw string interpolation; composing it through sql.SQL
+    keeps that pattern from being copied by a future caller that DOES need to
+    interpolate untrusted input (e.g. a /cuadre date-range filter).
     """
-    cur.execute(
-        f"SELECT plate_type, COALESCE(SUM(quantity), 0) AS qty FROM plates "
-        f"WHERE {where} GROUP BY plate_type"
-    )
+    cur.execute(_CONSUMED_BY_MATERIAL_SELECT.format(where=where))
     totals: dict[str, int] = defaultdict(int)
     for row in cur.fetchall():
         material = inventory_category(row["plate_type"])
@@ -183,7 +192,7 @@ def recalc_inventory(conn: psycopg.Connection[DictRow]) -> None:
         # Iterate over the fixed set of materials (not just this query's keys) so a
         # category that just lost its last live plate still gets consumed reset to
         # 0, instead of being silently skipped (GROUP BY drops empty categories).
-        consumed = _consumed_by_material(cur, where="is_voided = false")
+        consumed = _consumed_by_material(cur, where=sql.SQL("is_voided = false"))
         for material in INVENTORY_CATEGORIES:
             cur.execute(
                 """
@@ -197,7 +206,7 @@ def recalc_inventory(conn: psycopg.Connection[DictRow]) -> None:
 def inventory_view(conn: psycopg.Connection[DictRow]) -> list[dict]:
     """Per-material inventory with available = prepared - consumed, plus wasted."""
     with conn.cursor() as cur:
-        wasted = _consumed_by_material(cur, where="is_plate_annulled = true")
+        wasted = _consumed_by_material(cur, where=sql.SQL("is_plate_annulled = true"))
         cur.execute(
             "SELECT category, prepared, consumed FROM inventory_categories ORDER BY category"
         )
@@ -254,6 +263,42 @@ def distinct_cities(conn: psycopg.Connection[DictRow]) -> list[str]:
                 if any(ch.isalnum() for ch in c) and "ANULAD" not in c.upper()]
 
 
+# Shared by recent_orders/find_orders_by_number/search_orders_by_number: the
+# three used to each copy-paste this exact SELECT (see git history) --
+# composed once here via psycopg.sql.SQL and concatenated with a per-case
+# WHERE/LIMIT instead. Deliberately plain `+` concatenation, not
+# `.format()`: the COALESCE default below is the literal Postgres empty-array
+# `'{}'`, which `.format()` would otherwise try to parse as a placeholder.
+_ORDER_SUMMARY_SELECT = sql.SQL(
+    """
+    SELECT o.id, o.order_number, o.order_date, o.requested_by,
+           COALESCE(
+               array_agg(DISTINCT p.city) FILTER (WHERE p.city IS NOT NULL),
+               '{}'
+           ) AS cities,
+           count(p.id) AS n_plates,
+           COALESCE(SUM(p.quantity), 0) AS total_qty,
+           string_agg(
+               CASE
+                   WHEN p.id IS NULL THEN NULL  -- LEFT JOIN phantom row: no plate at all
+                   WHEN p.plate_number IS NOT NULL THEN p.plate_number
+                   WHEN p.is_batch_replacement THEN 'reposición'
+                   WHEN p.is_voided THEN 'anulada'
+                   ELSE 'sin placa'
+               END, ', ' ORDER BY p.id) AS plates
+    FROM production_orders o
+    LEFT JOIN plates p ON p.order_id = o.id
+    """
+)
+
+_ORDER_SUMMARY_GROUP_ORDER = sql.SQL(
+    """
+    GROUP BY o.id
+    ORDER BY o.order_date DESC, o.created_at DESC, o.id DESC
+    """
+)
+
+
 def recent_orders(conn: psycopg.Connection[DictRow], limit: int = 50) -> list[dict]:
     """Orders sorted by their real business date, most recent first.
 
@@ -268,28 +313,7 @@ def recent_orders(conn: psycopg.Connection[DictRow], limit: int = 50) -> list[di
     """
     with conn.cursor() as cur:
         cur.execute(
-            """
-            SELECT o.id, o.order_number, o.order_date, o.requested_by,
-                   COALESCE(
-                       array_agg(DISTINCT p.city) FILTER (WHERE p.city IS NOT NULL),
-                       '{}'
-                   ) AS cities,
-                   count(p.id) AS n_plates,
-                   COALESCE(SUM(p.quantity), 0) AS total_qty,
-                   string_agg(
-                       CASE
-                           WHEN p.id IS NULL THEN NULL  -- LEFT JOIN phantom row: no plate at all
-                           WHEN p.plate_number IS NOT NULL THEN p.plate_number
-                           WHEN p.is_batch_replacement THEN 'reposición'
-                           WHEN p.is_voided THEN 'anulada'
-                           ELSE 'sin placa'
-                       END, ', ' ORDER BY p.id) AS plates
-            FROM production_orders o
-            LEFT JOIN plates p ON p.order_id = o.id
-            GROUP BY o.id
-            ORDER BY o.order_date DESC, o.created_at DESC, o.id DESC
-            LIMIT %s
-            """,
+            _ORDER_SUMMARY_SELECT + _ORDER_SUMMARY_GROUP_ORDER + sql.SQL(" LIMIT %s"),
             (limit,),
         )
         return cur.fetchall()
@@ -311,28 +335,7 @@ def find_orders_by_number(conn: psycopg.Connection[DictRow], order_number: str) 
     """
     with conn.cursor() as cur:
         cur.execute(
-            """
-            SELECT o.id, o.order_number, o.order_date, o.requested_by,
-                   COALESCE(
-                       array_agg(DISTINCT p.city) FILTER (WHERE p.city IS NOT NULL),
-                       '{}'
-                   ) AS cities,
-                   count(p.id) AS n_plates,
-                   COALESCE(SUM(p.quantity), 0) AS total_qty,
-                   string_agg(
-                       CASE
-                           WHEN p.id IS NULL THEN NULL  -- LEFT JOIN phantom row: no plate at all
-                           WHEN p.plate_number IS NOT NULL THEN p.plate_number
-                           WHEN p.is_batch_replacement THEN 'reposición'
-                           WHEN p.is_voided THEN 'anulada'
-                           ELSE 'sin placa'
-                       END, ', ' ORDER BY p.id) AS plates
-            FROM production_orders o
-            LEFT JOIN plates p ON p.order_id = o.id
-            WHERE o.order_number = %s
-            GROUP BY o.id
-            ORDER BY o.order_date DESC, o.created_at DESC, o.id DESC
-            """,
+            _ORDER_SUMMARY_SELECT + sql.SQL(" WHERE o.order_number = %s ") + _ORDER_SUMMARY_GROUP_ORDER,
             (order_number,),
         )
         return cur.fetchall()
@@ -382,29 +385,10 @@ def search_orders_by_number(conn: psycopg.Connection[DictRow], query: str, limit
     needle = f"%{query.strip()}%"
     with conn.cursor() as cur:
         cur.execute(
-            """
-            SELECT o.id, o.order_number, o.order_date, o.requested_by,
-                   COALESCE(
-                       array_agg(DISTINCT p.city) FILTER (WHERE p.city IS NOT NULL),
-                       '{}'
-                   ) AS cities,
-                   count(p.id) AS n_plates,
-                   COALESCE(SUM(p.quantity), 0) AS total_qty,
-                   string_agg(
-                       CASE
-                           WHEN p.id IS NULL THEN NULL  -- LEFT JOIN phantom row: no plate at all
-                           WHEN p.plate_number IS NOT NULL THEN p.plate_number
-                           WHEN p.is_batch_replacement THEN 'reposición'
-                           WHEN p.is_voided THEN 'anulada'
-                           ELSE 'sin placa'
-                       END, ', ' ORDER BY p.id) AS plates
-            FROM production_orders o
-            LEFT JOIN plates p ON p.order_id = o.id
-            WHERE o.order_number ILIKE %s
-            GROUP BY o.id
-            ORDER BY o.order_date DESC, o.created_at DESC, o.id DESC
-            LIMIT %s
-            """,
+            _ORDER_SUMMARY_SELECT
+            + sql.SQL(" WHERE o.order_number ILIKE %s ")
+            + _ORDER_SUMMARY_GROUP_ORDER
+            + sql.SQL(" LIMIT %s"),
             (needle, limit),
         )
         return cur.fetchall()
