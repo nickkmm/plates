@@ -163,7 +163,7 @@ convención de texto" (mismo valor, sin FK real) ya son FK reales:
   desde `init.sql`/la migración**, en vez de nacer vacía como antes de la
   Fase 1b: si no tuviera ya las 3 filas, la primerísima fila de
   ALISTAMIENTO en un volumen recién creado fallaría contra esta FK, porque
-  `recalc_inventory()` (en `app/core/db.py`) solo crea esas filas *después*
+  `recalc_inventory()` (en `app/core/db/`) solo crea esas filas *después*
   de insertar en `blank_preparations`, no antes.
 - `recalc_inventory()` sigue agregando `prepared`/`consumed` por texto de
   `category`/`plate_type` sobre `blank_preparations`/`plates` — eso no
@@ -397,7 +397,7 @@ por `plate_type` (7 valores) — la tarifa se factura por tipo de placa
 vendido, no por material de inventario. Confundirlos dejaría `ORNAMENTAL`
 sin poder tener precio propio y le daría a `REMOLQUE` la tarifa de
 `CARRO PÚBLICO`. Precio (dinero, por tipo) e inventario (cantidades, por
-material) son loops separados en `app/core/db.py` y deben seguir separados.
+material) son loops separados en `app/core/db/` y deben seguir separados.
 Desde la Fase 1b cada espacio de nombres tiene su propia tabla de referencia
 real (`plate_types` para los 7 tipos, `inventory_categories` para los 3
 materiales) — dos tablas *distintas*, no una FK compartida; seguir sin
@@ -434,7 +434,7 @@ el resto por defecto queda en `"COLOMBIA"` si se deja en blanco.
 
 El comentario original en `init.sql` sugiere que `available` debería ser
 `initial_stock + prepared - consumed`, pero en el código real
-(`app/core/db.py::inventory_view()`) es solo `prepared - consumed` — nunca
+(`app/core/db/inventory.py::inventory_view()`) es solo `prepared - consumed` — nunca
 se lee ni se escribe `initial_stock` en ningún lugar de la app. La línea
 base histórica se incorporó, en cambio, como filas reconciliadas dentro de
 `blank_preparations` durante la migración de Excel
