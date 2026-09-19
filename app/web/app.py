@@ -34,6 +34,7 @@ from app.core.normalize import clean_plate, is_real_plate, normalize_row, valida
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
 from app.web import auth
 from app.web.auth import consulta_allowed, login_required
+from app.web.blueprints.review import bp as review_bp
 from app.web.helpers import (
     FORM_PLATE_TYPES,
     INVENTORY_CATS,
@@ -54,6 +55,8 @@ if not SECRET_KEY:
         'python -c "import secrets; print(secrets.token_hex(32))"'
     )
 app.secret_key = SECRET_KEY
+
+app.register_blueprint(review_bp)
 
 # Mark the session cookie Secure only behind HTTPS (set COOKIE_SECURE=1 in
 # production). Off by default so local plain-HTTP dev still works.
@@ -405,52 +408,6 @@ def ingest_pdf():
         categories=FORM_PLATE_TYPES, today=today_iso(),
         header=header, lines=lines, notices=notices, order_duplicates=order_duplicates,
     )
-
-
-@app.get("/review")
-@login_required
-def review():
-    with db.get_conn() as conn:
-        rows = db.review_rows(conn)
-    return render_template("review.html", rows=rows)
-
-
-@app.post("/review/update")
-@login_required
-def review_update():
-    plate_id = int(request.form["plate_id"])
-    plate_number = (request.form.get("plate_number") or "").strip() or None
-    with db.get_conn() as conn:
-        db.update_plate(
-            conn,
-            plate_id,
-            plate_type=(request.form.get("plate_type") or "").strip(),
-            plate_number=plate_number,
-            quantity=int(request.form.get("quantity") or 0),
-            is_voided=request.form.get("is_voided") == "on",
-        )
-        db.recalc_inventory(conn)  # quantity/void changes affect consumed
-        conn.commit()
-    return redirect(url_for("review"))
-
-
-@app.post("/review/resolve")
-@login_required
-def review_resolve():
-    with db.get_conn() as conn:
-        db.resolve_plate(conn, int(request.form["plate_id"]))
-        conn.commit()
-    return redirect(url_for("review"))
-
-
-@app.post("/review/delete")
-@login_required
-def review_delete():
-    with db.get_conn() as conn:
-        db.delete_plate(conn, int(request.form["plate_id"]))
-        db.recalc_inventory(conn)
-        conn.commit()
-    return redirect(url_for("review"))
 
 
 @app.get("/inventory")

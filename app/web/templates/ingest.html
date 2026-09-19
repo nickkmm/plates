@@ -101,7 +101,7 @@
       <li>Se reemplazó{% if summary.orders_replaced > 1 %}n{% endif %} {{ summary.orders_replaced }} orden(es) existente(s) con este N° ({{ summary.plates_deleted }} placa(s) vieja(s) eliminada(s)) por esta orden nueva.</li>
       {% endif %}
     </ul>
-    {% if summary.possible_duplicates %}<p class="muted">Revisá los duplicados en <a href="{{ url_for('review') }}">Revisión</a>.</p>{% endif %}
+    {% if summary.possible_duplicates %}<p class="muted">Revisá los duplicados en <a href="{{ url_for('review.review') }}">Revisión</a>.</p>{% endif %}
   </div>
   {% endif %}
 
