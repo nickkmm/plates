@@ -64,7 +64,7 @@
   </div>
 
   <h2>Registrar alistamiento (entrada de blancos / material)</h2>
-  <form class="inline" method="post" action="{{ url_for('inventory_alistado') }}">
+  <form class="inline" method="post" action="{{ url_for('inventory.inventory_alistado') }}">
     <label>Categoría
       <select name="category" required>
         {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
