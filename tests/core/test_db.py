@@ -17,13 +17,15 @@ _conninfo_kwargs() is now the right unit to test this against.)
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
+import psycopg
 import pytest
 from psycopg.rows import dict_row, tuple_row
 
 from app.core import db
 from app.core.models import ExtractedRow
-from app.core.normalize import INVENTORY_CATEGORIES
+from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
 
 
 class TestConninfoKwargs:
@@ -851,3 +853,212 @@ class TestDeletePlate:
 
     def test_nonexistent_plate_id_is_a_silent_noop(self, db_conn):
         db.delete_plate(db_conn, 999999)  # must not raise
+
+
+# ----------------------------------------------------------------------------
+# Fase 2: customers / users / pricing
+# ----------------------------------------------------------------------------
+
+
+class TestResolveOrCreateCustomer:
+    def test_creates_a_new_customer_and_returns_its_id(self, db_conn):
+        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT name FROM customers WHERE id = %s", (customer_id,))
+            assert cur.fetchone() == ("PTO.V",)
+
+    def test_new_customer_has_all_attributes_null(self, db_conn):
+        customer_id = db.resolve_or_create_customer(db_conn, "NUEVO CLIENTE")
+        customer = db.get_customer(db_conn, customer_id)
+        assert customer is not None
+        assert customer.type is None
+        assert customer.document_type is None
+        assert customer.document_number is None
+        assert customer.document_relation is None
+        assert customer.phone is None
+        assert customer.email is None
+        assert customer.transit_license is None
+
+    def test_second_call_with_same_name_returns_same_id(self, db_conn):
+        first = db.resolve_or_create_customer(db_conn, "MUVA")
+        second = db.resolve_or_create_customer(db_conn, "MUVA")
+        assert first == second
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM customers")
+            assert cur.fetchone()[0] == 1
+
+    def test_spelling_variant_resolves_to_the_same_customer(self, db_conn):
+        """PTOV / PTO DE VENTA / PTO.V are curated as the SAME entity in
+        normalize._REQUESTED_BY_MAP_RAW -- resolve_or_create_customer must
+        canonicalize BEFORE the lookup, not just before the insert, or a
+        second spelling would create a near-duplicate customer row."""
+        first = db.resolve_or_create_customer(db_conn, "PTOV")
+        second = db.resolve_or_create_customer(db_conn, "PTO DE VENTA")
+        assert first == second
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT name FROM customers")
+            assert cur.fetchall() == [("PTO.V",)]
+
+    def test_distinct_entities_are_not_merged(self, db_conn):
+        """MUVA GRANADA and MUVA SERGIO are deliberately kept separate by
+        normalize_requested_by (see its module docstring) -- must resolve to
+        two different customers."""
+        granada = db.resolve_or_create_customer(db_conn, "MUVA GRANADA")
+        sergio = db.resolve_or_create_customer(db_conn, "MUVA SERGIO")
+        assert granada != sergio
+
+
+class TestGetCustomerByName:
+    def test_finds_an_existing_customer_by_canonical_name(self, db_conn):
+        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        found = db.get_customer_by_name(db_conn, "PTO.V")
+        assert found is not None
+        assert found.id == customer_id
+
+    def test_matches_via_canonicalization_not_just_exact_string(self, db_conn):
+        customer_id = db.resolve_or_create_customer(db_conn, "PTOV")  # stored as "PTO.V"
+        found = db.get_customer_by_name(db_conn, "pto de venta")  # same canonical form
+        assert found is not None
+        assert found.id == customer_id
+
+    def test_unknown_name_returns_none(self, db_conn):
+        assert db.get_customer_by_name(db_conn, "NO EXISTE") is None
+
+
+class TestGetCustomer:
+    def test_returns_none_for_nonexistent_id(self, db_conn):
+        assert db.get_customer(db_conn, 999999) is None
+
+
+class TestCreateUser:
+    def test_creates_and_returns_a_lookup_up_record(self, db_conn):
+        user_id = db.create_user(db_conn, username="alice", password_hash="hash1", role="admin")
+        user = db.get_user_by_id(db_conn, user_id)
+        assert user is not None
+        assert (user.username, user.password_hash, user.role, user.active) == (
+            "alice", "hash1", "admin", True,
+        )
+
+    def test_active_defaults_to_true(self, db_conn):
+        user_id = db.create_user(db_conn, username="bob", password_hash="hash2", role="consulta")
+        user = db.get_user_by_id(db_conn, user_id)
+        assert user is not None
+        assert user.active is True
+
+    def test_active_can_be_set_false(self, db_conn):
+        user_id = db.create_user(
+            db_conn, username="carol", password_hash="hash3", role="consulta", active=False
+        )
+        user = db.get_user_by_id(db_conn, user_id)
+        assert user is not None
+        assert user.active is False
+
+    def test_duplicate_username_raises(self, db_conn):
+        db.create_user(db_conn, username="dana", password_hash="hash4", role="admin")
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            db.create_user(db_conn, username="dana", password_hash="hash5", role="admin")
+
+
+class TestGetUserByUsername:
+    def test_finds_an_existing_user(self, db_conn):
+        db.create_user(db_conn, username="erin", password_hash="hash6", role="punto_venta")
+        user = db.get_user_by_username(db_conn, "erin")
+        assert user is not None
+        assert user.role == "punto_venta"
+
+    def test_unknown_username_returns_none(self, db_conn):
+        assert db.get_user_by_username(db_conn, "ghost") is None
+
+    def test_returns_inactive_user_too(self, db_conn):
+        """Deactivation is the caller's business rule (app.web.auth), not
+        this lookup's -- it must hand back an inactive row rather than
+        hiding it."""
+        db.create_user(db_conn, username="frank", password_hash="hash7", role="admin", active=False)
+        user = db.get_user_by_username(db_conn, "frank")
+        assert user is not None
+        assert user.active is False
+
+
+class TestListUsers:
+    def test_returns_every_user_ordered_by_id(self, db_conn):
+        first = db.create_user(db_conn, username="a1", password_hash="h", role="admin")
+        second = db.create_user(db_conn, username="a2", password_hash="h", role="consulta")
+        users = db.list_users(db_conn)
+        assert [u.id for u in users] == [first, second]
+
+    def test_empty_when_no_users(self, db_conn):
+        assert db.list_users(db_conn) == []
+
+
+class TestCurrentPrices:
+    def test_empty_when_no_prices_set(self, db_conn):
+        assert db.current_prices(db_conn) == {}
+
+    def test_reflects_set_prices(self, db_conn):
+        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
+        db.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
+        assert db.current_prices(db_conn) == {
+            "CARRO PARTICULAR": Decimal("150000"),
+            "MOTO PARTICULAR": Decimal("90000"),
+        }
+
+    def test_type_with_no_row_is_absent_not_zero(self, db_conn):
+        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
+        prices = db.current_prices(db_conn)
+        assert "ORNAMENTAL" not in prices
+
+
+class TestPriceList:
+    def test_one_row_per_plate_type_in_canonical_order(self, db_conn):
+        rows = db.price_list(db_conn)
+        assert [r.plate_type for r in rows] == list(PLATE_TYPES)
+
+    def test_unpriced_type_has_all_none_fields(self, db_conn):
+        rows = db.price_list(db_conn)
+        ornamental = next(r for r in rows if r.plate_type == "ORNAMENTAL")
+        assert ornamental.unit_price is None
+        assert ornamental.updated_at is None
+        assert ornamental.updated_by is None
+
+    def test_priced_type_reflects_the_set_value(self, db_conn):
+        db.set_price(db_conn, "REMOLQUE", Decimal("200000"), "admin")
+        rows = db.price_list(db_conn)
+        remolque = next(r for r in rows if r.plate_type == "REMOLQUE")
+        assert remolque.unit_price == Decimal("200000")
+        assert remolque.updated_by == "admin"
+        assert remolque.updated_at is not None
+
+
+class TestSetPrice:
+    def test_creates_a_new_price_row(self, db_conn):
+        db.set_price(db_conn, "ORNAMENTAL", Decimal("50000"), "admin")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT unit_price, updated_by FROM plate_type_prices WHERE plate_type = %s",
+                        ("ORNAMENTAL",))
+            assert cur.fetchone() == (Decimal("50000"), "admin")
+
+    def test_updates_an_existing_price_row_in_place(self, db_conn):
+        db.set_price(db_conn, "ORNAMENTAL", Decimal("50000"), "admin")
+        db.set_price(db_conn, "ORNAMENTAL", Decimal("60000"), "ptov")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM plate_type_prices WHERE plate_type = %s", ("ORNAMENTAL",))
+            assert cur.fetchone()[0] == 1  # updated in place, not a second row
+            cur.execute("SELECT unit_price, updated_by FROM plate_type_prices WHERE plate_type = %s",
+                        ("ORNAMENTAL",))
+            assert cur.fetchone() == (Decimal("60000"), "ptov")
+
+    def test_update_bumps_updated_at(self, db_conn):
+        db.set_price(db_conn, "ORNAMENTAL", Decimal("50000"), "admin")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT updated_at FROM plate_type_prices WHERE plate_type = %s", ("ORNAMENTAL",))
+            first_updated_at = cur.fetchone()[0]
+
+        db.set_price(db_conn, "ORNAMENTAL", Decimal("60000"), "admin")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT updated_at FROM plate_type_prices WHERE plate_type = %s", ("ORNAMENTAL",))
+            second_updated_at = cur.fetchone()[0]
+        assert second_updated_at >= first_updated_at
+
+    def test_invalid_plate_type_raises_value_error(self, db_conn):
+        with pytest.raises(ValueError, match="no es un tipo de placa"):
+            db.set_price(db_conn, "AVION", Decimal("1"), "admin")

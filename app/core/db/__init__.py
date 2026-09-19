@@ -47,6 +47,9 @@ This package replaces what used to be a single flat db.py, split by table:
     plates.py     -- plates reads/writes (plus distinct_cities, by symmetry
                      with orders.distinct_requested_by).
     inventory.py  -- blank_preparations / inventory_categories reads/writes.
+    customers.py  -- customers reads/writes (Fase 2).
+    users.py      -- users reads/writes (Fase 2; backs app/web/auth.py).
+    pricing.py    -- plate_type_prices reads/writes (Fase 2).
 Every public function each submodule exposes is re-exported below,
 explicitly (not `import *`), so existing call sites (`db.insert_order(...)`,
 etc.) keep working completely unchanged.
@@ -62,6 +65,12 @@ import psycopg
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import ConnectionPool
 
+from app.core.db.customers import (
+    CustomerRecord,
+    get_customer,
+    get_customer_by_name,
+    resolve_or_create_customer,
+)
 from app.core.db.inventory import (
     insert_blank_preparation,
     inventory_view,
@@ -91,9 +100,16 @@ from app.core.db.plates import (
     update_plate,
     update_plate_full,
 )
+from app.core.db.pricing import PriceRow, current_prices, price_list, set_price
+from app.core.db.users import UserRecord, create_user, get_user_by_id, get_user_by_username, list_users
 
 __all__ = [
+    "CustomerRecord",
     "OrderSummary",
+    "PriceRow",
+    "UserRecord",
+    "create_user",
+    "current_prices",
     "delete_order",
     "delete_plate",
     "distinct_cities",
@@ -102,18 +118,26 @@ __all__ = [
     "find_orders_by_number",
     "find_orders_for_plate",
     "get_conn",
+    "get_customer",
+    "get_customer_by_name",
+    "get_user_by_id",
+    "get_user_by_username",
     "insert_blank_preparation",
     "insert_order",
     "insert_plate",
     "inventory_view",
+    "list_users",
     "order_detail",
     "ornamental_count",
+    "price_list",
     "recalc_inventory",
     "recent_orders",
+    "resolve_or_create_customer",
     "resolve_plate",
     "review_rows",
     "search_orders_by_number",
     "search_plates_by_number",
+    "set_price",
     "update_order",
     "update_plate",
     "update_plate_full",
