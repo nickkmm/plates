@@ -1,7 +1,7 @@
 """Unit tests for app.core.db that don't need a real Postgres connection.
 
 get_conn() reads DB_HOST/DB_PORT/POSTGRES_* straight from os.environ on every
-call (see module docstring in app/core/db.py) and passes them through to
+call (see module docstring in app/core/db/__init__.py) and passes them through to
 psycopg.connect(). These tests mock psycopg.connect to verify exactly which
 arguments get_conn() builds, including its DB_HOST/DB_PORT fallback defaults
 -- which tests/conftest.py always overrides for safety, so nothing else in
@@ -777,7 +777,7 @@ class TestResolvePlate:
 class TestDeletePlate:
     """delete_plate also auto-clears a surviving sibling's review flag when
     exactly one other flagged row shares its plate_number -- see
-    app/core/db.py's docstring. This was a real bug found and fixed during
+    app/core/db/plates.py's docstring. This was a real bug found and fixed during
     manual duplicate-review cleanup; these tests pin down the exact
     threshold (1 remaining -> cleared, 2+ remaining -> left alone)."""
 
