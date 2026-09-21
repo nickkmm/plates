@@ -162,10 +162,12 @@ def _parse_quantity(value: str) -> int:
 
 # --- the pedido layout ------------------------------------------------------
 
-# Header-field labels we care about. Everything else on the document (NIT,
-# GUÍA #, VALOR, FECHA ENTREGA, FECHA TRANSF./PAGO, TRÁNSITO, the per-row
-# money columns, TOTAL PEDIDO and the whole footer) has no home in the schema
-# and is deliberately ignored.
+# Header-field labels we care about. VALOR (header), TRÁNSITO, the per-row
+# money columns and TOTAL PEDIDO (as a value -- its row is still used as a
+# boundary marker) have no home in the schema and are deliberately ignored;
+# unit_price always comes from the current tariff, never the PDF. NIT/
+# CÉDULA, GUÍA #, PEDIDO #, FECHA ENTREGA and FECHA TRANSF./PAGO (Fase 4) do
+# have a home -- see the labels below.
 _LABEL_CLIENTE = "CLIENTE"
 _LABEL_FECHA = "FECHA PEDIDO"
 # The production order carries two names across template generations: the
@@ -184,6 +186,34 @@ _LABELS_ORDEN = ("ORDEN DE PRODUCCION", "NT")
 # then silently missed the /ingest duplicate-order check (nothing in the DB is
 # really numbered that) and had to be found and deleted by hand.
 _LABEL_PEDIDO_HASH_BARE = "PEDIDO #"
+
+# Fase 4 -- header fields above the plate table (scanned via header_rows,
+# same as CLIENTE/FECHA PEDIDO above). NIT / CÉDULA can legitimately come
+# back as "" when the value cell falls in a different row than the label (a
+# merged-cell artifact on some documents) -- _find_header_value's "same row
+# only" scan already handles that correctly and must never grow a "look at
+# the next row" fallback, which risks pulling in a different field's value.
+_LABEL_NIT = "NIT / CÉDULA"
+_LABEL_GUIA = "GUÍA #"
+# 'PEDIDO #:' (with colon) is the new declarative-table label for the
+# client-facing claim number -- it never appears in _LABELS_ORDEN. This is
+# deliberately the SAME folded text as _LABEL_PEDIDO_HASH_BARE above: that
+# guard stops a bare 'PEDIDO #' (no colon) from being misread as another
+# field's value, while this lookup reads its own 'PEDIDO #: <value>' cell on
+# purpose. Kept as one constant instead of two so the two concerns can never
+# accidentally drift apart.
+_LABEL_FECHA_ENTREGA = "FECHA ENTREGA"
+_LABEL_FECHA_PAGO = "FECHA TRANSF./PAGO"
+
+# Fase 4 -- footer fields, physically BELOW the plate table (scanned via
+# footer_rows, see _find_footer_start). Labels are the full printed text,
+# matched exactly like every other label here -- never the short/abbreviated
+# form.
+_LABEL_RESPONSABLE = "RESPONSABLE DESPACHO (INGSE SAS)"
+_LABEL_TELEFONO = "TELÉFONO"
+_LABEL_RECIBE = "NOMBRE QUIEN RECIBE EL PEDIDO"
+_LABEL_FORMA_PAGO = "FORMA DE PAGO"
+_LABEL_OBSERVACIONES = "OBSERVACIONES"
 
 # The plate-line table's checkbox columns -> the canonical plate TYPE each one
 # means. Values must exist in normalize.PLATE_TYPES; the check below turns any
@@ -210,8 +240,29 @@ _COL_CANT = "CANT"
 _COL_RANGO_INI = "RANGO INICIAL"
 _COL_RANGO_FIN = "RANGO FINAL"
 
-# First cell of the row that ends the plate table.
+# First cell of the row that ends the plate table -- and, per Fase 4, also
+# the row where the footer block (RESPONSABLE DESPACHO, FORMA DE PAGO, etc.)
+# begins.
 _END_OF_LINES = "TOTAL PEDIDO"
+
+
+def _is_end_of_lines_row(row: list[Any]) -> bool:
+    return bool(row) and _fold(_cell_text(row[0])).startswith(_END_OF_LINES)
+
+
+def _find_footer_start(rows: list[list[Any]]) -> int:
+    """Index of the TOTAL PEDIDO row, i.e. where the footer block starts.
+
+    Everything from here to the end of the document is footer content. If no
+    such row exists (a document with no footer at all), this returns
+    len(rows), so footer_rows comes back empty and every footer field is
+    simply left blank -- never a crash, same "faithful, not clever" stance as
+    the rest of this module.
+    """
+    for i, row in enumerate(rows):
+        if _is_end_of_lines_row(row):
+            return i
+    return len(rows)
 
 
 class ParsedLine(BaseModel):
@@ -231,11 +282,29 @@ class ParsedPedido(BaseModel):
     Header fields may be empty/None when the document left them blank or wrote
     them unrecognizably -- that is deliberate, so one bad field never costs the
     person the other 30 correctly-parsed plate lines.
+
+    The Fase 4 fields below (customer_document_number through notes) are raw
+    text straight off the PDF -- no business-rule interpretation (vocabulary
+    matching, "is this required") happens here, that's app.web.blueprints.
+    ingest._form_from_pedido's job when it maps this onto the /ingest header
+    dict. payment_method in particular is passed through UNNORMALIZED: the
+    caller runs it through normalize.normalize_choice and decides whether an
+    unrecognized value earns a notice.
     """
 
     order_number: str = ""
     order_date: date | None = None
     requested_by: str = ""
+    customer_document_number: str = ""
+    tracking_number: str = ""
+    client_order_number: str = ""
+    delivery_date: date | None = None
+    payment_date: date | None = None
+    dispatched_by: str = ""
+    customer_phone: str = ""
+    received_by: str = ""
+    payment_method: str = ""
+    notes: str = ""
     lines: list[ParsedLine] = []
 
     @property
@@ -394,7 +463,7 @@ def _parse_lines(rows: list[list[Any]], columns: dict[str, int]) -> list[ParsedL
     """
     lines: list[ParsedLine] = []
     for row in rows:
-        if row and _fold(_cell_text(row[0])).startswith(_END_OF_LINES):
+        if _is_end_of_lines_row(row):
             break
         plate = clean_plate(_cell_at(row, columns, _COL_PLACA))
         rango_ini = clean_plate(_cell_at(row, columns, _COL_RANGO_INI))
@@ -436,6 +505,12 @@ def parse_pedido_pdf(source: PdfSource) -> ParsedPedido:
 
     header_index, columns = _find_plate_header(rows)
     header_rows = rows[:header_index]  # fields live above the plate table
+    # Fase 4: everything from the TOTAL PEDIDO row onward is the footer block
+    # (RESPONSABLE DESPACHO, TELÉFONO, NOMBRE QUIEN RECIBE, FORMA DE PAGO,
+    # OBSERVACIONES) -- physically below the plate table, invisible to
+    # header_rows. _find_header_value itself is untouched; it's simply
+    # pointed at a different row slice here.
+    footer_rows = rows[_find_footer_start(rows):]
 
     pedido = ParsedPedido(
         # ORDEN DE PRODUCCION (or its older name NT), never PEDIDO # -- they
@@ -443,6 +518,21 @@ def parse_pedido_pdf(source: PdfSource) -> ParsedPedido:
         order_number=_find_first_header_value(header_rows, _LABELS_ORDEN),
         order_date=parse_order_date(_find_header_value(header_rows, _LABEL_FECHA)),
         requested_by=_find_header_value(header_rows, _LABEL_CLIENTE),
+        # NIT / CÉDULA can legitimately come back "" (see _LABEL_NIT above) --
+        # never patched up by looking at another row.
+        customer_document_number=_find_header_value(header_rows, _LABEL_NIT),
+        tracking_number=_find_header_value(header_rows, _LABEL_GUIA),
+        # Same folded text as the _LABEL_PEDIDO_HASH_BARE guard inside
+        # _find_header_value -- see that constant's comment above.
+        client_order_number=_find_header_value(header_rows, _LABEL_PEDIDO_HASH_BARE),
+        delivery_date=parse_order_date(_find_header_value(header_rows, _LABEL_FECHA_ENTREGA)),
+        payment_date=parse_order_date(_find_header_value(header_rows, _LABEL_FECHA_PAGO)),
+        dispatched_by=_find_header_value(footer_rows, _LABEL_RESPONSABLE),
+        customer_phone=_find_header_value(footer_rows, _LABEL_TELEFONO),
+        received_by=_find_header_value(footer_rows, _LABEL_RECIBE),
+        # Raw, unnormalized -- see ParsedPedido's docstring.
+        payment_method=_find_header_value(footer_rows, _LABEL_FORMA_PAGO),
+        notes=_find_header_value(footer_rows, _LABEL_OBSERVACIONES),
         lines=_parse_lines(rows[header_index + 1:], columns),
     )
     if not pedido.lines:

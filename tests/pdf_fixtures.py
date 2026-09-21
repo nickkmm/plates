@@ -81,6 +81,16 @@ def build_pedido_pdf(
     pedido_numero: str = "77",
     order_label: str = "ORDEN DE\nPRODUCCION:",
     order_row_leaks_bare_pedido_label: bool = False,
+    nit: str = "",
+    nit_value_in_next_row: bool = False,
+    guia: str = "",
+    fecha_entrega: str = "",
+    fecha_pago: str = "",
+    responsable: str = "",
+    telefono: str = "",
+    recibe: str = "",
+    forma_pago: str = "",
+    observaciones: str = "",
     lines: list[dict[str, str]] | None = None,
 ) -> bytes:
     """Render a pedido PDF and return its bytes.
@@ -92,6 +102,16 @@ def build_pedido_pdf(
     field 'NT:'. `order_row_leaks_bare_pedido_label` reproduces a real layout
     where a colon-less 'PEDIDO #' sits later in the SAME row as the order
     label -- confirmed happening for real, see pdf_extract._LABEL_PEDIDO_HASH_BARE.
+
+    Fase 4 fields (`nit`/`guia`/`fecha_entrega`/`fecha_pago` above the plate
+    table, `responsable`/`telefono`/`recibe`/`forma_pago`/`observaciones`
+    below it) all default to "" -- that row is simply omitted (header) or left
+    label-only with a blank value (footer), same as today, so every existing
+    test keeps exercising the plain document unless it opts in.
+    `nit_value_in_next_row` reproduces a real merged-cell artifact where the
+    'NIT / CÉDULA:' label's value lands in the row AFTER it instead of
+    alongside it on the same row -- `nit` in that mode is the (misplaced)
+    value, which the parser's "same row only" scan must never pick up.
     """
     specs = DEFAULT_LINES if lines is None else lines
 
@@ -99,23 +119,47 @@ def build_pedido_pdf(
     if order_row_leaks_bare_pedido_label:
         order_row[6] = "PEDIDO #"
 
-    table: list[list[Any]] = [
+    header_rows: list[list[Any]] = [
         _field_row("CLIENTE:", client),
         _field_row("FECHA PEDIDO:", order_date),
         order_row,
         _field_row(f"PEDIDO #: {pedido_numero}", ""),
+    ]
+    if nit_value_in_next_row:
+        # The label's own row has no value at all -- a real artifact where a
+        # merged value cell renders on the following table row instead.
+        header_rows.append(_field_row("NIT / CÉDULA:", ""))
+        header_rows.append(_field_row("", nit or "999999999"))
+    elif nit:
+        header_rows.append(_field_row("NIT / CÉDULA:", nit))
+    if guia:
+        header_rows.append(_field_row("GUÍA #:", guia))
+    if fecha_entrega:
+        header_rows.append(_field_row("FECHA ENTREGA:", fecha_entrega))
+    if fecha_pago:
+        header_rows.append(_field_row("FECHA TRANSF./PAGO:", fecha_pago))
+
+    table: list[list[Any]] = [
+        *header_rows,
         list(COLUMNS),
         *[_data_row(s) for s in specs],
     ]
     total_row = _blank_row()
     total_row[0] = "TOTAL PEDIDO:"
     table.append(total_row)
-    for footer in ("RESPONSABLE DESPACHO (INGSE SAS):", "FORMA DE PAGO:", "OBSERVACIONES:"):
+    footer_fields = [
+        ("RESPONSABLE DESPACHO (INGSE SAS):", responsable),
+        ("TELÉFONO:", telefono),
+        ("NOMBRE QUIEN RECIBE EL PEDIDO:", recibe),
+        ("FORMA DE PAGO:", forma_pago),
+        ("OBSERVACIONES:", observaciones),
+    ]
+    for label, value in footer_fields:
         row = _blank_row()
-        row[0] = footer
+        row[0] = f"{label} {value}" if value else label
         table.append(row)
 
-    header_field_rows = range(4)  # the 'LABEL: value' rows above the plate table
+    header_field_rows = range(len(header_rows))  # the 'LABEL: value' rows above the plate table
     style: list[Any] = [
         ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
         ("FONTSIZE", (0, 0), (-1, -1), 6),
@@ -128,7 +172,8 @@ def build_pedido_pdf(
         style.append(("SPAN", (0, r), (3, r)))
         style.append(("SPAN", (4, r), (9, r)))
     last = len(table) - 1
-    for r in range(last - 3, last + 1):  # TOTAL PEDIDO + footer rows span the width
+    footer_block_len = 1 + len(footer_fields)  # TOTAL PEDIDO + the footer rows
+    for r in range(last - footer_block_len + 1, last + 1):  # span the full width
         style.append(("SPAN", (0, r), (-1, r)))
 
     buffer = io.BytesIO()
