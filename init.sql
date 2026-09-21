@@ -108,7 +108,7 @@ CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,   -- same werkzeug format as AUTH_USERS today
-    role TEXT NOT NULL,            -- admin / produccion / consulta / punto_venta
+    role TEXT NOT NULL,            -- admin / produccion / punto_venta
     active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT now()
 );

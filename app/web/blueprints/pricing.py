@@ -8,7 +8,7 @@ normalize.PLATE_TYPES directly.
 
 @login_required (admin-only), NOT @pos_allowed -- the plan is explicit that
 'punto_venta' edits orders/payments, not tariffs, so it must 403 here same as
-'consulta'/'produccion'.
+'produccion'.
 """
 
 from __future__ import annotations

@@ -22,7 +22,7 @@ All routes except /login, /logout and /healthz require an authenticated
 session. Most also require a full-access role (admin/producción); see
 app.web.auth.login_required. A small allowlist of read-only lookup routes
 (/records, /records/<id>) instead accepts any authenticated role, including
-the read-only 'consulta' role -- see app.web.auth.consulta_allowed.
+the read-only 'producción' role -- see app.web.auth.consulta_allowed.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ app.config.update(
 @app.context_processor
 def _inject_full_access_roles() -> dict:
     """Expose auth.FULL_ACCESS_ROLES/POS_ROLES to templates, so they gate
-    edit/delete UI on role membership (not a hardcoded '!= consulta') --
+    edit/delete UI on role membership (not a hardcoded '!= producción') --
     keeps templates in sync automatically if a role's access level ever
     changes again. pos_roles (Fase 3) is its own key, not a rename of
     full_access_roles: admin-only actions (Revisión/Inventario links, the

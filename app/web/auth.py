@@ -36,7 +36,6 @@ from app.core.db.users import UserRecord
 
 ROLE_ADMIN = "admin"
 ROLE_PRODUCCION = "produccion"
-ROLE_CONSULTA = "consulta"
 # New in Fase 2 (PTO.V's own role). Spelled lowercase-with-underscore, no
 # accent -- see the note on ROLES below about why these exact literals matter.
 ROLE_PUNTO_VENTA = "punto_venta"
@@ -48,12 +47,12 @@ ROLE_PUNTO_VENTA = "punto_venta"
 # column (backfilled from AUTH_ROLES) -- 'produccion' has NO accent, even
 # though prose elsewhere ("producción") does. Changing any of these strings
 # would silently lock out real users whose row already has the old value.
-ROLES = (ROLE_ADMIN, ROLE_PRODUCCION, ROLE_CONSULTA, ROLE_PUNTO_VENTA)
+ROLES = (ROLE_ADMIN, ROLE_PRODUCCION, ROLE_PUNTO_VENTA)
 
 # 'produccion' started as a full-access role and was demoted to read-only
-# (same as 'consulta') once real usage clarified it should only ever look
-# things up. Kept as its own role (rather than just aliased to 'consulta')
-# in case it needs to diverge again later.
+# once real usage clarified it should only ever look things up -- it's the
+# only read-only role today (a separate 'consulta' role that used to be
+# functionally identical to it was removed as redundant).
 FULL_ACCESS_ROLES = {ROLE_ADMIN}
 
 # New in Fase 2: an intermediate access level for 'punto_venta' -- narrower
@@ -160,9 +159,9 @@ def landing_url() -> str:
     POS_ROLES (admin + punto_venta) start at Registrar -- Fase 3 put /ingest
     behind @pos_allowed, not @login_required, so punto_venta can actually use
     it as its daily entry point (that IS its job: capturing sales). Every
-    other role (read-only: 'consulta', 'produccion') can't reach /ingest at
-    all, so sending it there would just bounce into a 403 -- send it to
-    Registros instead, the one place it can actually use.
+    other role (read-only: 'produccion') can't reach /ingest at all, so
+    sending it there would just bounce into a 403 -- send it to Registros
+    instead, the one place it can actually use.
     """
     if session.get("role") not in POS_ROLES:
         return url_for("records.records")
@@ -210,9 +209,10 @@ def login_required(view):
 
 
 def consulta_allowed(view):
-    """Like login_required, but lets EVERY authenticated role through (including
-    'consulta'). Only for routes that purely read/look things up -- nothing
-    behind this decorator may write to the database."""
+    """Like login_required, but lets EVERY authenticated role through
+    (including read-only ones like 'produccion'). Only for routes that purely
+    read/look things up -- nothing behind this decorator may write to the
+    database."""
 
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -226,8 +226,8 @@ def consulta_allowed(view):
 def pos_allowed(view):
     """Like login_required, but also lets 'punto_venta' through (POS_ROLES =
     {admin, punto_venta}) -- the Fase 2 access tier for the point-of-sale
-    capture flow. 403 for every other authenticated role (consulta,
-    produccion). Which routes actually use this decorator is Fase 3's job
+    capture flow. 403 for every other authenticated role (produccion).
+    Which routes actually use this decorator is Fase 3's job
     (/ingest, /ingest/pdf, /records/<id>/save, /cuadre per the plan) -- this
     phase only adds the decorator itself."""
 
