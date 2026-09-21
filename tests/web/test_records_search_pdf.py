@@ -196,12 +196,12 @@ class TestGracefulFailure:
         assert resp.status_code != 500
 
 
-class TestConsultaRoleAllowed:
+class TestProduccionRoleAllowed:
     """Reconciliation guard: this route is the third member of the consult-only
     allowlist (alongside /records and /records/<id>) mentioned in
-    app.web.auth's docs -- the 'consulta' role (PTO.V) must be able to reach
-    it, unlike every write route."""
+    app.web.auth's docs -- a read-only role like 'produccion' must be able to
+    reach it, unlike every write route."""
 
-    def test_consulta_role_can_search_by_pdf(self, consulta_client):
-        resp = upload(consulta_client, build_pedido_pdf())
+    def test_produccion_role_can_search_by_pdf(self, produccion_client):
+        resp = upload(produccion_client, build_pedido_pdf())
         assert resp.status_code == 200
