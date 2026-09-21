@@ -94,15 +94,21 @@ def resolve_or_create_customer(
     SELECT-then-INSERT would race.
 
     The keyword attributes (Fase 3's /ingest "cliente" fieldset) are written
-    ONLY on the INSERT branch, i.e. only for a genuinely brand-new customer
-    -- the ON CONFLICT branch still only ever touches `name` (a no-op
-    "rewrite it to itself", purely so RETURNING id fires on the existing
-    row). This is deliberate, not an oversight: per the plan's B5, editing
-    an order may only change WHICH customer it points to, never rewrite an
-    existing customer's own stored attributes (that's out of scope, deferred
-    to a future dedicated customers screen) -- ingestion.py's calls (name
-    only, via process_rows/replace_order) and record_save's call (also name
-    only, per B5) both keep working unchanged against this same signature.
+    on the INSERT branch for a genuinely brand-new customer, same as always.
+    For an EXISTING customer, the ON CONFLICT branch fills in ONLY the
+    attributes that are still NULL on that row (COALESCE(existing, new)) --
+    it never overwrites an attribute the customer already has a value for,
+    even if the caller passes a different one (see
+    test_existing_customer_attributes_are_never_overwritten). This is what
+    lets the 191 customers created by the pre-POS historical backfill (all
+    NULL attributes -- the old Excel ledger never captured them) get their
+    real data filled in naturally the next time someone types it while
+    placing an order for them, instead of staying blank forever with no way
+    to fix them short of a dedicated customers admin screen (still doesn't
+    exist) or a manual DB edit. ingestion.py's calls (name only, via
+    process_rows/replace_order) and record_save's call (also name only) pass
+    every keyword as NULL, so COALESCE(existing, NULL) = existing for them --
+    a true no-op, unchanged from before.
     """
     canonical = normalize_requested_by(name)
     with conn.cursor() as cur:
@@ -113,7 +119,15 @@ def resolve_or_create_customer(
                 phone, email, transit_license
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+            ON CONFLICT (name) DO UPDATE SET
+                name = EXCLUDED.name,
+                type = COALESCE(customers.type, EXCLUDED.type),
+                document_type = COALESCE(customers.document_type, EXCLUDED.document_type),
+                document_number = COALESCE(customers.document_number, EXCLUDED.document_number),
+                document_relation = COALESCE(customers.document_relation, EXCLUDED.document_relation),
+                phone = COALESCE(customers.phone, EXCLUDED.phone),
+                email = COALESCE(customers.email, EXCLUDED.email),
+                transit_license = COALESCE(customers.transit_license, EXCLUDED.transit_license)
             RETURNING id
             """,
             (canonical, type, document_type, document_number, document_relation,

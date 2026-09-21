@@ -1310,10 +1310,10 @@ class TestResolveOrCreateCustomer:
         assert customer.transit_license == "LIC1"
 
     def test_existing_customer_attributes_are_never_overwritten(self, db_conn):
-        """Per the plan's B5: resolving an order to an EXISTING customer may
-        never rewrite that customer's own stored attributes, even if the
-        caller passes different ones -- editing a customer's own data is out
-        of scope (deferred to a future dedicated customers screen)."""
+        """An attribute the customer ALREADY has a value for must never be
+        replaced by a different one from a later call -- only a still-NULL
+        attribute may be filled in (see
+        test_existing_customer_null_attributes_get_backfilled below)."""
         first_id = db.resolve_or_create_customer(
             db_conn, "PTO.V", type="EMPRESA", phone="3009998877",
         )
@@ -1324,6 +1324,33 @@ class TestResolveOrCreateCustomer:
         customer = db.get_customer(db_conn, first_id)
         assert customer is not None
         assert customer.type == "EMPRESA"
+        assert customer.phone == "3009998877"
+
+    def test_existing_customer_null_attributes_get_backfilled(self, db_conn):
+        """The other half of the contract: a still-NULL attribute on an
+        EXISTING customer (e.g. one of the 191 rows the pre-POS historical
+        backfill created with every attribute NULL) gets filled in the next
+        time a caller passes a real value for it -- without touching any
+        attribute the customer already has a value for."""
+        first_id = db.resolve_or_create_customer(db_conn, "PTO.V", type="EMPRESA")
+        second_id = db.resolve_or_create_customer(
+            db_conn, "PTO.V", type="PERSONA NATURAL", phone="3001234567",
+        )
+        assert first_id == second_id
+        customer = db.get_customer(db_conn, first_id)
+        assert customer is not None
+        assert customer.type == "EMPRESA"  # already set -- untouched
+        assert customer.phone == "3001234567"  # was NULL -- now filled in
+
+    def test_a_null_argument_never_blanks_out_an_existing_value(self, db_conn):
+        """A caller that doesn't have a given field to offer passes None for
+        it (e.g. ingestion.py's/record_save's name-only calls) -- that must
+        never be mistaken for "clear this attribute"."""
+        first_id = db.resolve_or_create_customer(db_conn, "PTO.V", phone="3009998877")
+        second_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        assert first_id == second_id
+        customer = db.get_customer(db_conn, first_id)
+        assert customer is not None
         assert customer.phone == "3009998877"
 
 

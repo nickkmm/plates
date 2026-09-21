@@ -10,6 +10,7 @@ fixture so they run with zero DB dependency; the couple that assert a real
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
@@ -96,6 +97,24 @@ class TestLogin:
 
         resp2 = client.get("/")
         assert urlparse(resp2.headers["Location"]).path == "/login"
+
+    def test_successful_login_is_logged(self, client, test_credentials, caplog):
+        """A successful login must produce an INFO-level activity log line
+        (see app.web.app's app.logger.setLevel(logging.INFO) -- without it
+        this is silently dropped by Flask's default WARNING-level handler),
+        the only way to see "who logged in when" outside the DB."""
+        username, password = test_credentials
+        with caplog.at_level(logging.INFO):
+            client.post("/login", data={"username": username, "password": password})
+        assert any(
+            "login" in r.message and username in r.message and "admin" in r.message
+            for r in caplog.records
+        )
+
+    def test_failed_login_is_not_logged_as_a_login(self, client, clean_db, caplog):
+        with caplog.at_level(logging.INFO):
+            client.post("/login", data={"username": "ghost", "password": "whatever"})
+        assert not any(r.message.startswith("login:") for r in caplog.records)
 
     def test_unknown_username_does_not_authenticate(self, client, clean_db):
         """Fase 2: authenticate() queries `users` for this username even
@@ -721,6 +740,29 @@ class TestRecordSaveRoute:
             )
             assert cur.fetchone() == ("3000-B", date(2026, 2, 2), "MARIA")
 
+    def test_successful_save_is_logged(self, authenticated_client, db_conn, caplog):
+        order_id = _insert_order(db_conn, order_number="3002", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV300", quantity=1),
+                         is_possible_duplicate=False)
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'SAV300'")
+            plate_id = cur.fetchone()[0]
+        db_conn.commit()
+
+        with caplog.at_level(logging.INFO):
+            authenticated_client.post(f"/records/{order_id}/save", data={
+                "order_number": "3002", "order_date": "2026-01-01", "requested_by": "PEDRO",
+                "plate_id": [str(plate_id)], "plate_type": ["CARRO PARTICULAR"],
+                "plate_number": ["SAV300"], "plate_to": [""], "city": [""],
+                "quantity": ["1"], "is_plate_annulled": [""],
+            })
+        assert any(
+            r.message == f"record saved: user=testuser order_id={order_id} order_number=3002"
+            for r in caplog.records
+        )
+
     def test_edits_an_existing_plate_in_place(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="3001", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
@@ -1185,6 +1227,21 @@ class TestIngestPostRoute:
             assert cur.fetchall() == [("3000", "PEDRO")]
             cur.execute("SELECT plate_number, plate_type, quantity, city FROM plates")
             assert cur.fetchall() == [("AAA111", "CARRO PARTICULAR", 1, "BOGOTA")]
+
+    def test_successful_submission_is_logged(self, authenticated_client, clean_db, caplog):
+        with caplog.at_level(logging.INFO):
+            authenticated_client.post("/ingest", data={
+                "payment_method": "OTROS",
+                "order_number": "3001", "order_date": "2026-01-01",
+                "requested_by": "PEDRO",
+                "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+                "plate_number": ["AAA112"], "plate_to": [""], "quantity": ["1"],
+                "city": ["BOGOTA"],
+            })
+        assert any(
+            r.message == "order created: user=testuser order_number=3001 plates=1"
+            for r in caplog.records
+        )
 
     def test_two_lines_in_one_order_keep_their_own_cities(self, authenticated_client, clean_db):
         """The regression test for the original bug: city is per plate, so two

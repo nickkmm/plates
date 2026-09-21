@@ -8,7 +8,7 @@ just the two routes that call into it.
 
 from __future__ import annotations
 
-from flask import Blueprint, redirect, render_template, request, session, url_for
+from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
 
 from app.web import auth
 
@@ -35,6 +35,7 @@ def login_post():
         session["role"] = user.role
         session["user_id"] = user.id
         session.permanent = True
+        current_app.logger.info("login: user=%s role=%s", user.username, user.role)
         return redirect(next_url if auth.is_safe_next(next_url) else auth.landing_url())
     return (
         render_template(
