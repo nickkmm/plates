@@ -36,7 +36,7 @@ def make_row(**overrides: object) -> ExtractedRow:
 def _insert_order(conn, *, order_number: str, order_date, requested_by: str) -> int:
     """Back-compat shim for this file's pre-existing "seed an order to
     replace/fuse against" setup calls -- see the identical helper (and its
-    full rationale) in tests/core/test_db.py."""
+    full rationale) in tests/core/db/_helpers.py."""
     return db.insert_order(
         conn,
         row=ExtractedRow(order_number=order_number, order_date=order_date, requested_by=requested_by,

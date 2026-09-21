@@ -12,7 +12,7 @@ section for the full reasoning behind each rule:
 - render_cash_summary_pdf produces a real, non-empty PDF.
 
 Uses db.insert_order/db.insert_plate directly (bypassing app.core.ingestion),
-same convention as tests/core/test_db.py -- a failure here should point at
+same convention as tests/core/db/ -- a failure here should point at
 cash_summary.py's aggregation, not at ingestion or normalization.
 """
 

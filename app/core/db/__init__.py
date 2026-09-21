@@ -28,7 +28,7 @@ unconditionally, including when POSTGRES_PASSWORD isn't set (to run
 app/core's pure-logic tests with zero DB dependency), so building the pool at
 import time would break that. `_conninfo_kwargs()` is split out as a pure
 function purely so it can be tested without mocking psycopg.connect or
-spinning up a real pool (see tests/core/test_db.py::TestConninfoKwargs).
+spinning up a real pool (see tests/core/db/test_connection.py::TestConninfoKwargs).
 `with db.get_conn() as conn:` behaves exactly as before at all ~21 existing
 call sites: `pool.connection()` wraps the checked-out connection in `with
 conn:` internally, so the usual commit-on-success/rollback-on-exception
@@ -149,7 +149,7 @@ __all__ = [
 def _conninfo_kwargs() -> dict[str, object]:
     """Connection kwargs read fresh from the environment on every call --
     split out from pool construction (_get_pool) so this can be unit-tested
-    directly (tests/core/test_db.py::TestConninfoKwargs) without mocking
+    directly (tests/core/db/test_connection.py::TestConninfoKwargs) without mocking
     psycopg.connect or building a real ConnectionPool."""
     return {
         "host": os.environ.get("DB_HOST", "db"),

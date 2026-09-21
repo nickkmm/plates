@@ -25,6 +25,7 @@ that's the ONLY remaining consumer.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 
 from werkzeug.security import generate_password_hash
 
@@ -199,19 +200,77 @@ def _db_ready() -> bool:
         return False
 
 
+_CLEAN_DB_SAVEPOINT = "clean_db_sp"
+
+
 @pytest.fixture
-def clean_db(_db_ready: bool):
-    """Truncate all app tables (identities reset) before the test runs.
+def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
+    """Reset all app tables (identities reset) before the test runs, via a
+    SAVEPOINT-based rollback instead of TRUNCATE -- much faster (no disk/WAL
+    work per test) and what the Fase 1d plan's step 10 fast-follow asked for.
+    NOT a real parallelism enabler though (verified before writing this):
+    every test still shares the ONE physical `plates_test` database, so two
+    tests/workers TRUNCATing (or even just DELETE-ing) the same tables
+    concurrently would just serialize on Postgres's own locks -- true
+    multi-worker parallelism would need a separate schema/DB per pytest-xdist
+    worker, out of scope here.
 
     Skips the test if the shared Postgres / `plates_test` isn't reachable,
     rather than failing outright -- keeps `app/core` pure-logic tests runnable
     with zero DB dependency while still exercising real DB code when
-    available. Still TRUNCATEs rather than relying on a rollback for
-    isolation: `db.get_conn()` is a pooled connection now (Fase 1d), so a
-    rollback-per-test fixture is possible in principle, but this project
-    hasn't adopted one yet (see the Fase 1d plan's step 10 fast-follow) --
-    truncating keeps every test's starting state identical regardless of
-    what a previous test committed.
+    available.
+
+    **How the rollback works**: checks out ONE raw connection directly from
+    the pool (`db._get_pool()`, bypassing `db.get_conn()`'s own context
+    manager) and holds it for the WHOLE test. `app.core.db.get_conn` is
+    monkeypatched to always yield this SAME connection instead of checking
+    out a (possibly different) one from the pool -- this is what makes every
+    `with db.get_conn() as conn:` call anywhere (test code AND, critically,
+    every Flask route the test drives through `authenticated_client`/etc.)
+    operate on one shared Postgres session/transaction, so they all see each
+    other's uncommitted writes (same-session MVCC visibility needs no commit
+    at all) and none of it can leak to another test.
+
+    A real top-level `conn.commit()` would durably write to the actual
+    `plates_test` database -- unacceptable, since nothing must survive past
+    this fixture's teardown. But `conn.commit()`/`conn.rollback()` are called
+    explicitly, pervasively, by both real app code (`records.py`, `review.py`,
+    `pricing.py`, `inventory.py`) and ~100 existing test call sites -- so
+    they can't just be disabled; they have to keep meaning "durably keep what
+    I've done so far" / "discard what I've done since the last checkpoint",
+    just scoped to a SAVEPOINT inside the outer (never-committed) transaction
+    instead of the whole database. Verified empirically (against real
+    Postgres, not assumed) before writing this:
+      - `RELEASE SAVEPOINT` finalizes it (can't ROLLBACK TO it afterward);
+        `ROLLBACK TO SAVEPOINT` discards everything since it but leaves the
+        savepoint itself intact and reusable -- including recovering a
+        connection stuck in Postgres's aborted-transaction state after a
+        real error (psycopg.errors.*Violation), the same way a real
+        `conn.rollback()` would, which is exactly what several
+        `tests/test_schema_migrate.py` tests rely on after an expected FK
+        violation.
+      - `psycopg`'s own `conn.transaction()` context manager was considered
+        and rejected: it raises `ProgrammingError` if `conn.commit()`/
+        `.rollback()` are called while one is open -- incompatible with the
+        pervasive explicit-commit pattern above. Plain SQL
+        `SAVEPOINT`/`RELEASE`/`ROLLBACK TO` has no such restriction.
+    So `conn.commit`/`conn.rollback` are reassigned (plain instance
+    attributes, restored via the captured originals in `finally`, not via
+    `monkeypatch` -- ordering relative to this fixture's own final real
+    rollback needs to be exact, not left to monkeypatch's generic LIFO
+    teardown) to instead RELEASE+re-SAVEPOINT / ROLLBACK TO the ONE ongoing
+    savepoint. `db.get_conn()` itself is reassigned (via `monkeypatch`, the
+    ordinary case it's built for) to a context manager that does the
+    equivalent on a clean/exceptional exit -- replicating the original
+    pool's own "commit on success, rollback on exception" `with` behavior
+    (see `app/core/db/__init__.py::get_conn`), which
+    `tests/core/test_ingestion.py::TestAtomicity` depends on. Since there's
+    only ONE savepoint (not a stack), nested `with db.get_conn()` calls
+    (e.g. a test's own `db_conn` fixture staying open around HTTP requests
+    the test drives, each internally calling `db.get_conn()` again) are
+    safe: an inner block's checkpoint/rollback just moves the SAME
+    savepoint forward or back, and a redundant `ROLLBACK TO` from an outer
+    handler after an inner one already fired is a harmless no-op.
 
     Reseeds `inventory_categories` with the 3 fixed materials right after
     truncating it (mirroring init.sql/0002_reference_integrity.sql, which
@@ -237,17 +296,65 @@ def clean_db(_db_ready: bool):
     """
     if not _db_ready:
         pytest.skip("Postgres test database not reachable at 127.0.0.1:5433 (plates_test)")
-    with db.get_conn() as conn, conn.cursor() as cur:
-        cur.execute(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
-        cur.executemany(
-            "INSERT INTO inventory_categories (category) VALUES (%s)",
-            [(category,) for category in INVENTORY_CATEGORIES],
-        )
-        cur.executemany(
-            "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)",
-            _TEST_USERS,
-        )
-    yield
+
+    pool = db._get_pool()
+    conn = pool.getconn()
+    real_commit, real_rollback = conn.commit, conn.rollback
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
+            cur.executemany(
+                "INSERT INTO inventory_categories (category) VALUES (%s)",
+                [(category,) for category in INVENTORY_CATEGORIES],
+            )
+            cur.executemany(
+                "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)",
+                _TEST_USERS,
+            )
+            cur.execute(f"SAVEPOINT {_CLEAN_DB_SAVEPOINT}")
+
+        def _checkpoint_commit() -> None:
+            # A real conn.commit() on an aborted transaction is one of
+            # Postgres's special always-allowed exceptions -- it's silently
+            # treated as a rollback, no error -- which is what let some
+            # tests get away with never explicitly recovering from an
+            # expected error (e.g. a UNIQUE violation from
+            # db.create_user()) under the old TRUNCATE design, where this
+            # function's job was done by a real conn.commit()/rollback() at
+            # the pool's own `with` exit. RELEASE SAVEPOINT has no such
+            # exception -- it errors out on an aborted connection -- so that
+            # same "commit on aborted = implicit rollback" leniency has to
+            # be reproduced by hand here.
+            if conn.info.transaction_status == psycopg.pq.TransactionStatus.INERROR:
+                _checkpoint_rollback()
+                return
+            with conn.cursor() as cur:
+                cur.execute(f"RELEASE SAVEPOINT {_CLEAN_DB_SAVEPOINT}")
+                cur.execute(f"SAVEPOINT {_CLEAN_DB_SAVEPOINT}")
+
+        def _checkpoint_rollback() -> None:
+            with conn.cursor() as cur:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {_CLEAN_DB_SAVEPOINT}")
+
+        conn.commit = _checkpoint_commit
+        conn.rollback = _checkpoint_rollback
+
+        @contextmanager
+        def _shared_get_conn():
+            try:
+                yield conn
+            except BaseException:
+                _checkpoint_rollback()
+                raise
+            else:
+                _checkpoint_commit()
+
+        monkeypatch.setattr(db, "get_conn", _shared_get_conn)
+        yield
+    finally:
+        conn.commit, conn.rollback = real_commit, real_rollback
+        real_rollback()
+        pool.putconn(conn)
 
 
 @pytest.fixture

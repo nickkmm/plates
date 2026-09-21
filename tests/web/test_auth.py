@@ -11,8 +11,9 @@ is pure string/urlparse logic, also no context needed.
 
 The `pos_allowed`/`login_required`/`consulta_allowed` decorators need a real
 Flask request/session context to exercise -- login_required/consulta_allowed
-already get end-to-end coverage through real routes in tests/web/test_app.py
-(/ingest, /records); pos_allowed has no route wired to it yet (that's
+already get end-to-end coverage through real routes in
+tests/web/test_ingest.py (/ingest) and tests/web/test_records.py (/records);
+pos_allowed has no route wired to it yet (that's
 Fase 3), so it's exercised here against a minimal standalone Flask app built
 just for this test file.
 """
@@ -40,7 +41,7 @@ class TestLoadUsers:
         os.environ directly: a bare `del os.environ[...]` in a finally block
         discards whatever AUTH_USERS was set to by tests/conftest.py instead
         of restoring it, which is invisible under a single plain pytest
-        invocation (file collection order happens to run test_app.py's
+        invocation (file collection order happens to run test_login.py's
         login tests first) but corrupts later runs whenever the test suite
         executes more than once in the same process -- e.g. under mutmut,
         which reruns pytest in-process per mutant.
@@ -308,7 +309,8 @@ class TestIsSafeNext:
 # pos_allowed -- no real route uses this decorator yet (Fase 3's job), so
 # it's exercised here against a tiny standalone Flask app built just for
 # this test file. login_required/consulta_allowed already get real
-# end-to-end route coverage in tests/web/test_app.py.
+# end-to-end route coverage in tests/web/test_login.py, test_records.py,
+# test_ingest.py, and test_roles.py.
 # --------------------------------------------------------------------------
 
 

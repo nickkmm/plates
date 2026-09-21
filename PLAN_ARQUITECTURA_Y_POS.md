@@ -451,8 +451,27 @@ implemente Fase 3 en adelante no vuelva a tocar esto:
   `is_real_plate(...) and not is_voided` y del bloque de contadores.
   Steps 10 (reorg de tests + fixture de rollback) y 11 (reescritura de
   docs) del plan original de esta fase se hicieron/actualizaron aparte
-  (docs) o quedaron como fast-follow no bloqueante (step 10, todavía
-  pendiente si alguien quiere tomarlo).
+  (docs) o quedaron como fast-follow no bloqueante. **Step 10, mitad de
+  reorg de tests: HECHO (2026-09-21)** -- `tests/web/test_app.py` y
+  `tests/core/test_db.py` quedaron divididos siguiendo el mismo espejo que
+  el código fuente (`tests/web/test_login.py`/`test_review.py`/
+  `test_inventory.py`/`test_records.py`/`test_ingest.py`/`test_roles.py` y
+  el paquete nuevo `tests/core/db/` con `test_connection.py`/
+  `test_orders.py`/`test_plates.py`/`test_inventory.py`/`test_customers.py`/
+  `test_users.py`/`test_pricing.py`), cero cambio de comportamiento (789
+  tests, antes y después). **Step 10 completo (2026-09-21)**: la otra
+  mitad -- convertir `clean_db` de `TRUNCATE` a una transacción con
+  rollback por test -- también está hecha (`tests/conftest.py::clean_db`),
+  vía `SAVEPOINT`/`RELEASE SAVEPOINT`/`ROLLBACK TO SAVEPOINT` a mano (no
+  `conn.transaction()` de psycopg -- ese prohíbe los `conn.commit()`/
+  `.rollback()` explícitos que el código real y ~100 tests ya hacían).
+  Investigado y descartado explícitamente: esto NO habilita correr pytest
+  en paralelo contra el mismo `plates_test` (dos workers competirían por
+  los mismos locks de Postgres igual que con `TRUNCATE`; paralelismo real
+  necesitaría esquema/base separada por worker, fuera de alcance) -- el
+  beneficio real es velocidad y que un test que falla a medias no deja
+  datos corruptos para el siguiente. Detalle completo en el docstring de
+  `clean_db`.
 - **Fase 1e** (PR #18 + PR #20, mergeados): rotación de logs de Docker
   (`json-file`, `max-size: 10m`, `max-file: 3`) en `db`/`web`; Sentry
   (`sentry-sdk[flask]`) inicializado en `app.py` solo si `SENTRY_DSN` está
@@ -890,20 +909,44 @@ viene incluido con `psycopg[binary]` — cambiar `requirements.txt` a
    `tests/web/test_ingest_pdf.py:112` y
    `tests/web/test_records_search_pdf.py:65`, que apuntan al módulo viejo).
    Tests en verde después de cada uno.
-10. **Fast-follow recomendado, no bloqueante**: `tests/web/test_app.py`
-    (1672 líneas) y `tests/core/test_db.py` (855 líneas) ya son más grandes
-    que el código que prueban, y sin dividirlos se recrea el mismo problema
-    de trazabilidad del lado de los tests. Dividir `test_app.py` (ya
-    organizado por clase `TestXRoute`) en `tests/web/test_ingest.py`/
-    `test_records.py`/`test_review.py`/`test_inventory.py`/`test_login.py`,
-    y `test_db.py` en `tests/core/db/test_orders.py`/`test_plates.py`/
-    `test_inventory.py` — mismo espejo que el código fuente, cero cambio de
-    comportamiento. Este es también el momento de convertir `clean_db` de
-    `TRUNCATE` a una transacción con rollback por test (lo habilita el paso
-    7: ahora que `ingestion.py` recibe `conn` en vez de abrir el suyo, un
-    test puede envolver todo en una sola transacción y revertirla al final)
-    — más rápido y permite correr `pytest` en paralelo, cosa que hoy
-    `docs/LOCAL_DEVELOPMENT.md` documenta como no soportado.
+10. **Fast-follow recomendado, no bloqueante -- reorg de tests HECHA
+    (2026-09-21)**: `tests/web/test_app.py` (llegó a 2096 líneas) y
+    `tests/core/test_db.py` (llegó a 1529 líneas) ya eran más grandes que
+    el código que prueban, y sin dividirlos se recreaba el mismo problema
+    de trazabilidad del lado de los tests. Se dividió `test_app.py` (ya
+    organizado por clase `TestXRoute`) en `tests/web/test_login.py`/
+    `test_review.py`/`test_inventory.py`/`test_records.py`/`test_ingest.py`/
+    `test_roles.py` (más `tests/web/_helpers.py` para los helpers
+    compartidos `make_row`/`_insert_order`), y `test_db.py` en el paquete
+    nuevo `tests/core/db/` (`test_connection.py`/`test_orders.py`/
+    `test_plates.py`/`test_inventory.py`/`test_customers.py`/
+    `test_users.py`/`test_pricing.py`, más `tests/core/db/_helpers.py`) —
+    mismo espejo que el código fuente, cero cambio de comportamiento (789
+    tests, antes y después). `test_roles.py` quedó aparte porque
+    `TestProduccionRole`/`TestPuntoVentaRole` cruzan varios blueprints a la
+    vez, no encajan en un solo archivo por blueprint.
+
+    **También HECHO (2026-09-21)**: convertir `clean_db` de `TRUNCATE` a
+    una transacción con rollback por test (lo habilita el paso 7: ahora que
+    `ingestion.py` recibe `conn` en vez de abrir el suyo, un test puede
+    envolver todo en una sola transacción y revertirla al final) — real,
+    no trivial: `conn.commit()`/`.rollback()` se llaman explícitamente en
+    código real (`records.py`/`review.py`/`pricing.py`/`inventory.py`) y en
+    ~100 sitios de test, así que `psycopg`'s `conn.transaction()` (que
+    prohíbe llamarlos dentro de su propio context manager) no sirve — la
+    solución fue `SAVEPOINT`/`RELEASE SAVEPOINT`/`ROLLBACK TO SAVEPOINT` a
+    mano, reasignando `conn.commit`/`conn.rollback` para operar sobre ese
+    savepoint en vez de la base real, con cuidado especial de replicar el
+    "commit sobre una transacción abortada = rollback implícito, sin error"
+    que Postgres da gratis y que varios tests dependían de eso sin saberlo
+    (`tests/test_schema_migrate.py`, `TestCreateUser::
+    test_duplicate_username_raises`). Verificado con la suite completa
+    (789 tests) corrida 3 veces seguidas sin cambios de resultado. **No**
+    habilita correr `pytest` en paralelo contra el mismo `plates_test`
+    físico — se investigó y se descartó explícitamente esa parte de la
+    promesa original de este paso (ver el docstring de `clean_db` y
+    `docs/LOCAL_DEVELOPMENT.md` para el porqué): el beneficio real logrado
+    es velocidad, no paralelismo.
 11. **Reescribir la documentación** al final, una vez asentado el código:
     `docs/ARCHITECTURE.md` (el diagrama nombra `app/core/process.py` y
     `app/core/db.py` explícitamente), `docs/CORE.md` (secciones `## process.py`
