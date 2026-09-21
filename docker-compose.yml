@@ -61,6 +61,42 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Web log viewer (Fase 1e follow-up) -- lets the app owner see live
+  # container logs from a browser instead of SSH'ing into the VPS. Only
+  # needs the Docker socket (to read logs) and the `edge` network (so the
+  # shared nginx can reach it) -- no `internal` network, it never talks to
+  # the DB. Auth is Dozzle's own built-in user store (DOZZLE_AUTH_PROVIDER),
+  # not something this compose file manages -- see docs/LOCAL_DEVELOPMENT.md.
+  dozzle:
+    image: amir20/dozzle:v11.1.1
+    container_name: plates-dozzle
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Generated once on the VPS (`docker run --rm amir20/dozzle:v11.1.1
+      # generate ...` per docs/LOCAL_DEVELOPMENT.md), never committed --
+      # gitignored, survives `git reset --hard` across deploys same as .env.
+      - ./dozzle_users.yml:/data/users.yml
+    environment:
+      DOZZLE_AUTH_PROVIDER: simple
+      # Served under /dozzle/ on the same placas.ingse.co domain (see the
+      # informes-stack nginx config) instead of a new subdomain -- avoids
+      # needing a second DNS record/TLS cert for a tool this small.
+      DOZZLE_BASE: /dozzle
+    ports:
+      # Localhost only -- for local dev / on-VPS debugging without going
+      # through nginx. Production access is https://placas.ingse.co/dozzle/.
+      - "127.0.0.1:8081:8080"
+    networks:
+      edge:
+        aliases:
+          - plates_dozzle
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   internal: {}
   # Shared with the existing `informes` stack so its nginx can proxy to us by

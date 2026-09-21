@@ -25,6 +25,25 @@ README no cubre.
   crearla una vez a mano en un entorno nuevo (`docker network create
   informes_informes_net`) si no existe ya por la stack vecina.
 
+## Dozzle (visor de logs web)
+
+Servicio `dozzle` en `docker-compose.yml` — muestra en vivo, desde el
+navegador, los mismos logs que `docker logs <contenedor>` daría por SSH.
+Necesita un archivo de usuarios que **nunca se commitea** (gitignored,
+`dozzle_users.yml`, uno por entorno):
+
+```sh
+docker run --rm amir20/dozzle:v11.1.1 generate admin > dozzle_users.yml
+# pide la contraseña de forma interactiva (nunca queda en el historial de bash)
+docker compose up -d dozzle
+```
+
+En producción se accede en `https://placas.ingse.co/dozzle/` (proxied por
+el nginx compartido de la stack "informes" — el bloque `location /dozzle/`
+vive en `/opt/informes/nginx.conf`, **fuera** de este repo, agregado a
+mano igual que el bloque de `cargador.ingse.co`). En local, directo en
+`http://127.0.0.1:8081/dozzle/`.
+
 ## Testing (`tests/conftest.py`)
 
 - **La base de test es una base separada, `plates_test`**, en el mismo
