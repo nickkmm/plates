@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Cuadre de caja</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    h2 { font-size: 1.05rem; margin-top: 1.8rem; margin-bottom: .5rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .muted { color:#777; font-size:.9rem; }
+    .range-form { display:flex; flex-wrap:wrap; gap:.8rem; align-items:end; margin-bottom:1.2rem; }
+    .range-form label { font-size:.78rem; color:#555; display:flex; flex-direction:column; gap:.2rem; }
+    .range-form input { padding:.4rem; border:1px solid #ccc; border-radius:6px; font-size:.9rem; }
+    .range-form button, a.pdf-btn {
+      border:0; border-radius:6px; padding:.5rem 1rem; font-size:.9rem; cursor:pointer;
+      text-decoration:none; display:inline-block;
+    }
+    .range-form button { background:#0b6bcb; color:#fff; }
+    a.pdf-btn { background:#1a9c5b; color:#fff; }
+    .error { background:#fdecec; border:1px solid #d33; border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
+    table { border-collapse: collapse; width: 100%; font-size: .9rem; margin-bottom: .3rem; }
+    th, td { border: 1px solid #e3e3e3; padding: .4rem .55rem; text-align: left; }
+    th { background: #f6f6f6; }
+    td.num, th.num { text-align: right; }
+    tr.subtotal td { font-weight: 600; background: #f9f9f9; }
+    .grand-total { text-align:right; font-size: 1.05rem; font-weight: 700; margin: 1.2rem 0; }
+    .warnings { margin-top: 2rem; }
+    .warnings h2 { color: #900; }
+    a.ver { color:#0b6bcb; text-decoration:none; }
+    a.ver:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  <h1>Cuadre de caja</h1>
+  <p class="muted">Agrupado por fecha de la orden y forma de pago. No incluye placas anuladas — nunca se cobraron.</p>
+
+  <form class="range-form" method="get" action="{{ url_for('cash_summary.cuadre') }}">
+    <label>Desde <input type="date" name="desde" value="{{ desde }}"></label>
+    <label>Hasta <input type="date" name="hasta" value="{{ hasta }}"></label>
+    <button type="submit">Ver</button>
+    {% if summary is not none %}
+      <a class="pdf-btn" href="{{ url_for('cash_summary.cuadre_pdf', desde=desde, hasta=hasta) }}">Descargar PDF</a>
+    {% endif %}
+  </form>
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if summary is not none %}
+    {% if not summary.days %}
+      <p class="muted">No hay órdenes con placas en este rango.</p>
+    {% endif %}
+
+    {% for day in summary.days %}
+      <h2>{{ day.order_date.strftime("%Y-%m-%d") }}</h2>
+      <table>
+        <thead>
+          <tr><th>Forma de pago</th><th class="num">Placas</th><th class="num">Cantidad</th><th class="num">Total</th></tr>
+        </thead>
+        <tbody>
+          {% for row in day.rows %}
+          <tr>
+            <td>{{ row.payment_method }}</td>
+            <td class="num">{{ row.n_plates }}</td>
+            <td class="num">{{ row.total_qty }}</td>
+            <td class="num">{{ row.total | cop }}</td>
+          </tr>
+          {% endfor %}
+          <tr class="subtotal">
+            <td colspan="3">Subtotal {{ day.order_date.strftime("%Y-%m-%d") }}</td>
+            <td class="num">{{ day.subtotal | cop }}</td>
+          </tr>
+        </tbody>
+      </table>
+    {% endfor %}
+
+    <p class="grand-total">Total del rango: {{ summary.grand_total | cop }}</p>
+
+    {% if summary.missing_price %}
+    <div class="warnings">
+      <h2>Placas sin precio (no incluidas en el total)</h2>
+      <p class="muted">Estas placas no tienen un precio asignado — asignale uno desde el pedido para que entren al cuadre.</p>
+      <table>
+        <thead>
+          <tr><th>Orden</th><th>Tipo de placa</th></tr>
+        </thead>
+        <tbody>
+          {% for w in summary.missing_price %}
+          <tr>
+            <td><a class="ver" href="{{ url_for('records.record_detail', order_id=w.order_id) }}">{{ w.order_number }}</a></td>
+            <td>{{ w.plate_type }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  {% endif %}
+</body>
+</html>
