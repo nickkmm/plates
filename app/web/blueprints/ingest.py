@@ -213,9 +213,13 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
     warning path builds (see `_sticky_header_from_form`/`_sticky_lines_from_form`),
     so the review step is the real form, pre-filled — not a second UI that could
     drift from it. header uses the SAME key set as _sticky_header_from_form
-    (_STICKY_HEADER_FIELDS) even though pdf_extract doesn't parse any of the
-    POS fields yet (that's Fase 4 -- the PDF's footer block) -- every key
-    beyond order_date/order_number/requested_by is simply blank, left for the
+    (_STICKY_HEADER_FIELDS). Fase 4 fills in every footer/extra-header field
+    `pdf_extract` now parses (customer_document_number/tracking_number/
+    client_order_number/delivery_date/payment_date/dispatched_by/
+    customer_phone/received_by/payment_method/notes); the remaining keys
+    (receipt_type/receipt_number/customer_type/customer_document_type/
+    customer_document_relation/customer_email/customer_transit_license) have
+    no printed field anywhere on the document and stay blank, left for the
     person to fill by hand, same as an unrecognized plate_type already is.
 
     Anything the PDF left ambiguous is surfaced as a notice and left BLANK
@@ -232,7 +236,14 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
         )
     if not pedido.requested_by:
         notices.append("No se pudo leer el cliente — completalo antes de guardar.")
-    notices.append("El PDF no indica la forma de pago — elegila antes de guardar.")
+
+    # normalize_choice never invents a value: blank OR an unrecognized value
+    # both come back None here, and both cases get the same notice -- the
+    # person always picks it from the dropdown themselves rather than trust
+    # a guess.
+    payment_method = normalize_choice(pedido.payment_method, PAYMENT_METHODS)
+    if not payment_method:
+        notices.append("El PDF no indica la forma de pago — elegila antes de guardar.")
 
     no_type = [str(i) for i, line in enumerate(pedido.lines, start=1) if not line.plate_type]
     if no_type:
@@ -247,6 +258,16 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
     header["order_date"] = pedido.order_date.isoformat() if pedido.order_date else ""
     header["order_number"] = pedido.order_number
     header["requested_by"] = pedido.requested_by
+    header["customer_document_number"] = pedido.customer_document_number
+    header["tracking_number"] = pedido.tracking_number
+    header["client_order_number"] = pedido.client_order_number
+    header["delivery_date"] = pedido.delivery_date.isoformat() if pedido.delivery_date else ""
+    header["payment_date"] = pedido.payment_date.isoformat() if pedido.payment_date else ""
+    header["dispatched_by"] = pedido.dispatched_by
+    header["customer_phone"] = pedido.customer_phone
+    header["received_by"] = pedido.received_by
+    header["payment_method"] = payment_method or ""
+    header["notes"] = pedido.notes
     lines = [
         {
             "line_type": line.line_type,
