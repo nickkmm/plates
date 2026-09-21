@@ -37,11 +37,19 @@ README no cubre.
   antes de cualquier `from app...` — si no, una corrida local heredaría
   las credenciales reales del `.env` y los logins de test fallarían en
   silencio.
-- Tres identidades de test ya definidas: `testuser`/`testpass123` (admin),
-  `consultauser`/`consultapass123` (consulta),
-  `produccionuser`/`produccionpass123` (producción).
-- El fixture `clean_db` hace **`TRUNCATE`** de las 4 tablas antes de cada
-  test que depende de él — **no** hay rollback transaccional por test
+- Cuatro identidades de test ya definidas: `testuser`/`testpass123`
+  (admin), `consultauser`/`consultapass123` (consulta),
+  `produccionuser`/`produccionpass123` (producción),
+  `puntoventauser`/`puntoventapass123` (`punto_venta`, Fase 2) — las
+  cuatro son filas reales en la tabla `users` de la base de test desde que
+  el login pasó a ser DB-backed, no solo entradas de `AUTH_USERS`/
+  `AUTH_ROLES`.
+- El fixture `clean_db` hace **`TRUNCATE ... RESTART IDENTITY CASCADE`**
+  de 7 tablas (`plates`, `production_orders`, `blank_preparations`,
+  `inventory_categories`, `customers`, `users`, `plate_type_prices` — no
+  toca `plate_types`, tabla de referencia estática) y vuelve a sembrar
+  las 4 identidades de test en `users` antes de cada test que depende de
+  él — **no** hay rollback transaccional por test
   todavía. Desde Fase 1d, `db.get_conn()` reusa conexiones de un pool
   (`psycopg_pool.ConnectionPool`) en vez de abrir un socket nuevo por
   llamada, y `app/core/ingestion.py` recibe la conexión como parámetro
@@ -70,7 +78,7 @@ README no cubre.
 | `DB_PORT` | `app/core/db/` | `5432` dentro del contenedor; `5433` es solo el mapeo de host. |
 | `DB_POOL_MIN_SIZE` / `DB_POOL_MAX_SIZE` | `app/core/db/__init__.py` | Tamaño del `psycopg_pool.ConnectionPool` por worker de gunicorn. Default `1`/`5` — con 2 workers, máx. 10 conexiones desde la app. |
 | `SECRET_KEY` | `app/web/app.py` | Obligatoria — `RuntimeError` al arrancar si falta. |
-| `AUTH_USERS` | `app/web/auth.py` | `usuario:hash` separados por coma. El hash trae `$` → hay que escaparlo como `$$` en `.env` o Compose lo corrompe al interpolar variables (ya documentado en el README raíz). |
-| `AUTH_ROLES` | `app/web/auth.py` | `usuario:rol` separados por coma. **No está en `.env.example` hoy** — cualquier usuario sin entrada acá es `admin` por defecto. |
+| `AUTH_USERS` | `app/schema_migrate.py` (backfill único) | `usuario:hash` separados por coma. **Ya no alimenta el login en vivo** (Fase 2) — solo se lee una vez, la primera vez que corre `schema_migrate` contra una base nueva, para crear las filas de `users`. El hash trae `$` → hay que escaparlo como `$$` en `.env` o Compose lo corrompe al interpolar variables (ya documentado en el README raíz). |
+| `AUTH_ROLES` | `app/schema_migrate.py` (backfill único) | `usuario:rol` separados por coma, mismo backfill único que `AUTH_USERS`. **No está en `.env.example` hoy** — cualquier usuario sin entrada acá queda `admin` por defecto. |
 | `COOKIE_SECURE` | `app/web/app.py` | `1` en producción (HTTPS) para marcar la cookie `Secure`; apagada en dev local sobre HTTP plano. |
 | `SENTRY_DSN` | `app/web/app.py` | Opcional — si no está seteada, Sentry ni se inicializa (dev local y tests nunca mandan nada). |
