@@ -41,7 +41,16 @@ forma de dato.
   `"NT 895"`), `order_date`, `requested_by`, `plate_type`, `city`,
   `plate_number` (celda RANGO cruda), `plate_to`, `quantity` (default 1),
   `material`, `prepared_by`, y tres flags que por defecto son `False` y
-  normalmente se infieren después en `normalize_row`.
+  normalmente se infieren después en `normalize_row`. **Campos POS (Fase
+  2)**, todos opcionales con default `None` (para que `app/migrate.py`,
+  que nunca los llena, siga sin tocarse): a nivel de orden —
+  `receipt_type`/`receipt_number`/`payment_method`/`tracking_number`/
+  `client_order_number`/`delivery_date`/`payment_date`/`dispatched_by`/
+  `received_by`/`notes`; a nivel de línea/placa — `reason`/
+  `vehicle_brand`/`unit_price`. `delivery_date`/`payment_date` tienen un
+  validador `mode="before"` que mapea `""` → `None` (un `<input
+  type="date">` vacío postea `""`, que pydantic rechazaría tal cual) —
+  sumados al `_blank_to_none` existente para el resto.
 - **`Extraction`** — `{rows: list[ExtractedRow]}`. Es la forma que
   devolvería un paso de extracción por imagen (mencionado en el docstring
   como "Claude lee la imagen del pedido") — **hoy no está conectado a
@@ -69,6 +78,8 @@ Normalización pura, sin acceso a base de datos — testeable en aislamiento.
 | `is_real_plate(plate_number)` | `TypeGuard[str]` — `False` para `None` y marcadores no-identificadores (`MUESTRA`, `INGSE`, `KWP`, notas `S/...`). Es el filtro que decide qué entra a la detección de duplicados. |
 | `annulment_kind(*folded_texts)` | Clasifica texto de anulación encontrado en SOLICITADO/RANGO/CIUDAD en `"order"` (no consumida), `"plate"` (consumida pero perdida) o `"bare"`/`None`. |
 | `normalize_row(row)` | Punto de entrada principal — normaliza texto e infiere los 3 flags a partir del token RANGO (`REPOSICION` → `is_batch_replacement=True` + `plate_number=None`) y del resultado de `annulment_kind`; nunca apaga un flag que ya venía en `True`. |
+| `RECEIPT_TYPES`/`CUSTOMER_TYPES`/`DOCUMENT_TYPES`/`DOCUMENT_RELATIONS`/`PAYMENT_METHODS`/`REASONS` | Vocabularios fijos de la Fase 2 (POS) — nombres de constante en inglés, *valores* en español (`FACTURA`/`PERSONA NATURAL`/`CÉDULA`/`DUEÑO`/`EFECTIVO`/`DETERIORO`, etc.), cada uno un `<select>` en `/ingest`. |
+| `normalize_choice(value, allowed)` | Helper genérico detrás de los 6 vocabularios de arriba: vacío → `None`; si matchea `allowed` (comparando plegado, sin acentos) devuelve la entrada canónica; si no matchea, `None` — **nunca inventa un valor**, mismo espíritu que `is_real_plate`/`pdf_extract`. Un valor no reconocido queda como aviso para que la persona lo elija del dropdown. |
 
 **Lo más difícil de entender:**
 
@@ -102,7 +113,7 @@ de que llegue a `process_rows`.
 |---|---|
 | `PdfExtractError` | Excepción de mensaje en español ("esto no es un pedido legible") — nunca deja que un PDF malo tumbe la app con un 500. |
 | `ParsedLine` | Una línea de la tabla de placas: `line_type` (`"placa"`/`"rango"`), `plate_type`, `plate_number`, `plate_to`, `quantity`, `city`. |
-| `ParsedPedido` | Header (`order_number`, `order_date`, `requested_by`) + `lines`; `.to_rows()` convierte a `ExtractedRow`, avisando en español qué campo de header falta si está incompleto — las líneas de placa nunca quedan rehenes de un header malo. |
+| `ParsedPedido` | Header (`order_number`, `order_date`, `requested_by`) + `lines`; `.to_rows()` convierte a `ExtractedRow`, avisando en español qué campo de header falta si está incompleto — las líneas de placa nunca quedan rehenes de un header malo. **Fase 4** agregó 10 campos más, todos texto crudo sin interpretación de negocio (`customer_document_number`, `tracking_number`, `client_order_number`, `delivery_date`, `payment_date`, `dispatched_by`, `customer_phone`, `received_by`, `payment_method`, `notes`) — mapear vocabularios (`normalize_choice`) y decidir qué es obligatorio es trabajo de `app/web/blueprints/ingest.py::_form_from_pedido`, no de este módulo. |
 | `parse_order_date(value)` | Prueba ISO, luego numérico día-primero (convención colombiana), luego nombres de mes en español; devuelve `None` en vez de adivinar. |
 | `parse_pedido_pdf(source)` | Parseo principal: extrae tablas de todas las páginas, ubica la fila de header `ITEM \| PLACA \| ...`, lee los campos de arriba (`_find_header_value`), y parsea las líneas de abajo hasta la fila `TOTAL PEDIDO`. |
 | `extract_rows_from_pdf(source)` | Atajo: `parse_pedido_pdf(source).to_rows()` para llamadores no interactivos. El flujo web usa `parse_pedido_pdf` directo para poder tolerar un header parcial y dejar que la persona complete lo que falta. |
@@ -137,6 +148,30 @@ de que llegue a `process_rows`.
   con placa pero sin ITEM (se conservan). El parser es explícitamente
   "fiel, no inteligente": nunca valida formatos de placa ni reglas de
   negocio, eso es trabajo de `normalize.py` y del humano que revisa.
+- **El pie de página (Fase 4)**: seis etiquetas nuevas (`RESPONSABLE
+  DESPACHO (INGSE SAS):`, `TELÉFONO:`, `NOMBRE QUIEN RECIBE EL PEDIDO:`,
+  `FORMA DE PAGO:`, `OBSERVACIONES:`) están físicamente DEBAJO de la fila
+  `TOTAL PEDIDO`, invisibles para `header_rows`. `parse_pedido_pdf` agrega
+  un segundo slice, `footer_rows` (desde la fila `TOTAL PEDIDO` en
+  adelante), y llama a `_find_header_value` contra ese slice también —
+  la función en sí **no se tocó**, el guard `_LABEL_PEDIDO_HASH_BARE` sigue
+  aplicando gratis. Las etiquetas siguen siendo texto exacto, nunca
+  abreviado. `PEDIDO #:` (con dos puntos, en la tabla declarativa del
+  header) usa a propósito el mismo texto plegado que
+  `_LABEL_PEDIDO_HASH_BARE` (el guard del bare `PEDIDO #` sin dos puntos)
+  — son casos distintos que `_split_label` distingue de forma segura
+  porque uno tiene `:` y el otro no; mantenerlos como una sola constante
+  evita que los dos conceptos se desincronicen.
+- **NIT / CÉDULA puede volver `""` legítimamente** cuando la celda de valor
+  cae en una fila distinta a la de la etiqueta (artefacto de celdas
+  combinadas) — el escaneo "misma fila solamente" de `_find_header_value`
+  ya lo maneja así; **nunca** agregar un heurístico de "mirar la fila
+  siguiente", arriesga traer el valor de otro campo.
+- **Los campos de dinero del PDF se ignoran a propósito**: `VALOR:` del
+  header, `VALOR PLACA`/`VALOR TOTAL` de las líneas, y `TOTAL PEDIDO:` del
+  pie (su fila sigue marcando el fin de la tabla de placas y ahora también
+  el inicio del bloque de pie, pero su *valor* no se lee) — `unit_price`
+  siempre sale de la tarifa vigente (`plate_type_prices`), nunca del PDF.
 
 ## `ingestion.py` (antes `process.py`, renombrado en la Fase 1d)
 
@@ -167,19 +202,38 @@ concreto que esto cierra.
   marcados como posible duplicado si se insertaran ahora. Lo usa el
   formulario `/ingest` para avisar antes de guardar, en la misma
   transacción que el guardado real.
-- **`process_rows(conn, rows) -> Summary`** — normaliza cada fila → separa
-  ALISTAMIENTO de placas reales → cuenta repetidos dentro del batch →
-  inserta cada fila de alistamiento, calcula qué placas ya existen en
-  vivo, agrupa las placas por `order_number` (un `insert_order` por grupo,
-  usando fecha/solicitante de la *primera* fila del grupo), inserta cada
-  placa marcando `is_possible_duplicate` → `recalc_inventory`. No comitea:
-  eso lo hace el `with db.get_conn()` del llamador al salir limpio.
-- **`replace_order(conn, order_number, rows) -> Summary`** — acción
-  explícita, opt-in (botón "Reemplazar" en `/ingest`): borra **todas** las
-  órdenes existentes que coincidan con `order_number` (puede haber 2+, no
-  hay `UNIQUE`) junto con sus placas, y luego inserta una sola orden nueva
-  a partir de `rows`. Exige que todas las `rows` compartan el mismo
-  `order_number` (si no, `ValueError`) y que haya al menos una fila.
+- **`process_rows(conn, rows, created_by=None) -> Summary`** — normaliza
+  cada fila → separa ALISTAMIENTO de placas reales → cuenta repetidos
+  dentro del batch → inserta cada fila de alistamiento (mapeando
+  `plate_type` a material vía `normalize.inventory_category()` — antes
+  de la Fase 2 pasaba `plate_type` directo como `category`, un bug real,
+  código muerto en la práctica porque el flujo real de `/inventory/alistado`
+  no pasaba por acá, corregido de una vez), calcula qué placas ya existen
+  en vivo, saca un snapshot único de `db.current_prices(conn)` para todo
+  el batch, agrupa las placas por `order_number` (resuelve/crea el
+  cliente del grupo vía `db.resolve_or_create_customer` y hace un
+  `insert_order` por grupo, usando la fila *cabeza* del grupo), inserta
+  cada placa (aplicando el snapshot de precio como fallback solo si la
+  fila no trae ya un `unit_price` propio) marcando `is_possible_duplicate`
+  → `recalc_inventory`. No comitea: eso lo hace el `with db.get_conn()`
+  del llamador al salir limpio. `created_by` (Fase 2, opcional) es el
+  `users.id` de quien guardó, hacia `production_orders.created_by`.
+  **Generaliza a `_ORDER_LEVEL_FIELDS`** (10 campos: `requested_by` +
+  las 9 columnas POS de orden, excluyendo `reason`/`vehicle_brand`/
+  `unit_price` que son genuinamente por línea) el chequeo de "¿todas las
+  filas del grupo coinciden?" que antes solo existía para `requested_by` —
+  cualquier desacuerdo dentro del mismo `order_number` genera un
+  `review_notes` por campo.
+- **`replace_order(conn, order_number, rows, created_by=None) -> Summary`**
+  — acción explícita, opt-in (botón "Reemplazar" en `/ingest`): borra
+  **todas** las órdenes existentes que coincidan con `order_number` (puede
+  haber 2+, no hay `UNIQUE`) junto con sus placas, y luego inserta una
+  sola orden nueva a partir de `rows`. Exige que todas las `rows`
+  compartan el mismo `order_number` (si no, `ValueError`) y que haya al
+  menos una fila. **Las placas nuevas toman la tarifa vigente AL MOMENTO
+  DEL REEMPLAZO**, no la que regía en la fecha original de la orden —
+  documentado, no un bug (el texto del `confirm()` de "Reemplazar" en
+  `ingest.html` también lo advierte).
 - **`is_alistado(row)`** (pública desde la Fase 1d, antes `_is_alistado`
   privada — `app/migrate.py` la importa cruzando el límite del módulo) —
   detecta una fila ALISTAMIENTO mirando tanto `requested_by` como
@@ -222,10 +276,13 @@ de un único archivo de 556 líneas:
 
 | Módulo | Qué contiene |
 |---|---|
-| `db/__init__.py` | `get_conn()` (ver pool más abajo) + re-export explícito de cada función pública de los 3 submódulos — `db.insert_order(...)`, `db.recalc_inventory(...)`, etc. siguen llamándose exactamente igual desde fuera del paquete. |
+| `db/__init__.py` | `get_conn()` (ver pool más abajo) + re-export explícito de cada función pública de todos los submódulos — `db.insert_order(...)`, `db.recalc_inventory(...)`, `db.resolve_or_create_customer(...)`, etc. siguen llamándose exactamente igual desde fuera del paquete. |
 | `db/orders.py` | CRUD de `production_orders` + `OrderSummary` (dataclass tipado, `class_row`) — la forma de fila compartida por `recent_orders`/`find_orders_by_number`/`search_orders_by_number`. |
 | `db/plates.py` | CRUD de `plates`, incluida `distinct_cities` (agrupada acá por simetría con `distinct_requested_by` de `orders.py`, aunque ambas leen `plates`). |
 | `db/inventory.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
+| `db/customers.py` (Fase 2) | CRUD de `customers` — ver detalle abajo. |
+| `db/users.py` (Fase 2) | CRUD/lookup de `users` — backend real del login (`app/web/auth.py`), ver detalle abajo. |
+| `db/pricing.py` (Fase 2) | CRUD de `plate_type_prices` — ver detalle abajo. |
 
 Config de conexión desde variables de entorno (`DB_HOST` default `"db"` —
 **nunca usar ese default en Docker Compose**, ver
@@ -260,12 +317,17 @@ razonamiento se rompe y la construcción del pool debe moverse a un hook
 
 | Función | Qué hace |
 |---|---|
-| `insert_order` / `update_order` / `delete_order` | CRUD de `production_orders`. `delete_order` borra placas primero (no hay `ON DELETE CASCADE` en el FK). |
-| `insert_plate` | Inserta una placa con su flag `is_possible_duplicate`. |
-| `update_plate(plate_id, ...)` | Edición angosta usada por la cola de revisión de duplicados — siempre limpia `is_possible_duplicate` (editar = revisado). |
-| `update_plate_full(plate_id, ...)` | Edición completa desde el detalle de Registro. **`is_batch_replacement` se debe pasar explícito** — así, corregir el `plate_number` de una reposición también puede apagar ese flag (bug ya corregido: antes se quedaba marcada como reposición para siempre). |
+| `insert_order(conn, *, row, customer_id, created_by)` | Inserta `production_orders` a partir de la `ExtractedRow` completa (Fase 2 — igual que `insert_plate`, en vez de listar cada campo POS como kwarg suelto) + `customer_id`/`created_by`, ambos obligatorios (sin default) para que cada llamador elija explícito. `row.plate_type`/etc. se ignoran (irrelevantes para el header). |
+| `update_order(conn, order_id, *, ..., customer_id=_UNSET, receipt_type=None, ...)` | Edita el header + los 10 campos POS. `customer_id` usa un sentinel privado `_UNSET` (no `None`) como default — pasarlo explícito (un int, o `None` para limpiarlo de verdad) lo cambia; omitirlo lo deja intacto. Es deliberado: si el default significara "poner `NULL`", cualquier guardado de Registro que todavía no resuelva cliente lo borraría sin querer. |
+| `delete_order` | Borra placas primero (no hay `ON DELETE CASCADE` en el FK), luego la orden. |
+| `insert_plate` | Inserta una placa con su flag `is_possible_duplicate` (+ `unit_price`/`reason`/`vehicle_brand`, Fase 2/3). |
+| `update_plate(plate_id, ..., plate_type)` | Edición angosta usada por la cola de revisión de duplicados — siempre limpia `is_possible_duplicate` (editar = revisado). Aplica la regla de re-snapshot de `unit_price` (ver abajo), porque también permite cambiar `plate_type`. |
+| `update_plate_full(plate_id, ..., plate_type, reason=None, vehicle_brand=None)` | Edición completa desde el detalle de Registro. **`is_batch_replacement` se debe pasar explícito** — así, corregir el `plate_number` de una reposición también puede apagar ese flag (bug ya corregido: antes se quedaba marcada como reposición para siempre). `unit_price` **no es un parámetro** — la regla de re-snapshot de abajo es el único camino que lo fija, nunca un caller directo. |
 | `resolve_plate` | Solo limpia `is_possible_duplicate` ("no es duplicado", acción del revisor). |
 | `delete_plate` | Borra la placa; si con eso queda exactamente **una** otra fila marcada con el mismo `plate_number`, también le limpia el flag (ya no hay nada más con qué compararla); si quedan 2+, las deja (sigue siendo ambiguo). |
+
+**Regla de re-snapshot de `unit_price`** (Fase 2, `db/plates.py::_resnapshot_unit_price`, compartida por `update_plate`/`update_plate_full`): lee el `plate_type`/`unit_price` actuales de la placa en el mismo cursor, antes del `UPDATE` —
+si el `plate_type` **no cambia**, el `unit_price` viejo se conserva tal cual (sin importar si cambia `quantity`); si el `plate_type` **sí cambia**, vuelve a tomar `db.current_prices(conn).get(nuevo_tipo)` (puede quedar `None` si ese tipo no tiene tarifa configurada — nunca un `0` silencioso). Placa nueva (`/ingest`, PDF, "+ agregar placa"): `ingestion.py::_snapshot_unit_price` aplica el mismo principio pero como fallback — solo si la fila no trae ya un `unit_price` propio (el form de `/ingest` siempre manda uno, pre-llenado por JS pero editable).
 
 **Escrituras — inventario**
 
@@ -284,4 +346,52 @@ razonamiento se rompe y la construcción del pool debe moverse a un hook
 | `recent_orders(limit=50)` | Ordenado por `order_date DESC`, no por `created_at` — deliberado, para que una corrección de una orden vieja no tape la actividad real de hoy. |
 | `find_orders_by_number(order_number)` | Match **exacto** (no `ILIKE`), sin límite — puede devolver 0/1/2+ filas. La consume directamente `replace_order`. |
 | `search_plates_by_number` / `search_orders_by_number` | Búsqueda parcial (`ILIKE`) en toda la base, no solo en la ventana de `recent_orders`. |
-| `order_detail` / `review_rows` | Detalle de una orden / cola de placas con `is_possible_duplicate = true`. |
+| `order_detail(conn, order_id)` | `(orden, placas)` — la orden viene con un `LEFT JOIN customers` (columnas `customer_*`, `LEFT` porque `customer_id` es nullable) para traer los atributos del cliente resuelto en un solo viaje; las placas incluyen `unit_price`/`reason`/`vehicle_brand` (Fase 2/3). |
+| `review_rows` | Cola de placas con `is_possible_duplicate = true`. |
+
+### `db/customers.py` (Fase 2)
+
+| Función | Qué hace |
+|---|---|
+| `resolve_or_create_customer(conn, name, *, type=None, document_type=None, ...)` | Busca por `name` canónico (`normalize_requested_by`); si existe, `ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name` (un no-op que solo sirve para que `RETURNING id` dispare) — **los atributos (`type`/`document_type`/etc.) solo se escriben en la rama INSERT**, un cliente genuinamente nuevo. Esto es la regla B5, deliberada: editar una orden (`record_save`) puede volver a apuntar `customer_id` hacia otro cliente, pero nunca reescribe los atributos de uno que ya existe — esa edición queda para una futura pantalla de administración de clientes. `ingestion.py` (`process_rows`/`replace_order`) llama esta función solo con el nombre; `app/web/blueprints/ingest.py` la llama con los atributos tipeados en el fieldset "cliente" cuando hay un cliente genuinamente nuevo. |
+| `get_customer(conn, customer_id)` / `get_customer_by_name(conn, name)` | Lookups puntuales. |
+| `list_customers(conn)` | Todos los clientes, alfabético — embebido entero como JSON en `ingest.html` (Fase 3) para que el JS auto-llene el fieldset de cliente al matchear un nombre tipeado, mismo patrón que `distinct_requested_by`/`distinct_cities` (esta app no tiene endpoints AJAX). |
+
+### `db/users.py` (Fase 2)
+
+Backend real del login — reemplaza los env vars `AUTH_USERS`/`AUTH_ROLES`.
+
+| Función | Qué hace |
+|---|---|
+| `get_user_by_username(conn, username)` | Usada por `app/web/auth.py::authenticate` en cada login. Devuelve la fila aunque `active=False` — es `authenticate` quien decide que un usuario inactivo no puede loguearse, no este lookup. |
+| `get_user_by_id(conn, user_id)` | Para `session["user_id"]` → `production_orders.created_by`. |
+| `create_user` / `list_users` | CRUD básico, para una futura pantalla de administración de usuarios (no consumidos por ninguna ruta activa hoy). |
+
+### `db/pricing.py` (Fase 2)
+
+Tarifas sugeridas por tipo de placa (`plate_type_prices`) — ver
+[`DATABASE.md`](DATABASE.md) para la advertencia de namespace
+(`plate_type`, 7 valores, nunca `inventory_categories.category`, 3
+valores).
+
+| Función | Qué hace |
+|---|---|
+| `current_prices(conn) -> dict[str, Decimal]` | `{plate_type: unit_price}` solo para los tipos que YA tienen fila — un tipo sin tarifa configurada simplemente no aparece (nunca un `0`). Consumida por `ingestion.py` (snapshot al insertar) y `db/plates.py` (re-snapshot al editar). |
+| `price_list(conn) -> list[PriceRow]` | Una fila por cada `normalize.PLATE_TYPES`, en ese orden — un tipo sin tarifa aparece igual, con `unit_price=None` ("sin tarifa"). Consumida por `/precios`. |
+| `set_price(conn, plate_type, unit_price, updated_by)` | Valida `plate_type` contra `normalize.PLATE_TYPES` en Python (mensaje en español antes de llegar a la FK real de la Fase 1b) y hace `INSERT ... ON CONFLICT (plate_type) DO UPDATE` — funciona igual si la fila existe o no, porque la tabla arranca vacía a propósito. |
+
+### `cash_summary.py` (Fase 5b)
+
+La única lógica de negocio de `app/core/` que **no** vive en `db/*.py` —
+tiene reglas propias más allá de CRUD (agrupación, exclusiones, "nunca
+convertir un precio faltante en 0"), suficiente para justificar su propio
+módulo de orquestación, per el plan. Sigue el mismo contrato de conexión
+que `db/*` (recibe `conn` abierto, nunca comitea).
+
+| Función | Qué hace |
+|---|---|
+| `build_cash_summary(conn, *, desde, hasta) -> CashSummary` | Agrega `plates JOIN production_orders` en `[desde, hasta]` (ambos inclusive), agrupado siempre por `order_date` y luego por `payment_method` (`COALESCE(..., 'SIN FORMA DE PAGO')` — casi toda orden histórica tiene esto en `NULL`, sin el bucket explícito un `GROUP BY` las escondería). Excluye `is_voided`/`is_plate_annulled` de todo total. Una placa con `unit_price IS NULL` **nunca** se cuenta como `0` — Postgres `SUM()` ya la salta del total, y aparte se devuelve completa (orden + tipo de placa) en `CashSummary.missing_price`, para que se vea como aviso explícito, nunca como plata perdida en silencio. |
+| `render_cash_summary_pdf(summary, *, desde, hasta) -> bytes` | Mismo `reportlab` (`SimpleDocTemplate`/`Table`/`TableStyle`, tamaño `letter`) que ya usa `tests/pdf_fixtures.py` para los PDFs sintéticos de test — una tabla de totales simple, sin logos ni gráficos, para que PTO.V la imprima y se la lleve al admin. |
+
+Dinero (`Decimal`) de punta a punta, nunca mezclado con `float` — ver
+[`DATABASE.md`](DATABASE.md) para las columnas `NUMERIC` involucradas.
