@@ -280,6 +280,11 @@ class TestBackfillUsers:
         assert rows["bob"] == ("pbkdf2:sha256:xyz", "consulta")
 
     def test_rerun_creates_no_duplicate_users(self, db_conn, monkeypatch):
+        """Counts only 'alice' specifically (not `SELECT count(*) FROM
+        users`): Fase 2's `clean_db` fixture (db_conn's own dependency) now
+        pre-seeds its own 3 test identities into `users`, so a bare total
+        count would no longer isolate what this test actually checks (no
+        DUPLICATE alice rows from re-running the backfill)."""
         monkeypatch.setenv("AUTH_USERS", "alice:hash1")
         monkeypatch.setenv("AUTH_ROLES", "")
 
@@ -287,7 +292,7 @@ class TestBackfillUsers:
         schema_migrate.backfill_users(db_conn)
 
         with db_conn.cursor(row_factory=tuple_row) as cur:
-            cur.execute("SELECT count(*) FROM users")
+            cur.execute("SELECT count(*) FROM users WHERE username = 'alice'")
             assert cur.fetchone()[0] == 1
 
 
@@ -303,6 +308,13 @@ class TestMain:
         stand in for that, since clean_db doesn't touch it -- see
         tests/conftest.py's TABLES) gets `python -m app.schema_migrate` run
         twice in a row. The second run must change nothing.
+
+        Compares the `users` count AFTER the first run to the count after the
+        second, rather than asserting a literal `1` -- `clean_db` (Fase 2)
+        already pre-seeds its own 3 test identities before this test even
+        starts, so the real invariant under test ("re-running adds nothing
+        new") has to be expressed relative to that baseline, not to an empty
+        table.
         """
         monkeypatch.setenv("AUTH_USERS", "alice:hash1")
         monkeypatch.setenv("AUTH_ROLES", "")
@@ -311,12 +323,18 @@ class TestMain:
             cur.execute("DELETE FROM schema_migrations")
 
         schema_migrate.main()
+        with schema_migrate.db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM users")
+            row = cur.fetchone()
+            assert row is not None
+            after_first_run = row[0]
+
         schema_migrate.main()
 
         with schema_migrate.db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM users")
             row = cur.fetchone()
-            assert row is not None and row[0] == 1
+            assert row is not None and row[0] == after_first_run
             cur.execute("SELECT version, count(*) FROM schema_migrations GROUP BY version")
             counts: dict[str, int] = dict(cur.fetchall())
         assert all(n == 1 for n in counts.values())

@@ -28,10 +28,12 @@ def login_post():
     username = (request.form.get("username") or "").strip()
     password = request.form.get("password") or ""
     next_url = request.form.get("next") or ""
-    if auth.verify_credentials(username, password):
+    user = auth.authenticate(username, password)
+    if user is not None:
         session.clear()
-        session["user"] = username
-        session["role"] = auth.role_for(username)
+        session["user"] = user.username
+        session["role"] = user.role
+        session["user_id"] = user.id
         session.permanent = True
         return redirect(next_url if auth.is_safe_next(next_url) else auth.landing_url())
     return (

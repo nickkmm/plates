@@ -20,6 +20,7 @@ failure mode this closes.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from decimal import Decimal
 
 import psycopg
 from psycopg.rows import DictRow
@@ -27,7 +28,7 @@ from pydantic import BaseModel
 
 from app.core import db
 from app.core.models import ExtractedRow
-from app.core.normalize import is_real_plate, normalize_row
+from app.core.normalize import inventory_category, is_real_plate, normalize_row
 
 
 class Summary(BaseModel):
@@ -89,6 +90,61 @@ def _count_row(summary: Summary, row: ExtractedRow, is_dup: bool) -> None:
         summary.batch_replacements += 1
 
 
+# Fase 2 (POS): fields meant to carry ONE real value per order/pedido, even
+# though every row in the group repeats them (same as requested_by always
+# has). If a group's rows disagree on one of these it's a data smell worth a
+# human's second look -- generalizes the review-note check that used to
+# exist for requested_by alone. `requested_by` doubles as the "resolved to
+# the same customer" check: customer_id comes from
+# db.resolve_or_create_customer(head.requested_by), keyed off this exact
+# field, so rows agreeing here also resolve to one customer.
+# reason/vehicle_brand/unit_price are deliberately EXCLUDED -- those are
+# genuinely per-line (a vehicle brand belongs to one plate/vehicle, not the
+# whole order), so per-row differences there are normal, not a smell.
+_ORDER_LEVEL_FIELDS: tuple[str, ...] = (
+    "requested_by",
+    "receipt_type",
+    "receipt_number",
+    "payment_method",
+    "tracking_number",
+    "client_order_number",
+    "delivery_date",
+    "payment_date",
+    "dispatched_by",
+    "received_by",
+    "notes",
+)
+
+
+def _order_level_mismatches(order_number: str, group: list[ExtractedRow]) -> list[str]:
+    """One review_notes message per field in _ORDER_LEVEL_FIELDS that
+    disagrees across `group`."""
+    return [
+        f"Order {order_number}: multiple {field} values in the same order."
+        for field in _ORDER_LEVEL_FIELDS
+        if len({getattr(r, field) for r in group}) > 1
+    ]
+
+
+def _snapshot_unit_price(row: ExtractedRow, prices: dict[str, Decimal]) -> ExtractedRow:
+    """New plate, insert-time unit_price fallback (the first case of the
+    re-snapshot rule -- see docs/DATABASE.md / app/core/db/plates.py's
+    _resnapshot_unit_price for the other two, which apply on EDIT instead).
+
+    If `row` already carries a unit_price (the /ingest form always sends one,
+    pre-filled via JS from the current tariff and left editable -- real
+    prices vary by negotiated discount), it's kept verbatim. Only a row with
+    no unit_price at all (e.g. the historical Excel migration door, which
+    never sets one) falls back to the CURRENT suggested tariff for its
+    plate_type, taken from `prices` (a single db.current_prices(conn)
+    snapshot shared by the whole batch, not re-queried per row). Stays None
+    if that type has no configured tariff yet -- never a silent 0.
+    """
+    if row.unit_price is not None:
+        return row
+    return row.model_copy(update={"unit_price": prices.get(row.plate_type)})
+
+
 def find_duplicate_plate_numbers(
     conn: psycopg.Connection[DictRow], rows: list[ExtractedRow]
 ) -> set[str]:
@@ -105,13 +161,21 @@ def find_duplicate_plate_numbers(
     return {pn for pn in live_candidates if pn in already_present or batch_counts[pn] > 1}
 
 
-def process_rows(conn: psycopg.Connection[DictRow], rows: list[ExtractedRow]) -> Summary:
+def process_rows(
+    conn: psycopg.Connection[DictRow], rows: list[ExtractedRow], created_by: int | None = None
+) -> Summary:
     """Normalize, dedup, insert, and recalc inventory for a batch of rows.
 
     Runs entirely through `conn`, which the caller owns: it neither commits
     nor rolls back, so `with db.get_conn() as conn: process_rows(conn, rows)`
     lands the whole batch atomically -- either everything below commits
     together on a clean exit, or nothing does.
+
+    created_by (Fase 2) is the id of the logged-in user who triggered this
+    save (session["user_id"]) -> production_orders.created_by. Defaults to
+    None so the historical Excel migration (app/migrate.py, which has no
+    notion of a logged-in user) and any other caller not yet updated keep
+    working unchanged.
     """
     normalized = [normalize_row(r) for r in rows]
 
@@ -126,18 +190,38 @@ def process_rows(conn: psycopg.Connection[DictRow], rows: list[ExtractedRow]) ->
 
     summary = Summary()
 
-    # ALISTAMIENTO -> blank_preparations (feed inventory.prepared)
+    # ALISTAMIENTO -> blank_preparations (feed inventory.prepared). category
+    # is the inventory MATERIAL (3 values), NOT the granular plate TYPE (7
+    # values) this row's plate_type actually holds -- must go through
+    # normalize.inventory_category() to map between the two namespaces (see
+    # docs/DATABASE.md); passing plate_type straight through was a bug (dead
+    # code in practice, since real ALISTAMIENTO rows never reach here with a
+    # mismatched value, but fixed while this block was already being
+    # touched). ORNAMENTAL has no material (inventory_category ->None) and
+    # genuinely can't be prepared as a blank -- raise instead of writing a
+    # NULL into a NOT NULL column.
     for r in alistado_rows:
+        category = inventory_category(r.plate_type)
+        if category is None:
+            raise ValueError(
+                f"No se puede registrar alistamiento para el tipo '{r.plate_type}' "
+                "(no tiene material de inventario asociado)."
+            )
         db.insert_blank_preparation(
             conn,
             prep_date=r.order_date,
-            category=r.plate_type,
+            category=category,
             quantity=r.quantity,
             prepared_by=r.prepared_by,
         )
         summary.blank_preparations += 1
 
     already_present = db.existing_plate_numbers(conn, live_candidates)
+
+    # One current-tariff snapshot for the whole batch (Fase 2) -- applied
+    # per row below as a fallback only for rows with no unit_price of their
+    # own (see _snapshot_unit_price).
+    prices = db.current_prices(conn)
 
     # Group plate rows by order_number, preserving order.
     groups: dict[str, list[ExtractedRow]] = defaultdict(list)
@@ -146,19 +230,11 @@ def process_rows(conn: psycopg.Connection[DictRow], rows: list[ExtractedRow]) ->
 
     for order_number, group in groups.items():
         head = group[0]
-        order_id = db.insert_order(
-            conn,
-            order_number=order_number,
-            order_date=head.order_date,
-            requested_by=head.requested_by,
-        )
+        customer_id = db.resolve_or_create_customer(conn, head.requested_by)
+        order_id = db.insert_order(conn, row=head, customer_id=customer_id, created_by=created_by)
         summary.orders_inserted += 1
 
-        # Flag if order-level fields disagree within the group (data smell).
-        if len({r.requested_by for r in group}) > 1:
-            summary.review_notes.append(
-                f"Order {order_number}: multiple requested_by values in the same order."
-            )
+        summary.review_notes.extend(_order_level_mismatches(order_number, group))
 
         for r in group:
             is_dup = bool(
@@ -166,8 +242,9 @@ def process_rows(conn: psycopg.Connection[DictRow], rows: list[ExtractedRow]) ->
                 and not r.is_voided
                 and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
             )
-            db.insert_plate(conn, order_id=order_id, row=r, is_possible_duplicate=is_dup)
-            _count_row(summary, r, is_dup)
+            priced = _snapshot_unit_price(r, prices)
+            db.insert_plate(conn, order_id=order_id, row=priced, is_possible_duplicate=is_dup)
+            _count_row(summary, priced, is_dup)
 
     db.recalc_inventory(conn)
 
@@ -175,7 +252,8 @@ def process_rows(conn: psycopg.Connection[DictRow], rows: list[ExtractedRow]) ->
 
 
 def replace_order(
-    conn: psycopg.Connection[DictRow], order_number: str, rows: list[ExtractedRow]
+    conn: psycopg.Connection[DictRow], order_number: str, rows: list[ExtractedRow],
+    created_by: int | None = None,
 ) -> Summary:
     """Fuse-replace every existing order under `order_number` with one fresh
     order built from `rows`.
@@ -202,6 +280,14 @@ def replace_order(
     exactly one new order is inserted in their place. There is no picking
     which existing row to keep: after this runs, order_number exists exactly
     once, full stop.
+
+    Fase 2: the new order's plates take the tariff (plate_type_prices)
+    VIGENTE AT THE MOMENT OF THE REPLACE, not whatever was in effect on the
+    order's original date -- same insert-time snapshot rule as any other new
+    plate (see _snapshot_unit_price). If prices changed since the original
+    order, the replacement's prices will differ; this is documented
+    behavior, not a bug. created_by likewise records who triggered THIS
+    replace, not the original order's creator.
 
     Runs entirely through `conn`, which the caller owns: it neither commits
     nor rolls back, so `with db.get_conn() as conn: replace_order(conn, ...)`
@@ -234,15 +320,14 @@ def replace_order(
     summary.orders_replaced = len(existing)
 
     already_present = db.existing_plate_numbers(conn, live_candidates)
+    prices = db.current_prices(conn)
 
     head = normalized[0]
-    order_id = db.insert_order(
-        conn,
-        order_number=order_number,
-        order_date=head.order_date,
-        requested_by=head.requested_by,
-    )
+    customer_id = db.resolve_or_create_customer(conn, head.requested_by)
+    order_id = db.insert_order(conn, row=head, customer_id=customer_id, created_by=created_by)
     summary.orders_inserted = 1
+
+    summary.review_notes.extend(_order_level_mismatches(order_number, normalized))
 
     for r in normalized:
         is_dup = bool(
@@ -250,8 +335,9 @@ def replace_order(
             and not r.is_voided
             and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
         )
-        db.insert_plate(conn, order_id=order_id, row=r, is_possible_duplicate=is_dup)
-        _count_row(summary, r, is_dup)
+        priced = _snapshot_unit_price(r, prices)
+        db.insert_plate(conn, order_id=order_id, row=priced, is_possible_duplicate=is_dup)
+        _count_row(summary, priced, is_dup)
 
     db.recalc_inventory(conn)
 
