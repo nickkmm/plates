@@ -8,7 +8,7 @@ hasta query params, calls build_cash_summary/render_cash_summary_pdf, and
 renders or streams the result. No SQL here, per docs/CORE.md's rule that no
 query/business rule lives outside app/core/.
 
-@pos_allowed (admin + punto_venta) on BOTH routes -- the plan is explicit
+@pos_allowed (admin + point_of_sale) on BOTH routes -- the plan is explicit
 both the HTML view and the PDF export need it: PTO.V is exactly who reads
 this report daily and prints it for the admin.
 """

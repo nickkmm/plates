@@ -120,11 +120,11 @@ class TestLogin:
         username, password = produccion_credentials
         client.post("/login", data={"username": username, "password": password})
         with client.session_transaction() as sess:
-            assert sess["role"] == "produccion"
+            assert sess["role"] == "production"
 
-    def test_produccion_role_lands_on_records_not_ingest(self, client, produccion_credentials):
+    def test_production_role_lands_on_records_not_ingest(self, client, produccion_credentials):
         """Regression guard: login (and '/') used to always redirect to
-        /ingest regardless of role -- for 'produccion' that route 403s, so the
+        /ingest regardless of role -- for 'production' that route 403s, so the
         person landed straight on an error page right after logging in. The
         default landing page must be role-aware."""
         username, password = produccion_credentials
@@ -132,7 +132,7 @@ class TestLogin:
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/records"
 
-    def test_root_redirects_produccion_role_to_records(self, client, produccion_credentials):
+    def test_root_redirects_production_role_to_records(self, client, produccion_credentials):
         username, password = produccion_credentials
         client.post("/login", data={"username": username, "password": password})
         resp = client.get("/")
@@ -1679,7 +1679,7 @@ class TestIngestOrderDuplicateWarning:
 
 
 class TestProduccionRole:
-    """The read-only 'produccion' role (see app.web.auth.consulta_allowed) --
+    """The read-only 'production' role (see app.web.auth.consulta_allowed) --
     started as a full-access role and was demoted to read-only once real
     usage showed it should only ever look things up (see
     auth.FULL_ACCESS_ROLES) -- may only reach the small consult-only
@@ -1701,7 +1701,7 @@ class TestProduccionRole:
         assert b"5100" in resp.data
 
     def test_recent_orders_list_hides_the_delete_button(self, produccion_client, db_conn):
-        """/records/delete already 403s for 'produccion' (see below), but the
+        """/records/delete already 403s for 'production' (see below), but the
         recent-orders list used to show the 'Eliminar' button to every role
         regardless -- same class of bug as the plate-edit form: it looked
         available even though clicking it would just 403."""
@@ -1717,7 +1717,7 @@ class TestProduccionRole:
         assert 'action="/records/delete"' not in html
 
     def test_record_detail_shows_a_read_only_table_not_the_edit_form(self, produccion_client, db_conn):
-        """Regression guard: /records/<id>/save already 403s for 'produccion'
+        """Regression guard: /records/<id>/save already 403s for 'production'
         (see below), but the page itself used to render the same editable
         inputs and 'Guardar' button to every role regardless -- so a
         read-only user saw something that looked editable but wasn't, which
@@ -1800,11 +1800,11 @@ class TestProduccionRole:
 
 
 class TestPuntoVentaRole:
-    """'punto_venta' (Fase 2's POS_ROLES) is the Fase 3 payoff: narrower than
+    """'point_of_sale' (Fase 2's POS_ROLES) is the Fase 3 payoff: narrower than
     admin, but wide enough to actually run the POS capture flow -- /ingest,
     /ingest/pdf, and /records/<id>/save now sit behind @pos_allowed instead
     of admin-only @login_required. Everything admin-only (review, inventario,
-    records delete) must still 403 it, same as produccion."""
+    records delete) must still 403 it, same as production."""
 
     def test_lands_on_ingest_not_records(self, client, punto_venta_credentials):
         username, password = punto_venta_credentials

@@ -1370,14 +1370,14 @@ class TestCreateUser:
         )
 
     def test_active_defaults_to_true(self, db_conn):
-        user_id = db.create_user(db_conn, username="bob", password_hash="hash2", role="produccion")
+        user_id = db.create_user(db_conn, username="bob", password_hash="hash2", role="production")
         user = db.get_user_by_id(db_conn, user_id)
         assert user is not None
         assert user.active is True
 
     def test_active_can_be_set_false(self, db_conn):
         user_id = db.create_user(
-            db_conn, username="carol", password_hash="hash3", role="produccion", active=False
+            db_conn, username="carol", password_hash="hash3", role="production", active=False
         )
         user = db.get_user_by_id(db_conn, user_id)
         assert user is not None
@@ -1391,10 +1391,10 @@ class TestCreateUser:
 
 class TestGetUserByUsername:
     def test_finds_an_existing_user(self, db_conn):
-        db.create_user(db_conn, username="erin", password_hash="hash6", role="punto_venta")
+        db.create_user(db_conn, username="erin", password_hash="hash6", role="point_of_sale")
         user = db.get_user_by_username(db_conn, "erin")
         assert user is not None
-        assert user.role == "punto_venta"
+        assert user.role == "point_of_sale"
 
     def test_unknown_username_returns_none(self, db_conn):
         assert db.get_user_by_username(db_conn, "ghost") is None
@@ -1417,7 +1417,7 @@ class TestListUsers:
 
     def test_returns_every_user_ordered_by_id(self, db_conn):
         first = db.create_user(db_conn, username="a1", password_hash="h", role="admin")
-        second = db.create_user(db_conn, username="a2", password_hash="h", role="produccion")
+        second = db.create_user(db_conn, username="a2", password_hash="h", role="production")
         users = db.list_users(db_conn)
         ids = [u.id for u in users]
         assert ids == sorted(ids)  # ordered by id

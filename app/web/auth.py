@@ -35,27 +35,29 @@ from app.core import db
 from app.core.db.users import UserRecord
 
 ROLE_ADMIN = "admin"
-ROLE_PRODUCCION = "produccion"
-# New in Fase 2 (PTO.V's own role). Spelled lowercase-with-underscore, no
-# accent -- see the note on ROLES below about why these exact literals matter.
-ROLE_PUNTO_VENTA = "punto_venta"
+ROLE_PRODUCCION = "production"
+# PTO.V's own role (added Fase 2).
+ROLE_PUNTO_VENTA = "point_of_sale"
 
 # Every valid users.role value, validated against this tuple in Python (same
 # "no DB CHECK, a tuple in code" pattern as normalize.PLATE_TYPES) rather
 # than a CHECK constraint -- see docs/DATABASE.md.
-# ⚠️ These are the exact literals already live in production's `users.role`
-# column (backfilled from AUTH_ROLES) -- 'produccion' has NO accent, even
-# though prose elsewhere ("producción") does. Changing any of these strings
-# would silently lock out real users whose row already has the old value.
+# users.role is an internal identifier, never rendered to a user (see
+# CLAUDE.md) -- unlike Spanish business-data columns such as payment_method/
+# plate_type, its values are English. Production's `users.role` rows were
+# migrated to these English values by
+# app/migrations/0004_translate_role_values_to_english.sql; changing any of
+# these strings again without a matching migration would silently lock out
+# real users whose row still has the old value.
 ROLES = (ROLE_ADMIN, ROLE_PRODUCCION, ROLE_PUNTO_VENTA)
 
-# 'produccion' started as a full-access role and was demoted to read-only
+# 'production' started as a full-access role and was demoted to read-only
 # once real usage clarified it should only ever look things up -- it's the
 # only read-only role today (a separate 'consulta' role that used to be
 # functionally identical to it was removed as redundant).
 FULL_ACCESS_ROLES = {ROLE_ADMIN}
 
-# New in Fase 2: an intermediate access level for 'punto_venta' -- narrower
+# New in Fase 2: an intermediate access level for 'point_of_sale' -- narrower
 # than admin (FULL_ACCESS_ROLES) but wider than the read-only catch-all
 # @consulta_allowed lets through. @pos_allowed (below) enforces it; which
 # routes actually use that decorator is Fase 3's job, not this one's.
@@ -156,10 +158,10 @@ def is_safe_next(target: str | None) -> bool:
 def landing_url() -> str:
     """Where a logged-in user lands with no specific ?next= target.
 
-    POS_ROLES (admin + punto_venta) start at Registrar -- Fase 3 put /ingest
-    behind @pos_allowed, not @login_required, so punto_venta can actually use
-    it as its daily entry point (that IS its job: capturing sales). Every
-    other role (read-only: 'produccion') can't reach /ingest at all, so
+    POS_ROLES (admin + point_of_sale) start at Registrar -- Fase 3 put /ingest
+    behind @pos_allowed, not @login_required, so point_of_sale can actually
+    use it as its daily entry point (that IS its job: capturing sales). Every
+    other role (read-only: 'production') can't reach /ingest at all, so
     sending it there would just bounce into a 403 -- send it to Registros
     instead, the one place it can actually use.
     """
@@ -210,7 +212,7 @@ def login_required(view):
 
 def consulta_allowed(view):
     """Like login_required, but lets EVERY authenticated role through
-    (including read-only ones like 'produccion'). Only for routes that purely
+    (including read-only ones like 'production'). Only for routes that purely
     read/look things up -- nothing behind this decorator may write to the
     database."""
 
@@ -224,9 +226,9 @@ def consulta_allowed(view):
 
 
 def pos_allowed(view):
-    """Like login_required, but also lets 'punto_venta' through (POS_ROLES =
-    {admin, punto_venta}) -- the Fase 2 access tier for the point-of-sale
-    capture flow. 403 for every other authenticated role (produccion).
+    """Like login_required, but also lets 'point_of_sale' through (POS_ROLES =
+    {admin, point_of_sale}) -- the Fase 2 access tier for the point-of-sale
+    capture flow. 403 for every other authenticated role (production).
     Which routes actually use this decorator is Fase 3's job
     (/ingest, /ingest/pdf, /records/<id>/save, /cuadre per the plan) -- this
     phase only adds the decorator itself."""

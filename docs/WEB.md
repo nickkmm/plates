@@ -14,7 +14,7 @@ etc.) viven en `app/web/helpers.py`.
 
 | Método | Path | Blueprint | Qué hace | Llama de `core` | Template | Auth |
 |---|---|---|---|---|---|---|
-| GET | `/` | `app.py` | Redirige a Registrar (`punto_venta`/`admin`) o Registros (resto) | — | (redirect) | `@consulta_allowed` |
+| GET | `/` | `app.py` | Redirige a Registrar (`point_of_sale`/`admin`) o Registros (resto) | — | (redirect) | `@consulta_allowed` |
 | GET | `/healthz` | `app.py` | Liveness probe | — | — | abierta |
 | GET/POST | `/login` | `auth_routes.py` | Login (consulta `users`, Fase 2) | `auth.authenticate` | `login.html` | abierta |
 | GET/POST | `/logout` | `auth_routes.py` | Cierra sesión | — | (redirect) | abierta |
@@ -41,14 +41,17 @@ documentado explícitamente como solo-lectura/preview en sus docstrings.
 
 ## Roles y permisos (`auth.py`)
 
-- **Roles**: `admin`, `punto_venta`, `producción` (valor real guardado:
-  `produccion`, sin tilde).
+- **Roles**: `admin`, `point_of_sale` (PTO.V), `production` — valores en
+  inglés a propósito: `users.role` nunca se muestra al usuario, solo se
+  compara para permisos, así que no es dato de negocio en español (ver
+  `CLAUDE.md`). Hasta `app/migrations/0004_translate_role_values_to_english.sql`
+  los valores reales eran `produccion`/`punto_venta`.
 - **`FULL_ACCESS_ROLES = {admin}`** — solo `admin` puede escribir fuera de
-  `/ingest`/`/cuadre`. `producción` originalmente tenía acceso completo, se
+  `/ingest`/`/cuadre`. `production` originalmente tenía acceso completo, se
   degradó a solo lectura (hoy el único rol de solo lectura); se mantiene
   como rol separado por si necesita volver a divergir.
-- **`POS_ROLES = {admin, punto_venta}`** (Fase 2) — el nivel intermedio de
-  `punto_venta`: puede capturar ventas (`/ingest`, `/ingest/pdf`,
+- **`POS_ROLES = {admin, point_of_sale}`** (Fase 2) — el nivel intermedio de
+  `point_of_sale`: puede capturar ventas (`/ingest`, `/ingest/pdf`,
   `/records/<id>/save`) y consultar el cuadre de caja (`/cuadre`,
   `/cuadre/pdf`), pero nada más de escritura (`/review/*`,
   `/inventory/alistado`, `/records/delete`, `/precios` siguen siendo

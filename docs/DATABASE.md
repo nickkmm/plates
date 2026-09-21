@@ -26,8 +26,12 @@
 > (mapeo completo más abajo, sección de `production_orders`/`plates`) —
 > tanto en producción como en `init.sql` para instalaciones nuevas. Los
 > *valores* guardados (nombres de clientes, `PERSONA NATURAL`/`CÉDULA`/
-> `DUEÑO`, `admin`/`producción`/`punto_venta`, `EFECTIVO`, etc.)
-> no cambiaron — son datos de negocio en español, no identificadores.
+> `DUEÑO`, `EFECTIVO`, etc.) no cambiaron — son datos de negocio en
+> español, no identificadores. **Excepción posterior**: `users.role` sí
+> tuvo sus valores traducidos a inglés después (`app/migrations/
+> 0004_translate_role_values_to_english.sql`) — no es dato de negocio en
+> español, es un identificador interno que nunca se muestra al usuario
+> (ver la nota en la sección de `users` más abajo y `CLAUDE.md`).
 >
 > **Aplicar un cambio de esquema a una base ya existente** (con datos
 > reales, no un volumen nuevo) es trabajo del runner `app/schema_migrate.py`
@@ -101,7 +105,7 @@ erDiagram
         int id PK
         text username "UNIQUE NOT NULL"
         text password_hash
-        text role "admin/produccion/punto_venta"
+        text role "admin/production/point_of_sale"
         boolean active
         timestamp created_at
     }
@@ -266,7 +270,7 @@ el backfill original; el login en vivo no los llama más.
 | `id` | SERIAL | PK | Desde la Fase 2, se guarda en `session["user_id"]` al loguearse — es lo que permite `production_orders.created_by` sin volver a consultar por username. |
 | `username` | TEXT | UNIQUE NOT NULL | |
 | `password_hash` | TEXT | NOT NULL | Mismo formato werkzeug (pbkdf2) que `AUTH_USERS` traía — el backfill copió el hash tal cual, nunca reseteó contraseñas. |
-| `role` | TEXT | NOT NULL | `admin`/`produccion`/`punto_venta` — **`produccion` va sin tilde, es el valor real guardado y comparado**, aunque la prosa de este documento diga "producción" por ser español corriente; cambiarlo rompería el login de usuarios existentes. Texto libre validado en Python contra la tupla `auth.ROLES`, sin FK ni `CHECK` en la BD — a diferencia de `plate_type_prices.plate_type`/`plates.plate_type`/`blank_preparations.category`, que desde la Fase 1b sí tienen FK real (ver rarezas). Antes de la Fase 1c, esta columna se llamaba `rol`. `punto_venta` (Fase 2) es el rol nuevo de PTO.V — nivel de acceso intermedio, `POS_ROLES = {admin, punto_venta}`, decorador `@pos_allowed` (ver [`WEB.md`](WEB.md)). |
+| `role` | TEXT | NOT NULL | `admin`/`production`/`point_of_sale` — **valores en inglés a propósito**: a diferencia de otras columnas de esta tabla, `role` nunca se muestra al usuario (solo se compara para permisos), así que no cuenta como dato de negocio en español — ver `CLAUDE.md`. Hasta antes de `app/migrations/0004_translate_role_values_to_english.sql` los valores reales eran `produccion`/`punto_venta` (español, sin tilde); esa migración los tradujo sobre datos reales, y `app/web/auth.py`'s `ROLE_PRODUCCION`/`ROLE_PUNTO_VENTA` apuntan hoy a los nuevos valores. Texto libre validado en Python contra la tupla `auth.ROLES`, sin FK ni `CHECK` en la BD — a diferencia de `plate_type_prices.plate_type`/`plates.plate_type`/`blank_preparations.category`, que desde la Fase 1b sí tienen FK real (ver rarezas). Antes de la Fase 1c, esta columna se llamaba `rol`. `point_of_sale` (Fase 2) es el rol nuevo de PTO.V — nivel de acceso intermedio, `POS_ROLES = {admin, point_of_sale}`, decorador `@pos_allowed` (ver [`WEB.md`](WEB.md)). |
 | `active` | BOOLEAN | DEFAULT true | Antes de la Fase 1c, esta columna se llamaba `activo`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 

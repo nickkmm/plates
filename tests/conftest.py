@@ -40,7 +40,7 @@ TEST_USERNAME = "testuser"
 TEST_PASSWORD = "testpass123"
 _TEST_PASSWORD_HASH = generate_password_hash(TEST_PASSWORD)
 
-# A second user with the 'produccion' role -- read-only today (demoted from
+# A second user with the 'production' role -- read-only today (demoted from
 # its original full-access grant once real usage showed it should only ever
 # look things up), for testing the default-deny role restrictions (see
 # app.web.auth.consulta_allowed). TEST_USERNAME deliberately has role 'admin'
@@ -50,7 +50,7 @@ PRODUCCION_USERNAME = "produccionuser"
 PRODUCCION_PASSWORD = "produccionpass123"
 _PRODUCCION_PASSWORD_HASH = generate_password_hash(PRODUCCION_PASSWORD)
 
-# A third user with the new (Fase 2) 'punto_venta' role -- this one has NO
+# A third user with the new (Fase 2) 'point_of_sale' role -- this one has NO
 # AUTH_USERS/AUTH_ROLES equivalent at all (the role is DB-native from birth,
 # never lived in the env-var world), so it's seeded into `users` only, never
 # exported below.
@@ -65,7 +65,7 @@ os.environ["AUTH_USERS"] = (
     f"{TEST_USERNAME}:{_TEST_PASSWORD_HASH},"
     f"{PRODUCCION_USERNAME}:{_PRODUCCION_PASSWORD_HASH}"
 )
-os.environ["AUTH_ROLES"] = f"{PRODUCCION_USERNAME}:produccion"
+os.environ["AUTH_ROLES"] = f"{PRODUCCION_USERNAME}:production"
 
 # --- Test database ----------------------------------------------------------
 # Point at a SEPARATE database (`plates_test`) on the same already-running
@@ -125,8 +125,8 @@ _SCHEMA_PATH = os.path.join(_REPO_ROOT, "init.sql")
 # no longer feed the live login flow at all.
 _TEST_USERS: tuple[tuple[str, str, str], ...] = (
     (TEST_USERNAME, _TEST_PASSWORD_HASH, "admin"),
-    (PRODUCCION_USERNAME, _PRODUCCION_PASSWORD_HASH, "produccion"),
-    (PUNTO_VENTA_USERNAME, _PUNTO_VENTA_PASSWORD_HASH, "punto_venta"),
+    (PRODUCCION_USERNAME, _PRODUCCION_PASSWORD_HASH, "production"),
+    (PUNTO_VENTA_USERNAME, _PUNTO_VENTA_PASSWORD_HASH, "point_of_sale"),
 )
 
 
@@ -274,14 +274,14 @@ def test_credentials(clean_db: None) -> tuple[str, str]:
 
 @pytest.fixture
 def produccion_credentials(clean_db: None) -> tuple[str, str]:
-    """The (username, password) pair for the read-only 'produccion'-role test
+    """The (username, password) pair for the read-only 'production'-role test
     user. See test_credentials' docstring re: the `clean_db` dependency."""
     return PRODUCCION_USERNAME, PRODUCCION_PASSWORD
 
 
 @pytest.fixture
 def punto_venta_credentials(clean_db: None) -> tuple[str, str]:
-    """The (username, password) pair for the new (Fase 2) 'punto_venta'-role
+    """The (username, password) pair for the new (Fase 2) 'point_of_sale'-role
     test user. See test_credentials' docstring re: the `clean_db`
     dependency."""
     return PUNTO_VENTA_USERNAME, PUNTO_VENTA_PASSWORD

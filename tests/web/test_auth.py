@@ -90,22 +90,22 @@ class TestLoadUsers:
 
 class TestLoadRoles:
     def test_parses_multiple_roles(self, monkeypatch):
-        monkeypatch.setenv("AUTH_ROLES", "alice:admin,bob:produccion")
+        monkeypatch.setenv("AUTH_ROLES", "alice:admin,bob:production")
         roles = auth.load_roles()
-        assert roles == {"alice": "admin", "bob": "produccion"}
+        assert roles == {"alice": "admin", "bob": "production"}
 
     def test_ignores_blank_entries(self, monkeypatch):
-        monkeypatch.setenv("AUTH_ROLES", "alice:admin,,   ,bob:produccion")
+        monkeypatch.setenv("AUTH_ROLES", "alice:admin,,   ,bob:production")
         roles = auth.load_roles()
-        assert roles == {"alice": "admin", "bob": "produccion"}
+        assert roles == {"alice": "admin", "bob": "production"}
 
     def test_ignores_malformed_entry_without_colon(self, monkeypatch):
-        monkeypatch.setenv("AUTH_ROLES", "alice:produccion,malformed,bob:admin")
+        monkeypatch.setenv("AUTH_ROLES", "alice:production,malformed,bob:admin")
         roles = auth.load_roles()
-        assert roles == {"alice": "produccion", "bob": "admin"}
+        assert roles == {"alice": "production", "bob": "admin"}
 
     def test_ignores_entry_with_empty_username(self, monkeypatch):
-        monkeypatch.setenv("AUTH_ROLES", ":produccion,bob:admin")
+        monkeypatch.setenv("AUTH_ROLES", ":production,bob:admin")
         roles = auth.load_roles()
         assert roles == {"bob": "admin"}
 
@@ -119,9 +119,9 @@ class TestLoadRoles:
         assert auth.load_roles() == {}
 
     def test_strips_whitespace_around_username_and_role(self, monkeypatch):
-        monkeypatch.setenv("AUTH_ROLES", " alice : produccion ")
+        monkeypatch.setenv("AUTH_ROLES", " alice : production ")
         roles = auth.load_roles()
-        assert roles == {"alice": "produccion"}
+        assert roles == {"alice": "production"}
 
 
 # --------------------------------------------------------------------------
@@ -179,12 +179,12 @@ class TestAuthenticate:
 
     def test_returns_the_real_role_not_a_default(self, db_conn):
         db.create_user(
-            db_conn, username="ptov", password_hash=generate_password_hash("pw"), role="punto_venta",
+            db_conn, username="ptov", password_hash=generate_password_hash("pw"), role="point_of_sale",
         )
         db_conn.commit()
         user = auth.authenticate("ptov", "pw")
         assert user is not None
-        assert user.role == "punto_venta"
+        assert user.role == "point_of_sale"
 
 
 class TestVerifyCredentials:
@@ -227,11 +227,11 @@ class TestVerifyCredentials:
 class TestRoles:
     def test_roles_tuple_has_the_three_exact_literals(self):
         """⚠️ Load-bearing spelling: these are the exact literals already
-        live in production's `users.role` column. 'produccion' has NO
+        live in production's `users.role` column. 'production' has NO
         accent -- writing 'producción' here would silently lock out every
-        real user with that role. 'punto_venta' is lowercase-with-underscore,
+        real user with that role. 'point_of_sale' is lowercase-with-underscore,
         no accent either."""
-        assert auth.ROLES == ("admin", "produccion", "punto_venta")
+        assert auth.ROLES == ("admin", "production", "point_of_sale")
 
     def test_no_role_value_has_an_accent(self):
         for role in auth.ROLES:
@@ -241,8 +241,8 @@ class TestRoles:
 
 
 class TestFullAccessRoles:
-    def test_produccion_is_not_full_access(self):
-        """'produccion' was demoted to read-only once real usage showed it
+    def test_production_is_not_full_access(self):
+        """'production' was demoted to read-only once real usage showed it
         should only ever look things up -- regression guard against it
         silently regaining full access."""
         assert auth.ROLE_PRODUCCION not in auth.FULL_ACCESS_ROLES
@@ -250,7 +250,7 @@ class TestFullAccessRoles:
     def test_admin_is_full_access(self):
         assert auth.ROLE_ADMIN in auth.FULL_ACCESS_ROLES
 
-    def test_punto_venta_is_not_full_access(self):
+    def test_point_of_sale_is_not_full_access(self):
         assert auth.ROLE_PUNTO_VENTA not in auth.FULL_ACCESS_ROLES
 
 
@@ -258,11 +258,11 @@ class TestPosRoles:
     def test_admin_is_pos_allowed(self):
         assert auth.ROLE_ADMIN in auth.POS_ROLES
 
-    def test_punto_venta_is_pos_allowed(self):
+    def test_point_of_sale_is_pos_allowed(self):
         assert auth.ROLE_PUNTO_VENTA in auth.POS_ROLES
 
-    def test_produccion_is_not_pos_allowed(self):
-        """The existing 'produccion' role does NOT change -- it stays
+    def test_production_is_not_pos_allowed(self):
+        """The existing 'production' role does NOT change -- it stays
         read-only and must NOT gain POS access."""
         assert auth.ROLE_PRODUCCION not in auth.POS_ROLES
 
@@ -379,18 +379,18 @@ class TestPosAllowed:
         resp = pos_client.get("/pos-only")
         assert resp.status_code == 200
 
-    def test_punto_venta_role_is_allowed(self, pos_client):
+    def test_point_of_sale_role_is_allowed(self, pos_client):
         with pos_client.session_transaction() as sess:
             sess["user"] = "ptov1"
-            sess["role"] = "punto_venta"
+            sess["role"] = "point_of_sale"
             sess["user_id"] = 2
         resp = pos_client.get("/pos-only")
         assert resp.status_code == 200
 
-    def test_produccion_role_is_forbidden(self, pos_client):
+    def test_production_role_is_forbidden(self, pos_client):
         with pos_client.session_transaction() as sess:
-            sess["user"] = "produccion1"
-            sess["role"] = "produccion"
+            sess["user"] = "production1"
+            sess["role"] = "production"
             sess["user_id"] = 4
         resp = pos_client.get("/pos-only")
         assert resp.status_code == 403
