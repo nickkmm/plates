@@ -157,13 +157,14 @@ def is_safe_next(target: str | None) -> bool:
 def landing_url() -> str:
     """Where a logged-in user lands with no specific ?next= target.
 
-    Full-access roles start at Registrar (today's default). Every other role
-    (read-only: 'consulta', 'produccion'; 'punto_venta' -- POS_ROLES, not
-    FULL_ACCESS_ROLES -- lands here too, per the plan) can't reach /ingest via
-    @login_required, so sending it there would just bounce into a 403 --
-    send it to Registros instead, the one place it can actually use.
+    POS_ROLES (admin + punto_venta) start at Registrar -- Fase 3 put /ingest
+    behind @pos_allowed, not @login_required, so punto_venta can actually use
+    it as its daily entry point (that IS its job: capturing sales). Every
+    other role (read-only: 'consulta', 'produccion') can't reach /ingest at
+    all, so sending it there would just bounce into a 403 -- send it to
+    Registros instead, the one place it can actually use.
     """
-    if session.get("role") not in FULL_ACCESS_ROLES:
+    if session.get("role") not in POS_ROLES:
         return url_for("records.records")
     return url_for("ingest.ingest")
 
