@@ -15,6 +15,7 @@
   <a href="{{ url_for('review.review') }}" class="{{ 'on' if request.endpoint=='review.review' }}">Revisión</a>
   <a href="{{ url_for('inventory.inventory') }}" class="{{ 'on' if request.endpoint=='inventory.inventory' }}">Inventario</a>
   <a href="{{ url_for('pricing.precios') }}" class="{{ 'on' if request.endpoint=='pricing.precios' }}">Precios</a>
+  <a href="{{ url_for('customers.customers') }}" class="{{ 'on' if request.endpoint in ('customers.customers','customers.customer_detail') }}">Clientes</a>
   {% endif %}
   <a href="{{ url_for('records.records') }}" class="{{ 'on' if request.endpoint in ('records.records','records.record_detail') }}">Registros</a>
   <form method="post" action="{{ url_for('auth_routes.logout') }}" class="logout"><button type="submit" title="Cerrar sesión">Salir</button></form>

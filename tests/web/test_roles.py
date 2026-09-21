@@ -127,6 +127,8 @@ class TestProduccionRole:
         assert 'href="/ingest"' not in html
         assert 'href="/review"' not in html
         assert 'href="/inventory"' not in html
+        assert 'href="/precios"' not in html
+        assert 'href="/customers"' not in html
 
     def test_admin_client_is_unaffected_full_access_regression_guard(
         self, authenticated_client, clean_db
@@ -137,6 +139,7 @@ class TestProduccionRole:
         assert authenticated_client.get("/review").status_code == 200
         assert authenticated_client.get("/inventory").status_code == 200
         assert authenticated_client.get("/records").status_code == 200
+        assert authenticated_client.get("/customers").status_code == 200
 
 
 
@@ -160,6 +163,8 @@ class TestPuntoVentaRole:
         assert 'href="/ingest"' in html
         assert 'href="/review"' not in html
         assert 'href="/inventory"' not in html
+        assert 'href="/precios"' not in html
+        assert 'href="/customers"' not in html
 
     def test_ingest_get_returns_200(self, punto_venta_client, clean_db):
         assert punto_venta_client.get("/ingest").status_code == 200

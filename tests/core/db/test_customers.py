@@ -5,6 +5,8 @@ tests/conftest.py's `db_conn`/`clean_db`)."""
 
 from __future__ import annotations
 
+import psycopg
+import pytest
 from psycopg.rows import tuple_row
 
 from app.core import db
@@ -154,4 +156,66 @@ class TestGetCustomerByName:
 class TestGetCustomer:
     def test_returns_none_for_nonexistent_id(self, db_conn):
         assert db.get_customer(db_conn, 999999) is None
+
+
+class TestUpdateCustomer:
+    """Unlike resolve_or_create_customer (COALESCE, never overwrites an
+    existing value), update_customer is a real, deliberate overwrite -- the
+    /customers admin screen's whole reason to exist. See its docstring."""
+
+    def test_overwrites_every_attribute(self, db_conn):
+        customer_id = db.resolve_or_create_customer(
+            db_conn, "PTO.V", type="EMPRESA", phone="3001112233",
+        )
+        db.update_customer(
+            db_conn, customer_id, name="PTO.V", type="PERSONA NATURAL",
+            document_type="CÉDULA", document_number="999", document_relation="DUEÑO",
+            phone="3009998877", email="nuevo@correo.com", transit_license="LIC9",
+        )
+        customer = db.get_customer(db_conn, customer_id)
+        assert customer is not None
+        assert customer.type == "PERSONA NATURAL"
+        assert customer.document_type == "CÉDULA"
+        assert customer.document_number == "999"
+        assert customer.document_relation == "DUEÑO"
+        assert customer.phone == "3009998877"
+        assert customer.email == "nuevo@correo.com"
+        assert customer.transit_license == "LIC9"
+
+    def test_can_blank_out_a_previously_set_attribute(self, db_conn):
+        """A real overwrite, not a COALESCE -- passing None for an attribute
+        that already had a value must actually clear it, unlike
+        resolve_or_create_customer."""
+        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V", phone="3001112233")
+        db.update_customer(
+            db_conn, customer_id, name="PTO.V", type=None, document_type=None,
+            document_number=None, document_relation=None, phone=None, email=None,
+            transit_license=None,
+        )
+        customer = db.get_customer(db_conn, customer_id)
+        assert customer is not None
+        assert customer.phone is None
+
+    def test_can_rename_the_customer(self, db_conn):
+        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V VIEJO")
+        db.update_customer(
+            db_conn, customer_id, name="PTO.V NUEVO", type=None, document_type=None,
+            document_number=None, document_relation=None, phone=None, email=None,
+            transit_license=None,
+        )
+        customer = db.get_customer(db_conn, customer_id)
+        assert customer is not None
+        assert customer.name == "PTO.V NUEVO"
+
+    def test_renaming_to_a_name_already_used_by_another_customer_raises(self, db_conn):
+        db.resolve_or_create_customer(db_conn, "MUVA GRANADA")
+        other_id = db.resolve_or_create_customer(db_conn, "MUVA SERGIO")
+        db_conn.commit()
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            db.update_customer(
+                db_conn, other_id, name="MUVA GRANADA", type=None, document_type=None,
+                document_number=None, document_relation=None, phone=None, email=None,
+                transit_license=None,
+            )
+        db_conn.rollback()
 

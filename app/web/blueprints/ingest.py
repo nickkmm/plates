@@ -20,7 +20,14 @@ from app.core.normalize import (
 )
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
 from app.web.auth import pos_allowed
-from app.web.helpers import FORM_PLATE_TYPES, _options, _padded, _validate_order_header, today_iso
+from app.web.helpers import (
+    FORM_PLATE_TYPES,
+    _options,
+    _padded,
+    _validate_order_header,
+    customer_fields_from_form,
+    today_iso,
+)
 
 bp = Blueprint("ingest", __name__)
 
@@ -49,38 +56,6 @@ def _sticky_header_from_form(form) -> dict:
     order/duplicate-plate notice interrupts the save. The one place this
     dict is built -- see _STICKY_HEADER_FIELDS' docstring."""
     return {field: form.get(field, "") for field in _STICKY_HEADER_FIELDS}
-
-
-def _customer_fields_from_form(form) -> dict[str, str | None]:
-    """Customer attributes typed in the /ingest 'cliente' fieldset, keyed to
-    match db.resolve_or_create_customer's kwargs (name is handled
-    separately, via requested_by).
-
-    document_relation/transit_license are forced back to None here whenever
-    their governing field doesn't allow them (document_relation only makes
-    sense for CÉDULA; transit_license only for PERSONA NATURAL) -- the HTML
-    already disables those inputs client-side so a browser never sends them,
-    but a raw POST (curl, a modified request) could still carry a stale
-    value, so this is enforced again here rather than trusted from the
-    client alone.
-    """
-    customer_type = normalize_choice(form.get("customer_type"), CUSTOMER_TYPES)
-    document_type = normalize_choice(form.get("customer_document_type"), DOCUMENT_TYPES)
-    document_relation = normalize_choice(form.get("customer_document_relation"), DOCUMENT_RELATIONS)
-    if document_type != "CÉDULA":
-        document_relation = None
-    transit_license = (form.get("customer_transit_license") or "").strip() or None
-    if customer_type != "PERSONA NATURAL":
-        transit_license = None
-    return {
-        "type": customer_type,
-        "document_type": document_type,
-        "document_number": (form.get("customer_document_number") or "").strip() or None,
-        "document_relation": document_relation,
-        "phone": (form.get("customer_phone") or "").strip() or None,
-        "email": (form.get("customer_email") or "").strip() or None,
-        "transit_license": transit_license,
-    }
 
 
 def _rows_from_form(form) -> list[ExtractedRow]:
@@ -355,7 +330,7 @@ def ingest_post():
             # against the fresh rows being inserted in its place.
             with db.get_conn() as conn:
                 db.resolve_or_create_customer(
-                    conn, rows[0].requested_by, **_customer_fields_from_form(request.form)
+                    conn, rows[0].requested_by, **customer_fields_from_form(request.form)
                 )
                 summary = replace_order(conn, rows[0].order_number, rows,
                                         created_by=session.get("user_id"))
@@ -392,7 +367,7 @@ def ingest_post():
                         lines = _sticky_lines_from_form(request.form)
                     else:
                         db.resolve_or_create_customer(
-                            conn, rows[0].requested_by, **_customer_fields_from_form(request.form)
+                            conn, rows[0].requested_by, **customer_fields_from_form(request.form)
                         )
                         summary = process_rows(conn, rows, created_by=session.get("user_id"))
                         current_app.logger.info(

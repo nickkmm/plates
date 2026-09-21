@@ -71,6 +71,7 @@ from app.core.db.customers import (
     get_customer_by_name,
     list_customers,
     resolve_or_create_customer,
+    update_customer,
 )
 from app.core.db.inventory import (
     insert_blank_preparation,
@@ -140,6 +141,7 @@ __all__ = [
     "search_orders_by_number",
     "search_plates_by_number",
     "set_price",
+    "update_customer",
     "update_order",
     "update_plate",
     "update_plate_full",
