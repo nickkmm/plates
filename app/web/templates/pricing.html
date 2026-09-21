@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Precios</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+    th, td { border: 1px solid #ddd; padding: .4rem .5rem; text-align: left; vertical-align: middle; }
+    th { background: #f4f4f4; }
+    input[type=text] { width: 8rem; box-sizing: border-box; padding: .25rem; }
+    .actions { white-space: nowrap; }
+    button { border: 0; border-radius: 5px; padding: .35rem .6rem; font-size: .82rem; cursor: pointer; background: #1a5; color: #fff; }
+    .muted { color: #777; font-size: .9rem; }
+    .sin-tarifa { color: #999; font-style: italic; }
+    .error { color: #c33; font-size: .9rem; margin: .5rem 0; }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  <h1>Tarifas por tipo de placa</h1>
+  <p class="muted">Precio sugerido por tipo de placa. Es un valor editable al cargar cada orden — no bloquea el precio real cobrado.</p>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <table>
+    <thead>
+      <tr><th>Tipo de placa</th><th>Precio</th><th>Actualizado</th><th>Actualizado por</th><th>Acciones</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.plate_type }}</td>
+        <td>
+          {% if r.unit_price is not none %}
+            ${{ "{:,.0f}".format(r.unit_price).replace(",", ".") }}
+          {% else %}
+            <span class="sin-tarifa">sin tarifa</span>
+          {% endif %}
+        </td>
+        <td>{{ r.updated_at.strftime("%Y-%m-%d %H:%M") if r.updated_at else "" }}</td>
+        <td>{{ r.updated_by or "" }}</td>
+        <td class="actions">
+          <form method="post" action="{{ url_for('pricing.precios_update', plate_type=r.plate_type) }}" style="display:flex; gap:.4rem; align-items:center">
+            <input type="text" name="unit_price" placeholder="precio" value="{{ r.unit_price if r.unit_price is not none else '' }}" inputmode="decimal" required>
+            <button type="submit">Guardar</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

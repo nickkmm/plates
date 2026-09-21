@@ -12,6 +12,8 @@ one module per domain:
                       POST /records/delete
   review.py        -- GET /review, POST /review/update|resolve|delete
   inventory.py     -- GET /inventory, POST /inventory/alistado
+  pricing.py       -- GET /precios, POST /precios/<plate_type> (admin-only
+                      tariff editor, Fase 5a)
   auth_routes.py   -- GET/POST /login, GET/POST /logout
 
 All routes except /login, /logout and /healthz require an authenticated
@@ -35,6 +37,7 @@ from app.web.auth import consulta_allowed
 from app.web.blueprints.auth_routes import bp as auth_routes_bp
 from app.web.blueprints.ingest import bp as ingest_bp
 from app.web.blueprints.inventory import bp as inventory_bp
+from app.web.blueprints.pricing import bp as pricing_bp
 from app.web.blueprints.records import bp as records_bp
 from app.web.blueprints.review import bp as review_bp
 
@@ -58,6 +61,7 @@ app.secret_key = SECRET_KEY
 app.register_blueprint(auth_routes_bp)
 app.register_blueprint(ingest_bp)
 app.register_blueprint(inventory_bp)
+app.register_blueprint(pricing_bp)
 app.register_blueprint(records_bp)
 app.register_blueprint(review_bp)
 
