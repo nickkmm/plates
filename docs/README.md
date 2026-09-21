@@ -1,10 +1,13 @@
 # Documentación de referencia — plates
 
-Plates es la app de seguimiento de producción de placas vehiculares de
-INGSE (Colombia): reemplaza un flujo antes basado en Excel, con tres roles
-(`admin` con acceso completo; `producción` y `consulta` de solo lectura)
-sobre un registro único de órdenes de producción y las placas que
-contienen.
+Plates es la app de producción y venta de placas vehiculares de INGSE
+(Colombia): reemplaza un flujo antes basado en Excel, y desde la feature
+POS (Fases 1-5b, ver `PLAN_ARQUITECTURA_Y_POS.md` en la raíz del repo)
+también captura la orden de venta completa (cliente, forma de pago,
+precio) y genera el cuadre de caja diario. Cuatro roles: `admin` (acceso
+completo), `punto_venta` (captura ventas en `/ingest` y consulta
+`/cuadre`), y `producción`/`consulta` (solo lectura) sobre un registro
+único de órdenes de producción y las placas que contienen.
 
 Esta carpeta es documentación **técnica de referencia** — para entender
 cómo funciona el sistema por dentro. Cómo desplegarlo, configurar auth o
@@ -27,15 +30,17 @@ no se repite.
 flowchart LR
     subgraph Usuarios["Usuarios (por rol)"]
         A[admin]
+        PV[punto_venta]
         P[producción]
         C[consulta]
     end
     subgraph VPS["VPS — Docker Compose"]
         WEB["plates-web<br/>Flask + gunicorn"]
         DB[("plates-db-1<br/>Postgres 16")]
-        WEB -->|psycopg3| DB
+        WEB -->|"psycopg3 (pool)"| DB
     end
     A -- login --> WEB
+    PV -- login --> WEB
     P -- login --> WEB
     C -- login --> WEB
     GH["GitHub Actions<br/>(push a main)"] -- "SSH deploy" --> VPS
@@ -45,8 +50,3 @@ flowchart LR
 Ver [`ARCHITECTURE.md`](ARCHITECTURE.md) para el detalle de componentes y
 de despliegue, incluido un incidente real de producción que motivó parte
 del diseño actual.
-
-> **Nota:** el esquema de base de datos documentado acá va a cambiar
-> pronto (hay un feature grande en camino). Estos documentos son la línea
-> base de referencia al momento de escribirlos — no una promesa de que el
-> código se va a quedar así.

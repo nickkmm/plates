@@ -7,10 +7,12 @@
 > existente) recibió su cambio grande en la **Fase 1** de la feature POS
 > (captura de orden de venta completa + cuadre de caja): las tablas
 > `customers`/`users`/`plate_type_prices`/`schema_migrations` y las
-> columnas nuevas de `production_orders`/`plates` de más abajo. Las fases
-> siguientes de esa feature (`app/core`, `/ingest`, `/precios`, `/cuadre`)
-> construyen lógica de negocio **sobre** este esquema — no vuelven a
-> tocarlo. Este documento ya refleja ese esquema final.
+> columnas nuevas de `production_orders`/`plates` de más abajo. **La
+> feature completa ya está en producción** (Fases 1-5b, ver
+> `PLAN_ARQUITECTURA_Y_POS.md` en la raíz del repo para el historial
+> completo): `/ingest` captura todos los campos POS, `/precios` administra
+> `plate_type_prices`, `/cuadre` agrega los totales, y `app/web/auth.py`
+> consulta `users` en cada login. Este documento refleja ese estado final.
 >
 > **Nota histórica (Fase 1c)**: la Fase 1 original nombró `clientes`/
 > `usuarios` (tabla + columnas como `nombre`/`tipo`/`rol`/`activo`) **y**
@@ -22,29 +24,17 @@
 > eso a sus nombres en inglés finales — tabla y columnas de `clientes`/
 > `usuarios`, y cada columna Spanish-named de `production_orders`/`plates`
 > (mapeo completo más abajo, sección de `production_orders`/`plates`) —
-> tanto en producción (con datos reales ya existentes: 190 `customers` / 3
-> `users` / 1954 `production_orders`) como en `init.sql` para instalaciones
-> nuevas. Los *valores* guardados (nombres de clientes, `PERSONA NATURAL`/
-> `CÉDULA`/`DUEÑO`, `admin`/`producción`/`consulta`/`punto_venta`,
-> `EFECTIVO`, etc.) no cambiaron — son datos de negocio en español, no
-> identificadores. (Una versión anterior de este documento decía que
-> `cliente_id`/`creado_por`/etc. habían quedado fuera del rename a
-> propósito — eso era un error, corregido: sí están incluidas.)
+> tanto en producción como en `init.sql` para instalaciones nuevas. Los
+> *valores* guardados (nombres de clientes, `PERSONA NATURAL`/`CÉDULA`/
+> `DUEÑO`, `admin`/`producción`/`consulta`/`punto_venta`, `EFECTIVO`, etc.)
+> no cambiaron — son datos de negocio en español, no identificadores.
 >
-> **Aplicar el cambio a una base ya existente** (con datos reales, no un
-> volumen nuevo) es trabajo del runner nuevo `app/schema_migrate.py`
+> **Aplicar un cambio de esquema a una base ya existente** (con datos
+> reales, no un volumen nuevo) es trabajo del runner `app/schema_migrate.py`
 > (`python -m app.schema_migrate`), NO de editar `init.sql` — aplica
-> `app/migrations/*.sql` en orden (idempotente, seguro de correr dos veces) y
-> corre el backfill de `customers`/`users` descrito en las tablas de abajo.
+> `app/migrations/*.sql` en orden (idempotente, seguro de correr dos veces).
 > `deploy.yml` ya lo invoca automáticamente después de cada
 > `docker compose up -d --build`.
->
-> **Estado de transición, a propósito**: la tabla `users` ya existe y ya
-> está poblada (backfill desde `AUTH_USERS`/`AUTH_ROLES`), pero
-> `app/web/auth.py` **todavía lee de esas variables de entorno**, no de la
-> tabla — conectar el login a `users` es trabajo de una fase posterior de
-> la misma feature, fuera de este documento. No asumir que `users` ya
-> está "viva" solo porque existe.
 
 ## Diagrama
 
@@ -189,10 +179,10 @@ el primer índice fuera de una PK/UNIQUE — ver rarezas para ambos.
 | `order_number` | TEXT | NOT NULL | `TEXT`, no `INTEGER`, a propósito — hay números reales no numéricos (ej. `"NT 895"`). Sin `UNIQUE`. |
 | `order_date` | DATE | NOT NULL | Fecha real del negocio, distinta de `created_at`. |
 | `requested_by` | TEXT | NOT NULL | "Solicitado por" — normalizado en `app/core/normalize.py`. Desde la Fase 1, copia desnormalizada de `customers.name` — ver rarezas. |
-| `receipt_type` | TEXT | nullable | *Fase 1: columna agregada al esquema; el flujo de `/ingest` todavía no la llena (fase posterior de la misma feature).* Valor esperado: `normalize.RECEIPT_TYPES` (`FACTURA`/`RECIBO`/`OTROS`). Antes de la Fase 1c, esta columna se llamaba `comprobante_tipo`. |
+| `receipt_type` | TEXT | nullable | Valor esperado: `normalize.RECEIPT_TYPES` (`FACTURA`/`RECIBO`/`OTROS`); campo de captura manual en `/ingest`, sin equivalente impreso en el PDF de pedido. Antes de la Fase 1c, esta columna se llamaba `comprobante_tipo`. |
 | `receipt_number` | TEXT | nullable | Ídem — sin normalización de vocabulario, es un número/código libre. Antes de la Fase 1c, `comprobante_numero`. |
 | `customer_id` | INTEGER | FK → `customers(id)`, nullable | Nullable porque no todo valor histórico de `requested_by` resuelve a un cliente limpio — ver el backfill en `app/schema_migrate.py` y rarezas. Antes de la Fase 1c, `cliente_id`. |
-| `payment_method` | TEXT | nullable | Valor esperado: `normalize.PAYMENT_METHODS` (`EFECTIVO`/`TRANSFERENCIA`/`CRÉDITO`/`OTROS`). Hoy **todas** las órdenes existentes tienen esto en `NULL` — ver rarezas. Antes de la Fase 1c, `forma_pago`. |
+| `payment_method` | TEXT | nullable | Valor esperado: `normalize.PAYMENT_METHODS` (`EFECTIVO`/`TRANSFERENCIA`/`CRÉDITO`/`OTROS`). **Obligatorio en `/ingest`** desde la Fase 3 (es la clave que agrupa `/cuadre`) — sigue `NULL` en toda orden anterior a esa fase, de ahí el bucket "SIN FORMA DE PAGO" del cuadre (ver rarezas). Antes de la Fase 1c, `forma_pago`. |
 | `tracking_number` | TEXT | nullable | Antes de la Fase 1c, `guia_numero`. |
 | `client_order_number` | TEXT | nullable | El número de `PEDIDO #:` impreso — **no** es lo mismo que `order_number` (`ORDEN DE PRODUCCIÓN`), no confundirlos. Antes de la Fase 1c, `pedido_numero`. |
 | `delivery_date` | DATE | nullable | A diferencia de `order_date`, una fecha futura acá es válida y esperada. Antes de la Fase 1c, `fecha_entrega`. |
@@ -216,7 +206,7 @@ el primer índice fuera de una PK/UNIQUE — ver rarezas para ambos.
 | `material` | TEXT | nullable | Rara vez se llena directo — el material real se deriva de `plate_type`. |
 | `prepared_by` | TEXT | nullable | Rara vez se llena. |
 | `city` | TEXT | nullable | **Por placa, no por orden** — una orden puede despachar a varias ciudades. |
-| `unit_price` | NUMERIC(12,2) | nullable | *Fase 1: columna agregada al esquema; nada la escribe todavía (fase posterior de la misma feature).* Cuando se use: snapshot del precio al momento de guardar/editar la placa, tomado de `plate_type_prices` pero editable — no una referencia viva a la tarifa. `NULL` significa "sin tarifa capturada", nunca se trata como `0`. |
+| `unit_price` | NUMERIC(12,2) | nullable | Snapshot del precio al momento de guardar/editar la placa, tomado de `plate_type_prices` pero editable — no una referencia viva a la tarifa (la regla exacta de re-snapshot, incluidos los 3 casos de edición, vive en `app/core/db/plates.py::_resnapshot_unit_price`, ver [`CORE.md`](CORE.md)). `NULL` significa "sin tarifa capturada" — `/cuadre` lo excluye del total y lo lista como aviso, nunca lo trata como `0`. |
 | `reason` | TEXT | nullable | Dato del vehículo/placa, no de la orden. Valor esperado: `normalize.REASONS` (`DETERIORO`/`PÉRDIDA`/`OTROS`). Antes de la Fase 1c, esta columna se llamaba `motivo`. |
 | `vehicle_brand` | TEXT | nullable | Dato del vehículo, siempre de captura manual (no viene impreso en el PDF de pedido). Antes de la Fase 1c, `marca_vehiculo`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
@@ -241,25 +231,42 @@ ahora con atributos propios.
 | `transit_license` | TEXT | nullable | Solo tiene sentido si `type = 'PERSONA NATURAL'`; debe quedar `NULL` en cualquier otro caso, mismo refuerzo en servidor. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
-Todos los clientes backfillados desde `production_orders` histórico quedan
-con todos estos atributos en `NULL` salvo `name` — son desconocidos para
-datos anteriores a este feature (ver `app/schema_migrate.py::backfill_clientes`
-— la función sigue llamándose así, solo el SQL que ejecuta cambió de
-tabla/columnas en la Fase 1c, ver rarezas).
+Todos los clientes backfillados desde `production_orders` histórico
+quedaron con todos estos atributos en `NULL` salvo `name` — son
+desconocidos para datos anteriores a este feature (ver
+`app/schema_migrate.py::backfill_customers`, renombrada de
+`backfill_clientes` en la Fase 1d; el *string* de versión que quedó
+grabado en `schema_migrations` sigue siendo `"0002_backfill_clientes"`, sin
+tocar — ver la nota de `schema_migrations` más abajo).
+
+Desde la **Fase 3**, `/ingest` resuelve/crea un `customers` por cada orden
+guardada (`db.resolve_or_create_customer`, vía
+`normalize.normalize_requested_by`) — si el nombre tipeado matchea uno
+existente, el JS del form auto-llena el resto de sus atributos desde la
+lista completa de clientes embebida en `ingest.html`; si no matchea, se
+crea un cliente nuevo con los atributos tipeados. **Regla B5, deliberada**:
+`resolve_or_create_customer` solo escribe atributos en la rama INSERT (un
+cliente genuinamente nuevo) — editar una orden ya guardada (`record_save`)
+puede volver a apuntar `customer_id` hacia otro cliente si se cambia el
+nombre, pero nunca reescribe los atributos de un cliente ya existente; eso
+queda para una futura pantalla de administración de clientes.
 
 ### `users`
 
 *Agregada en la Fase 1 (como `usuarios`; renombrada a `users` en la
-**Fase 1c**), ya poblada por backfill — pero `app/web/auth.py`
-todavía NO la consulta* (sigue leyendo `AUTH_USERS`/`AUTH_ROLES`; ver el
-aviso al principio de este documento).
+**Fase 1c**), poblada por backfill desde `AUTH_USERS`/`AUTH_ROLES`.* Desde
+la **Fase 2**, `app/web/auth.py::authenticate` consulta esta tabla en cada
+login (vía `app/core/db/users.py`) — los mismos hashes que ya traía el
+backfill, nadie tuvo que resetear contraseña. `load_users()`/`load_roles()`
+en `auth.py` se mantienen, pero **solo** como el código histórico que hizo
+el backfill original; el login en vivo no los llama más.
 
 | Columna | Tipo | Constraint/Default | Nota |
 |---|---|---|---|
-| `id` | SERIAL | PK | |
+| `id` | SERIAL | PK | Desde la Fase 2, se guarda en `session["user_id"]` al loguearse — es lo que permite `production_orders.created_by` sin volver a consultar por username. |
 | `username` | TEXT | UNIQUE NOT NULL | |
-| `password_hash` | TEXT | NOT NULL | Mismo formato werkzeug (pbkdf2) que `AUTH_USERS` hoy — el backfill copia el hash tal cual, nunca resetea contraseñas. |
-| `role` | TEXT | NOT NULL | `admin`/`produccion`/`consulta`/`punto_venta`, texto libre validado en Python contra una tupla en `auth.py`, sin FK ni `CHECK` en la BD — a diferencia de `plate_type_prices.plate_type`/`plates.plate_type`/`blank_preparations.category`, que desde la Fase 1b sí tienen FK real (ver rarezas). Antes de la Fase 1c, esta columna se llamaba `rol`. |
+| `password_hash` | TEXT | NOT NULL | Mismo formato werkzeug (pbkdf2) que `AUTH_USERS` traía — el backfill copió el hash tal cual, nunca reseteó contraseñas. |
+| `role` | TEXT | NOT NULL | `admin`/`produccion`/`consulta`/`punto_venta` — **`produccion` va sin tilde, es el valor real guardado y comparado**, aunque la prosa de este documento diga "producción" por ser español corriente; cambiarlo rompería el login de usuarios existentes. Texto libre validado en Python contra la tupla `auth.ROLES`, sin FK ni `CHECK` en la BD — a diferencia de `plate_type_prices.plate_type`/`plates.plate_type`/`blank_preparations.category`, que desde la Fase 1b sí tienen FK real (ver rarezas). Antes de la Fase 1c, esta columna se llamaba `rol`. `punto_venta` (Fase 2) es el rol nuevo de PTO.V — nivel de acceso intermedio, `POS_ROLES = {admin, punto_venta}`, decorador `@pos_allowed` (ver [`WEB.md`](WEB.md)). |
 | `active` | BOOLEAN | DEFAULT true | Antes de la Fase 1c, esta columna se llamaba `activo`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
@@ -278,7 +285,8 @@ referencian esta tabla con FK real.
 
 ### `plate_type_prices`
 
-*Agregada en la Fase 1, arranca **vacía** — sin seed data.*
+*Agregada en la Fase 1, arranca **vacía** — sin seed data.* Administrada
+desde `/precios` (Fase 5a, admin-only) — ver [`WEB.md`](WEB.md).
 
 | Columna | Tipo | Constraint/Default | Nota |
 |---|---|---|---|
@@ -297,7 +305,7 @@ las lecturas nunca deben usar `COALESCE(unit_price, 0)`.
 
 | Columna | Tipo | Constraint/Default | Nota |
 |---|---|---|---|
-| `version` | TEXT | PK | Nombre del archivo aplicado (ej. `0001_pos_fields.sql`) o, para los pasos de backfill en Python (no son archivos `.sql`), un nombre sintético (`0002_backfill_clientes`, `0003_backfill_usuarios`). |
+| `version` | TEXT | PK | Nombre del archivo aplicado (ej. `0001_pos_fields.sql`) o, para los pasos de backfill en Python (no son archivos `.sql`), un nombre sintético (`0002_backfill_clientes`, `0003_backfill_usuarios`). **Estos dos strings son literales fijos para siempre** — la Fase 1d renombró las funciones/constantes de Python que los escriben (`backfill_clientes`→`backfill_customers`, `BACKFILL_CLIENTES_VERSION`→`BACKFILL_CUSTOMERS_VERSION`, etc.), pero nunca los *valores* ya grabados en producción: cambiarlos haría que el runner crea que el backfill nunca corrió y lo repita contra datos reales. |
 | `applied_at` | TIMESTAMP | DEFAULT now() | |
 
 ### `blank_preparations`
@@ -380,10 +388,12 @@ renombrar.
 
 ### `plates_order_id_idx` — primer índice de este esquema fuera de PK/UNIQUE
 
-Agregado en la Fase 1 porque el reporte de cuadre de caja (fase posterior de
-esta misma feature) introduce el primer `JOIN` agregado real sobre toda la
-tabla `plates`. Antes de esto, el esquema no tenía ningún índice más allá de
-los que Postgres crea automáticamente para las PK.
+Agregado en la Fase 1, en anticipación al reporte de cuadre de caja
+(`/cuadre`, Fase 5b — `app/core/cash_summary.py`), que efectivamente
+introdujo el primer `JOIN` agregado real sobre toda la tabla `plates`
+(`plates JOIN production_orders`, filtrado por `order_date`). Antes de
+esto, el esquema no tenía ningún índice más allá de los que Postgres crea
+automáticamente para las PK.
 
 ### `plate_type` (7 valores) vs. `inventory_categories.category` (3 materiales)
 
