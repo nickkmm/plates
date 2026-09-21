@@ -6,7 +6,7 @@
   <title>Plates — Orden {{ order.order_number }}</title>
   <style>
     :root { --green:#1a9c5b; --blue:#0b6bcb; --red:#d33; --ink:#222; }
-    body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
+    body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
     h1 { font-size: 1.3rem; }
     .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
     .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
@@ -14,6 +14,7 @@
     .tabs a.on { color:var(--blue); border-bottom:3px solid var(--blue); margin-bottom:-2px; }
     .meta { background:#f7f7f7; border:1px solid #e3e3e3; border-radius:8px; padding:.8rem 1rem; margin-bottom:1rem; font-size:.95rem; }
     .meta b { color:#000; }
+    .meta div { margin-top:.3rem; }
     .error { background:#fdecec; border:1px solid var(--red); border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
     fieldset { border:1px solid #ddd; border-radius:10px; margin-bottom:1.2rem; padding:1rem; }
     legend { font-weight:600; padding:0 .4rem; }
@@ -27,6 +28,7 @@
     td.r, th.r { text-align:right; }
     td.c { text-align:center; }
     input, select { padding:.3rem; border:1px solid #ccc; border-radius:5px; font-size:.9rem; box-sizing:border-box; width:100%; }
+    input:disabled, select:disabled { background:#f0f0f0; color:#999; }
     input[type=number] { width:5.5rem; }
     input[type=checkbox] { width:auto; }
     .plate-num { text-transform:uppercase; }
@@ -45,7 +47,7 @@
 <body>
   {% include "_nav.html" %}
 
-  {% set can_edit = session.get('role') in full_access_roles %}
+  {% set can_edit = session.get('role') in pos_roles %}
   <datalist id="cities">{% for c in cities %}<option value="{{ c }}">{% endfor %}</datalist>
   {% if can_edit %}<datalist id="requesters">{% for r in requesters %}<option value="{{ r }}">{% endfor %}</datalist>{% endif %}
 
@@ -53,6 +55,7 @@
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
   {% if can_edit %}
+  <script id="pricesData" type="application/json">{{ prices | tojson }}</script>
   <form method="post" action="{{ url_for('records.record_save', order_id=order.id) }}">
     <fieldset>
       <legend>Datos de la orden</legend>
@@ -61,15 +64,37 @@
         <label>N° de orden<input type="text" name="order_number" value="{{ order.order_number }}" required></label>
         <label>Solicitado por<input type="text" name="requested_by" list="requesters" value="{{ order.requested_by }}" required></label>
         <label class="check"><input type="checkbox" name="order_voided" {{ 'checked' if order_voided else '' }}> Orden anulada</label>
+        <label>Tipo de comprobante
+          <select name="receipt_type">
+            <option value="" {% if not order.receipt_type %}selected{% endif %}>— sin comprobante —</option>
+            {% for rt in receipt_types %}<option value="{{ rt }}" {% if order.receipt_type==rt %}selected{% endif %}>{{ rt }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>N° de comprobante<input type="text" name="receipt_number" value="{{ order.receipt_number or '' }}"></label>
+        <label>Forma de pago
+          <select name="payment_method">
+            <option value="" {% if not order.payment_method %}selected{% endif %}>— sin definir —</option>
+            {% for pm in payment_methods %}<option value="{{ pm }}" {% if order.payment_method==pm %}selected{% endif %}>{{ pm }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Guía #<input type="text" name="tracking_number" value="{{ order.tracking_number or '' }}"></label>
+        <label>Pedido # (cliente)<input type="text" name="client_order_number" value="{{ order.client_order_number or '' }}"></label>
+        <label>Fecha de entrega<input type="date" name="delivery_date" value="{{ order.delivery_date or '' }}"></label>
+        <label>Fecha de transferencia/pago<input type="date" name="payment_date" value="{{ order.payment_date or '' }}"></label>
+        <label>Responsable despacho<input type="text" name="dispatched_by" value="{{ order.dispatched_by or '' }}"></label>
+        <label>Quien recibe el pedido<input type="text" name="received_by" value="{{ order.received_by or '' }}"></label>
       </div>
+      <label>Observaciones<input type="text" name="notes" value="{{ order.notes or '' }}"></label>
     </fieldset>
 
     <fieldset>
       <legend>Placas</legend>
+      <p class="muted">El valor de una placa ya guardada solo cambia si se le edita el tipo (vuelve a tomar la tarifa vigente) -- no es un campo editable acá. Una placa nueva sí toma su valor de la tarifa vigente al guardar, editable antes de eso.</p>
       <table>
         <thead>
           <tr>
             <th>Tipo</th><th>Placa</th><th>Hasta</th><th>Ciudad</th><th class="r">Cantidad</th>
+            <th>Motivo</th><th>Marca vehículo</th><th class="r">Valor</th>
             <th>Placa anulada</th><th></th>
           </tr>
         </thead>
@@ -86,6 +111,22 @@
             <td><input type="text" name="plate_to" class="plate-num" value="{{ p.plate_to or '' }}"></td>
             <td><input type="text" name="city" list="cities" value="{{ p.city or '' }}"></td>
             <td class="r"><input type="number" name="quantity" value="{{ p.quantity }}" min="0"></td>
+            <td>
+              <select name="reason">
+                <option value="" {% if not p.reason %}selected{% endif %}>—</option>
+                {% for r in reasons %}<option value="{{ r }}" {% if p.reason==r %}selected{% endif %}>{{ r }}</option>{% endfor %}
+              </select>
+            </td>
+            <td><input type="text" name="vehicle_brand" value="{{ p.vehicle_brand or '' }}"></td>
+            <td class="r">
+              <!-- unit_price NO es editable acá -- ver la nota de arriba. El
+                   hidden mantiene alineadas las listas de _edit_rows_from_form
+                   (una fila nueva SÍ manda un input real con este mismo
+                   nombre); record_save igual nunca lee este valor para una
+                   placa existente (update_plate_full no lo acepta). -->
+              <input type="hidden" name="unit_price" value="{{ p.unit_price or '' }}">
+              {{ p.unit_price | cop }}
+            </td>
             <td class="c">
               <input type="hidden" name="is_plate_annulled" value="{{ 'on' if p.is_plate_annulled else '' }}">
               <input type="checkbox" {{ 'checked' if p.is_plate_annulled else '' }}
@@ -103,7 +144,7 @@
         <tr class="line">
           <input type="hidden" name="plate_id" value="">
           <td>
-            <select name="plate_type" required>
+            <select name="plate_type" required onchange="prefillPrice(this)">
               <option value="" selected>— elegí el tipo —</option>
               {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
             </select>
@@ -112,6 +153,14 @@
           <td><input type="text" name="plate_to" class="plate-num"></td>
           <td><input type="text" name="city" list="cities"></td>
           <td class="r"><input type="number" name="quantity" value="1" min="0"></td>
+          <td>
+            <select name="reason">
+              <option value="" selected>—</option>
+              {% for r in reasons %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+            </select>
+          </td>
+          <td><input type="text" name="vehicle_brand"></td>
+          <td class="r"><input type="number" name="unit_price" step="1" min="0"></td>
           <td class="c">
             <input type="hidden" name="is_plate_annulled" value="">
             <input type="checkbox" onchange="this.previousElementSibling.value = this.checked ? 'on' : ''">
@@ -128,6 +177,12 @@
   </form>
 
   <script>
+    const PRICES = JSON.parse(document.getElementById('pricesData').textContent);
+    function prefillPrice(typeSel) {
+      const price = PRICES[typeSel.value];
+      if (price === undefined) return;
+      typeSel.closest('tr').querySelector('input[name="unit_price"]').value = price;
+    }
     function addLine() {
       const tbody = document.getElementById('lines');
       const frag = document.getElementById('lineTpl').content.cloneNode(true);
@@ -145,12 +200,25 @@
     <b>Fecha:</b> {{ order.order_date }} &nbsp;·&nbsp;
     <b>Solicitado por:</b> {{ order.requested_by }} &nbsp;·&nbsp;
     <b>Orden anulada:</b> {{ 'Sí' if order_voided else 'No' }}
+    <div>
+      <b>Comprobante:</b> {{ order.receipt_type or '—' }}{% if order.receipt_number %} {{ order.receipt_number }}{% endif %} &nbsp;·&nbsp;
+      <b>Forma de pago:</b> {{ order.payment_method or '—' }} &nbsp;·&nbsp;
+      <b>Guía #:</b> {{ order.tracking_number or '—' }} &nbsp;·&nbsp;
+      <b>Pedido # cliente:</b> {{ order.client_order_number or '—' }}
+    </div>
+    <div>
+      <b>Fecha de entrega:</b> {{ order.delivery_date or '—' }} &nbsp;·&nbsp;
+      <b>Fecha de pago:</b> {{ order.payment_date or '—' }} &nbsp;·&nbsp;
+      <b>Responsable despacho:</b> {{ order.dispatched_by or '—' }} &nbsp;·&nbsp;
+      <b>Quien recibe:</b> {{ order.received_by or '—' }}
+    </div>
+    {% if order.notes %}<div><b>Observaciones:</b> {{ order.notes }}</div>{% endif %}
   </div>
   <table>
     <thead>
       <tr>
         <th>Tipo</th><th>Placa</th><th>Hasta</th><th>Ciudad</th><th class="r">Cantidad</th>
-        <th>Placa anulada</th>
+        <th>Motivo</th><th>Marca vehículo</th><th class="r">Valor</th><th>Placa anulada</th>
       </tr>
     </thead>
     <tbody>
@@ -161,12 +229,15 @@
         <td>{{ p.plate_to or '—' }}</td>
         <td>{{ p.city or '—' }}</td>
         <td class="r">{{ p.quantity }}</td>
+        <td>{{ p.reason or '—' }}</td>
+        <td>{{ p.vehicle_brand or '—' }}</td>
+        <td class="r">{{ p.unit_price | cop }}</td>
         <td class="c">{{ 'Sí' if p.is_plate_annulled else '—' }}</td>
       </tr>
       {% endfor %}
     </tbody>
     <tfoot>
-      <tr><td colspan="4" class="r"><b>Total placas</b></td><td class="r"><b>{{ plates | sum(attribute='quantity') }}</b></td><td></td></tr>
+      <tr><td colspan="4" class="r"><b>Total placas</b></td><td class="r"><b>{{ plates | sum(attribute='quantity') }}</b></td><td colspan="4"></td></tr>
     </tfoot>
   </table>
   <a class="back no-form-back" href="{{ url_for('records.records', q=back_query or None) }}">← Volver a Registros</a>
