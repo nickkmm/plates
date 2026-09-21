@@ -212,7 +212,8 @@ def update_plate(conn: psycopg.Connection[DictRow], plate_id: int, *, plate_type
 def update_plate_full(conn: psycopg.Connection[DictRow], plate_id: int, *, plate_type: str,
                       plate_number: str | None, plate_to: str | None, city: str | None,
                       quantity: int, is_voided: bool, is_plate_annulled: bool,
-                      is_batch_replacement: bool) -> None:
+                      is_batch_replacement: bool, reason: str | None = None,
+                      vehicle_brand: str | None = None) -> None:
     """Edit every plate-level field from the Registro detail page.
 
     Wider than update_plate (which only covers the flagged-duplicate review
@@ -227,6 +228,14 @@ def update_plate_full(conn: psycopg.Connection[DictRow], plate_id: int, *, plate
     -- which normalize_row() correctly recomputes as is_batch_replacement=False
     -- actually lands that correction in the DB, instead of leaving the row
     mislabeled "reposición" forever.
+
+    reason/vehicle_brand (Fase 3) are plain per-line attributes with no
+    re-snapshot rule of their own (that rule is unit_price-specific) --
+    written verbatim, same as plate_number/city/etc above. unit_price itself
+    is deliberately NOT a parameter here: the re-snapshot rule (unchanged
+    plate_type keeps the old value; changed plate_type re-takes the current
+    tariff) is the ONLY way this function ever sets it, so there is no path
+    for a caller to overwrite an existing plate's price directly.
     """
     with conn.cursor() as cur:
         new_unit_price = _resnapshot_unit_price(cur, plate_id, plate_type)
@@ -236,11 +245,11 @@ def update_plate_full(conn: psycopg.Connection[DictRow], plate_id: int, *, plate
             SET plate_type = %s, plate_number = %s, plate_to = %s, city = %s,
                 quantity = %s, is_voided = %s, is_plate_annulled = %s,
                 is_batch_replacement = %s, is_possible_duplicate = false,
-                unit_price = %s
+                unit_price = %s, reason = %s, vehicle_brand = %s
             WHERE id = %s
             """,
             (plate_type, plate_number, plate_to, city, quantity, is_voided,
-             is_plate_annulled, is_batch_replacement, new_unit_price, plate_id),
+             is_plate_annulled, is_batch_replacement, new_unit_price, reason, vehicle_brand, plate_id),
         )
 
 
