@@ -7,8 +7,10 @@
   .tabs .logout button:hover { background:#fdecec; color:#d33; }
 </style>
 <nav class="tabs">
-  {% if session.get('role') in full_access_roles %}
+  {% if session.get('role') in pos_roles %}
   <a href="{{ url_for('ingest.ingest') }}" class="{{ 'on' if request.endpoint in ('ingest.ingest','ingest.ingest_pdf') }}">Registrar</a>
+  {% endif %}
+  {% if session.get('role') in full_access_roles %}
   <a href="{{ url_for('review.review') }}" class="{{ 'on' if request.endpoint=='review.review' }}">Revisión</a>
   <a href="{{ url_for('inventory.inventory') }}" class="{{ 'on' if request.endpoint=='inventory.inventory' }}">Inventario</a>
   <a href="{{ url_for('pricing.precios') }}" class="{{ 'on' if request.endpoint=='pricing.precios' }}">Precios</a>

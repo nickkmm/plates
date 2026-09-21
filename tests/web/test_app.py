@@ -11,6 +11,7 @@ fixture so they run with zero DB dependency; the couple that assert a real
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 
 from psycopg.rows import tuple_row
@@ -993,6 +994,153 @@ class TestRecordSaveRoute:
         assert urlparse(resp.headers["Location"]).path == "/records"
 
 
+class TestRecordSavePosFields:
+    """Fase 3 parity: record_save re-resolves customer_id from a possibly-
+    edited requested_by (per the plan's B5, only WHICH customer it points to
+    -- never that customer's own stored attributes), and writes the 10
+    order-level POS fields + per-line reason/vehicle_brand."""
+
+    def test_renaming_requested_by_resolves_and_points_to_a_new_customer(
+        self, authenticated_client, db_conn
+    ):
+        order_id = _insert_order(db_conn, order_number="3100", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db_conn.commit()
+
+        authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3100", "order_date": "2026-01-01", "requested_by": "MARIA NUEVA",
+            "plate_id": [], "plate_type": [], "plate_number": [], "plate_to": [],
+            "city": [], "quantity": [], "is_plate_annulled": [],
+        })
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT customer_id, requested_by FROM production_orders WHERE id = %s",
+                        (order_id,))
+            customer_id, requested_by = cur.fetchone()
+            assert requested_by == "MARIA NUEVA"
+            cur.execute("SELECT name FROM customers WHERE id = %s", (customer_id,))
+            assert cur.fetchone() == ("MARIA NUEVA",)
+
+    def test_never_rewrites_an_existing_customers_own_attributes(self, authenticated_client, db_conn):
+        """B5: record_save may only re-point customer_id, never edit the
+        customer's own stored data -- there is no form field for it at all."""
+        with db.get_conn() as conn:
+            db.resolve_or_create_customer(conn, "PEDRO", type="EMPRESA", phone="555")
+            conn.commit()
+        order_id = _insert_order(db_conn, order_number="3101", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db_conn.commit()
+
+        authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3101", "order_date": "2026-01-02", "requested_by": "PEDRO",
+            "plate_id": [], "plate_type": [], "plate_number": [], "plate_to": [],
+            "city": [], "quantity": [], "is_plate_annulled": [],
+        })
+
+        with db.get_conn() as conn:
+            customer = db.get_customer_by_name(conn, "PEDRO")
+        assert customer is not None
+        assert customer.type == "EMPRESA"
+        assert customer.phone == "555"
+
+    def test_saves_order_level_pos_fields(self, authenticated_client, db_conn):
+        order_id = _insert_order(db_conn, order_number="3102", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db_conn.commit()
+
+        authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3102", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "receipt_type": "RECIBO", "receipt_number": "R-9", "payment_method": "CRÉDITO",
+            "tracking_number": "G-9", "client_order_number": "P-9",
+            "delivery_date": "2026-01-15", "payment_date": "2026-01-16",
+            "dispatched_by": "CARLOS", "received_by": "SOFIA", "notes": "nota",
+            "plate_id": [], "plate_type": [], "plate_number": [], "plate_to": [],
+            "city": [], "quantity": [], "is_plate_annulled": [],
+        })
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "SELECT receipt_type, receipt_number, payment_method, tracking_number, "
+                "client_order_number, dispatched_by, received_by, notes "
+                "FROM production_orders WHERE id = %s",
+                (order_id,),
+            )
+            assert cur.fetchone() == (
+                "RECIBO", "R-9", "CRÉDITO", "G-9", "P-9", "CARLOS", "SOFIA", "nota",
+            )
+
+    def test_edits_reason_and_vehicle_brand_on_an_existing_plate(self, authenticated_client, db_conn):
+        order_id = _insert_order(db_conn, order_number="3103", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="RVB100"),
+                         is_possible_duplicate=False)
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'RVB100'")
+            plate_id = cur.fetchone()[0]
+        db_conn.commit()
+
+        authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3103", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": [str(plate_id)], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["RVB100"], "plate_to": [""], "city": [""],
+            "quantity": ["1"], "is_plate_annulled": [""],
+            "reason": ["PÉRDIDA"], "vehicle_brand": ["FORD"], "unit_price": [""],
+        })
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT reason, vehicle_brand FROM plates WHERE id = %s", (plate_id,))
+            assert cur.fetchone() == ("PÉRDIDA", "FORD")
+
+    def test_existing_plates_unit_price_cannot_be_overwritten_via_the_form(
+        self, authenticated_client, db_conn
+    ):
+        """unit_price for an already-saved plate is never a caller-supplied
+        value -- update_plate_full has no such parameter, so even a POST that
+        carries a tampered unit_price for an existing row is ignored; only
+        the re-snapshot rule (plate_type changed or not) governs it."""
+        order_id = _insert_order(db_conn, order_number="3104", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                         row=make_row(plate_type="CARRO PARTICULAR", plate_number="NOP100",
+                                      unit_price=Decimal("150000")),
+                         is_possible_duplicate=False)
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT id FROM plates WHERE plate_number = 'NOP100'")
+            plate_id = cur.fetchone()[0]
+        db_conn.commit()
+
+        authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3104", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": [str(plate_id)], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["NOP100"], "plate_to": [""], "city": [""],
+            "quantity": ["1"], "is_plate_annulled": [""],
+            "unit_price": ["999999"],  # tampered -- must be ignored
+        })
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT unit_price FROM plates WHERE id = %s", (plate_id,))
+            assert cur.fetchone() == (Decimal("150000"),)  # untouched, type didn't change
+
+    def test_new_plate_row_falls_back_to_the_current_tariff_when_left_blank(
+        self, authenticated_client, db_conn
+    ):
+        order_id = _insert_order(db_conn, order_number="3105", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
+        db_conn.commit()
+
+        authenticated_client.post(f"/records/{order_id}/save", data={
+            "order_number": "3105", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": [""], "plate_type": ["MOTO PARTICULAR"],
+            "plate_number": ["NEW90D"], "plate_to": [""], "city": [""],
+            "quantity": ["1"], "is_plate_annulled": [""], "unit_price": [""],
+        })
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT unit_price FROM plates WHERE plate_number = 'NEW90D'")
+            assert cur.fetchone() == (Decimal("90000"),)
+
 
 class TestRecordsDeleteRoute:
     def test_deletes_order_and_its_plates_and_redirects(self, authenticated_client, db_conn):
@@ -1047,6 +1195,7 @@ class TestRecordsDeleteRoute:
 class TestIngestPostRoute:
     def test_valid_single_plate_submission_inserts_and_shows_summary(self, authenticated_client, clean_db):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3000", "order_date": "2026-01-01",
             "requested_by": "PEDRO",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1066,6 +1215,7 @@ class TestIngestPostRoute:
         """The regression test for the original bug: city is per plate, so two
         lines of one order must NOT collapse onto the first line's city."""
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3010", "order_date": "2026-01-01",
             "requested_by": "PEDRO",
             "line_type": ["placa", "placa"],
@@ -1086,6 +1236,7 @@ class TestIngestPostRoute:
     def test_blank_city_on_a_moto_line_is_saved_as_colombia(self, authenticated_client, clean_db):
         """MOTO PARTICULAR is nationwide, so a blank Ciudad means COLOMBIA."""
         authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3011", "order_date": "2026-01-01",
             "requested_by": "PEDRO",
             "line_type": ["placa", "placa"],
@@ -1105,6 +1256,7 @@ class TestIngestPostRoute:
         """City is optional, so a payload without it must still save the lines
         (the per-line zips would otherwise silently truncate to nothing)."""
         authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3012", "order_date": "2026-01-01",
             "requested_by": "PEDRO",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1116,6 +1268,7 @@ class TestIngestPostRoute:
 
     def test_rango_line_type_inserts_desde_hasta(self, authenticated_client, clean_db):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3001", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["rango"], "plate_type": ["CARRO PARTICULAR"],
@@ -1130,6 +1283,7 @@ class TestIngestPostRoute:
 
     def test_no_plate_lines_shows_error_and_inserts_nothing(self, authenticated_client, clean_db):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3002", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": [], "plate_type": [], "plate_number": [], "plate_to": [], "quantity": [],
@@ -1143,6 +1297,7 @@ class TestIngestPostRoute:
 
     def test_requested_by_with_digits_is_rejected(self, authenticated_client, clean_db):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3003", "order_date": "2026-01-01",
             "requested_by": "PEDRO123", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1157,6 +1312,7 @@ class TestIngestPostRoute:
 
     def test_future_order_date_is_rejected(self, authenticated_client, clean_db):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3004", "order_date": "2999-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1171,6 +1327,7 @@ class TestIngestPostRoute:
 
     def test_rango_missing_hasta_is_rejected(self, authenticated_client, clean_db):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3005", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["rango"], "plate_type": ["CARRO PARTICULAR"],
@@ -1187,6 +1344,7 @@ class TestIngestPostRoute:
         self, authenticated_client, clean_db
     ):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3006", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
@@ -1205,6 +1363,7 @@ class TestIngestPostRoute:
         self, authenticated_client, clean_db
     ):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3007", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["anulada_orden"], "plate_type": ["CARRO PARTICULAR"],
@@ -1221,6 +1380,7 @@ class TestIngestPostRoute:
 
     def test_muestra_line_type_defaults_plate_number_when_blank(self, authenticated_client, clean_db):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3008", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["muestra"], "plate_type": ["CARRO PARTICULAR"],
@@ -1237,6 +1397,7 @@ class TestIngestPostRoute:
         self, authenticated_client, clean_db
     ):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3009", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa_anulada"], "plate_type": ["CARRO PARTICULAR"],
@@ -1254,6 +1415,7 @@ class TestIngestPostRoute:
         identifier is sometimes simply unknown, so (unlike 'rango') a blank
         plate_number here is valid and skips validate_plate() entirely."""
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3012", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa_anulada"], "plate_type": ["CARRO PARTICULAR"],
@@ -1271,6 +1433,7 @@ class TestIngestPostRoute:
         plate_number was actually given -- an intentionally blank plate is
         valid (e.g. a line whose plate is genuinely unknown yet)."""
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3010", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1288,6 +1451,7 @@ class TestIngestPostRoute:
         the form) is dropped before validation/insert -- only the other,
         properly-filled line in the same submission gets inserted."""
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "3011", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa", "placa"], "plate_type": ["", "CARRO PARTICULAR"],
@@ -1306,12 +1470,14 @@ class TestIngestDuplicateWarning:
         self, authenticated_client, clean_db
     ):
         authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "4000", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["DUP001"], "plate_to": [""], "quantity": ["1"],
         })
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "4001", "order_date": "2026-01-02",
             "requested_by": "MARIA", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1328,12 +1494,14 @@ class TestIngestDuplicateWarning:
 
     def test_confirm_duplicate_forces_the_save_through(self, authenticated_client, clean_db):
         authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "4002", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["DUP002"], "plate_to": [""], "quantity": ["1"],
         })
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "4003", "order_date": "2026-01-02",
             "requested_by": "MARIA", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1354,6 +1522,7 @@ class TestIngestDuplicateWarning:
         self, authenticated_client, clean_db
     ):
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "4004", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa", "placa"], "plate_type": ["CARRO PARTICULAR", "CARRO PARTICULAR"],
@@ -1381,12 +1550,14 @@ class TestIngestOrderDuplicateWarning:
         self, authenticated_client, clean_db
     ):
         authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "5000", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["50"],
         })
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "5000", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1411,12 +1582,14 @@ class TestIngestOrderDuplicateWarning:
         """Today's (bad, but explicitly chosen) behavior, fully preserved:
         confirming creates a SECOND production_orders row sharing the number."""
         authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "5001", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["50"],
         })
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "5001", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1439,12 +1612,14 @@ class TestIngestOrderDuplicateWarning:
         self, authenticated_client, clean_db
     ):
         authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "5002", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["50"],
         })
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "5002", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1484,6 +1659,7 @@ class TestIngestOrderDuplicateWarning:
         db_conn.commit()
 
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "5003", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa", "placa"],
@@ -1509,6 +1685,7 @@ class TestIngestOrderDuplicateWarning:
         """Regression coverage: an ordinary, no-collision /ingest submission
         must save immediately, with no order-duplicate warning at all."""
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_number": "5004", "order_date": "2026-01-01",
             "requested_by": "PEDRO", "city": "",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
@@ -1578,7 +1755,8 @@ class TestConsultaRole:
         assert resp.status_code == 403
 
     def test_ingest_post_is_forbidden(self, consulta_client):
-        resp = consulta_client.post("/ingest", data={})
+        resp = consulta_client.post("/ingest", data={
+            "payment_method": "OTROS",})
         assert resp.status_code == 403
 
     def test_ingest_pdf_is_forbidden(self, consulta_client):
@@ -1670,7 +1848,8 @@ class TestProduccionRole:
         assert resp.status_code == 403
 
     def test_ingest_post_is_forbidden(self, produccion_client):
-        resp = produccion_client.post("/ingest", data={})
+        resp = produccion_client.post("/ingest", data={
+            "payment_method": "OTROS",})
         assert resp.status_code == 403
 
     def test_review_is_forbidden(self, produccion_client):
@@ -1695,3 +1874,243 @@ class TestProduccionRole:
         assert 'href="/ingest"' not in html
         assert 'href="/review"' not in html
         assert 'href="/inventory"' not in html
+
+
+class TestPuntoVentaRole:
+    """'punto_venta' (Fase 2's POS_ROLES) is the Fase 3 payoff: narrower than
+    admin, but wide enough to actually run the POS capture flow -- /ingest,
+    /ingest/pdf, and /records/<id>/save now sit behind @pos_allowed instead
+    of admin-only @login_required. Everything admin-only (review, inventario,
+    records delete) must still 403 it, same as consulta/produccion."""
+
+    def test_lands_on_ingest_not_records(self, client, punto_venta_credentials):
+        username, password = punto_venta_credentials
+        resp = client.post("/login", data={"username": username, "password": password})
+        assert resp.status_code == 302
+        resp2 = client.get("/")
+        assert urlparse(resp2.headers["Location"]).path == "/ingest"
+
+    def test_nav_shows_registrar_but_not_admin_only_links(self, punto_venta_client, clean_db):
+        resp = punto_venta_client.get("/ingest")
+        html = resp.data.decode()
+        assert 'href="/ingest"' in html
+        assert 'href="/review"' not in html
+        assert 'href="/inventory"' not in html
+
+    def test_ingest_get_returns_200(self, punto_venta_client, clean_db):
+        assert punto_venta_client.get("/ingest").status_code == 200
+
+    def test_ingest_pdf_get_returns_200(self, punto_venta_client, clean_db):
+        assert punto_venta_client.get("/ingest/pdf").status_code == 200
+
+    def test_can_save_an_order_through_ingest(self, punto_venta_client, clean_db):
+        resp = punto_venta_client.post("/ingest", data={
+            "payment_method": "EFECTIVO",
+            "order_number": "7000", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["PTV100"], "plate_to": [""], "quantity": ["1"], "city": [""],
+        })
+        assert resp.status_code == 200
+        assert b"Registrado" in resp.data
+
+    def test_can_reach_and_save_record_detail(self, punto_venta_client, db_conn):
+        order_id = _insert_order(db_conn, order_number="7001", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db_conn.commit()
+        resp = punto_venta_client.get(f"/records/{order_id}")
+        assert resp.status_code == 200
+        assert 'name="order_number"' in resp.data.decode()  # sees the real edit form, not read-only
+
+        resp = punto_venta_client.post(f"/records/{order_id}/save", data={
+            "order_number": "7001", "order_date": "2026-01-01", "requested_by": "MARIA",
+            "plate_id": [], "plate_type": [], "plate_number": [], "plate_to": [],
+            "city": [], "quantity": [], "is_plate_annulled": [],
+        })
+        assert resp.status_code == 302
+
+    def test_review_is_forbidden(self, punto_venta_client):
+        assert punto_venta_client.get("/review").status_code == 403
+
+    def test_inventory_is_forbidden(self, punto_venta_client):
+        assert punto_venta_client.get("/inventory").status_code == 403
+
+    def test_inventory_alistado_is_forbidden(self, punto_venta_client):
+        assert punto_venta_client.post("/inventory/alistado", data={}).status_code == 403
+
+    def test_records_delete_is_forbidden(self, punto_venta_client):
+        assert punto_venta_client.post("/records/delete", data={}).status_code == 403
+
+    def test_records_read_access_still_works(self, punto_venta_client, db_conn):
+        _insert_order(db_conn, order_number="7002", order_date=date(2026, 1, 1), requested_by="PEDRO")
+        db_conn.commit()
+        resp = punto_venta_client.get("/records")
+        assert resp.status_code == 200
+        assert b"7002" in resp.data
+
+
+class TestIngestPaymentMethodRequired:
+    def test_blank_payment_method_is_rejected_and_saves_nothing(self, authenticated_client, clean_db):
+        resp = authenticated_client.post("/ingest", data={
+            "order_number": "6500", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["PAY100"], "plate_to": [""], "quantity": ["1"], "city": [""],
+        })
+        assert resp.status_code == 200
+        assert b"forma de pago" in resp.data.lower()
+
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '6500'")
+            assert cur.fetchone()[0] == 0
+
+    def test_otros_is_accepted_for_genuinely_unknown_cases(self, authenticated_client, clean_db):
+        resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
+            "order_number": "6501", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["PAY101"], "plate_to": [""], "quantity": ["1"], "city": [""],
+        })
+        assert resp.status_code == 200
+        assert b"Registrado" in resp.data
+
+
+class TestIngestCustomerCapture:
+    def test_new_customer_attributes_are_persisted(self, authenticated_client, clean_db):
+        authenticated_client.post("/ingest", data={
+            "payment_method": "EFECTIVO",
+            "order_number": "6600", "order_date": "2026-01-01", "requested_by": "CLIENTE UNO",
+            "customer_type": "PERSONA NATURAL", "customer_document_type": "CÉDULA",
+            "customer_document_number": "999", "customer_document_relation": "DUEÑO",
+            "customer_phone": "3001112222", "customer_email": "uno@x.com",
+            "customer_transit_license": "LICX",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["CUS100"], "plate_to": [""], "quantity": ["1"], "city": [""],
+        })
+        with db.get_conn() as conn:
+            customer = db.get_customer_by_name(conn, "CLIENTE UNO")
+        assert customer is not None
+        assert customer.type == "PERSONA NATURAL"
+        assert customer.document_type == "CÉDULA"
+        assert customer.document_number == "999"
+        assert customer.document_relation == "DUEÑO"
+        assert customer.phone == "3001112222"
+        assert customer.email == "uno@x.com"
+        assert customer.transit_license == "LICX"
+
+    def test_document_relation_is_forced_null_unless_cedula(self, authenticated_client, clean_db):
+        """Server-side enforcement: even if a raw POST carries a
+        document_relation, it must never be stored unless document_type is
+        genuinely CÉDULA -- the HTML disables the field for anything else,
+        but the server never trusts that alone."""
+        authenticated_client.post("/ingest", data={
+            "payment_method": "EFECTIVO",
+            "order_number": "6601", "order_date": "2026-01-01", "requested_by": "CLIENTE DOS",
+            "customer_document_type": "NIT", "customer_document_relation": "DUEÑO",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["CUS101"], "plate_to": [""], "quantity": ["1"], "city": [""],
+        })
+        with db.get_conn() as conn:
+            customer = db.get_customer_by_name(conn, "CLIENTE DOS")
+        assert customer is not None
+        assert customer.document_type == "NIT"
+        assert customer.document_relation is None
+
+    def test_transit_license_is_forced_null_unless_persona_natural(self, authenticated_client, clean_db):
+        authenticated_client.post("/ingest", data={
+            "payment_method": "EFECTIVO",
+            "order_number": "6602", "order_date": "2026-01-01", "requested_by": "CLIENTE TRES",
+            "customer_type": "EMPRESA", "customer_transit_license": "LICY",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["CUS102"], "plate_to": [""], "quantity": ["1"], "city": [""],
+        })
+        with db.get_conn() as conn:
+            customer = db.get_customer_by_name(conn, "CLIENTE TRES")
+        assert customer is not None
+        assert customer.type == "EMPRESA"
+        assert customer.transit_license is None
+
+    def test_existing_customer_matched_by_requested_by_is_not_overwritten(
+        self, authenticated_client, clean_db
+    ):
+        with db.get_conn() as conn:
+            db.resolve_or_create_customer(conn, "CLIENTE CUATRO", type="EMPRESA", phone="111")
+            conn.commit()
+        authenticated_client.post("/ingest", data={
+            "payment_method": "EFECTIVO",
+            "order_number": "6603", "order_date": "2026-01-01", "requested_by": "CLIENTE CUATRO",
+            "customer_type": "PERSONA NATURAL", "customer_phone": "999",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["CUS103"], "plate_to": [""], "quantity": ["1"], "city": [""],
+        })
+        with db.get_conn() as conn:
+            customer = db.get_customer_by_name(conn, "CLIENTE CUATRO")
+        assert customer is not None
+        assert customer.type == "EMPRESA"
+        assert customer.phone == "111"
+
+
+class TestIngestPlateLineFieldsPersist:
+    def test_reason_vehicle_brand_unit_price_are_saved(self, authenticated_client, clean_db):
+        authenticated_client.post("/ingest", data={
+            "payment_method": "EFECTIVO",
+            "order_number": "6700", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["LIN100"], "plate_to": [""], "quantity": ["1"], "city": [""],
+            "reason": ["DETERIORO"], "vehicle_brand": ["TOYOTA"], "unit_price": ["180000"],
+        })
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "SELECT reason, vehicle_brand, unit_price FROM plates WHERE plate_number = 'LIN100'"
+            )
+            assert cur.fetchone() == ("DETERIORO", "TOYOTA", Decimal("180000"))
+
+
+class TestIngestStickyRoundTrip:
+    """Item 5 of the Fase 3 plan: every new POS field (order-level, cliente,
+    and per-line) must survive a duplicate-order bounce via the shared
+    _sticky_header_from_form/_sticky_lines_from_form helpers."""
+
+    def test_every_new_field_survives_a_duplicate_order_bounce(self, authenticated_client, clean_db):
+        payload = {
+            "order_number": "6800", "order_date": "2026-01-01",
+            "requested_by": "CLIENTE ABC",
+            "receipt_type": "FACTURA", "receipt_number": "FAC-1",
+            "customer_type": "PERSONA NATURAL", "customer_document_type": "CÉDULA",
+            "customer_document_number": "111", "customer_document_relation": "DUEÑO",
+            "customer_phone": "3000000000", "customer_email": "abc@x.com",
+            "customer_transit_license": "LIC-9",
+            "payment_method": "TRANSFERENCIA",
+            "tracking_number": "GUIA-1", "client_order_number": "PED-1",
+            "delivery_date": "2026-01-10", "payment_date": "2026-01-02",
+            "dispatched_by": "ANA", "received_by": "LUIS", "notes": "obs",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["AAA900"], "plate_to": [""], "quantity": ["3"],
+            "city": ["CALI"], "reason": ["DETERIORO"], "vehicle_brand": ["MAZDA"],
+            "unit_price": ["150000"],
+        }
+        first = authenticated_client.post("/ingest", data=payload)
+        assert b"Registrado" in first.data
+
+        resp = authenticated_client.post("/ingest", data=payload)  # same order_number -> bounce
+        assert resp.status_code == 200
+        assert b"ya existe" in resp.data
+        html = resp.data.decode()
+
+        for expected in [
+            'value="6800"', 'value="CLIENTE ABC"', 'value="FAC-1"',
+            'value="111"', 'value="3000000000"', 'value="abc@x.com"',
+            'value="LIC-9"', 'value="GUIA-1"', 'value="PED-1"',
+            'value="2026-01-10"', 'value="2026-01-02"', 'value="ANA"', 'value="LUIS"',
+            'value="obs"', 'value="AAA900"', 'value="CALI"', 'value="MAZDA"', 'value="150000"',
+        ]:
+            assert expected in html, f"missing round-tripped field: {expected}"
+
+        assert '<option value="FACTURA" selected>' in html
+        assert '<option value="TRANSFERENCIA" selected>' in html
+        assert '<option value="PERSONA NATURAL" selected>' in html
+        assert '<option value="CÉDULA" selected>' in html
+        assert '<option value="DUEÑO" selected>' in html
+        assert '<option value="DETERIORO" selected>' in html
+
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '6800'")
+            assert cur.fetchone()[0] == 1  # second post was NOT saved

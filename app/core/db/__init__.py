@@ -69,6 +69,7 @@ from app.core.db.customers import (
     CustomerRecord,
     get_customer,
     get_customer_by_name,
+    list_customers,
     resolve_or_create_customer,
 )
 from app.core.db.inventory import (
@@ -126,6 +127,7 @@ __all__ = [
     "insert_order",
     "insert_plate",
     "inventory_view",
+    "list_customers",
     "list_users",
     "order_detail",
     "ornamental_count",

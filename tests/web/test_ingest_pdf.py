@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from psycopg.rows import tuple_row
 
 from app.core.pdf_extract import parse_pedido_pdf
-from app.web.blueprints.ingest import _form_from_pedido
+from app.web.blueprints.ingest import _STICKY_HEADER_FIELDS, _form_from_pedido, _sticky_header_from_form
 from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf
 
 
@@ -40,6 +40,25 @@ def order_count(conn) -> int:
     with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute("SELECT count(*) FROM production_orders")
         return cur.fetchone()[0]
+
+
+class TestFormFromPedidoHeaderShape:
+    """Item 2 of the Fase 3 plan: _form_from_pedido must return the exact
+    same header key set _sticky_header_from_form does -- both feed the same
+    ingest.html form, so a field present in one but not the other would
+    silently fail to round-trip through whichever path skipped it."""
+
+    def test_header_keys_match_the_sticky_header_helper(self):
+        header, _lines, _notices = _form_from_pedido(parse_pedido_pdf(build_pedido_pdf()))
+        assert set(header.keys()) == set(_STICKY_HEADER_FIELDS)
+
+    def test_header_keys_match_a_freshly_posted_forms_sticky_dict(self):
+        """Belt-and-suspenders: compare against the OTHER builder directly,
+        using a bare form-like mapping (a plain dict supports .get like
+        werkzeug's ImmutableMultiDict does for this helper's purposes)."""
+        header, _lines, _notices = _form_from_pedido(parse_pedido_pdf(build_pedido_pdf()))
+        sticky = _sticky_header_from_form({})
+        assert set(header.keys()) == set(sticky.keys())
 
 
 class TestAuth:
@@ -161,9 +180,21 @@ class TestNotices:
         assert "No se pudo leer la fecha" in html
         assert "ABC12D" in html
 
-    def test_clean_pedido_shows_no_notices(self, authenticated_client, clean_db):
+    def test_clean_pedido_still_flags_the_missing_payment_method(self, authenticated_client, clean_db):
+        """Fase 3: payment_method has no printed field anywhere in the PDF
+        yet (that's Fase 4's footer-parsing job, not built here) -- so even
+        an otherwise-clean pedido always surfaces this one notice today, per
+        the plan ('si viene vacío desde un PDF, mostrar el mismo tipo de
+        aviso'). This replaces the old 'clean pedido shows zero notices'
+        invariant, which this field's addition deliberately breaks until
+        Fase 4 lands."""
         resp = upload(authenticated_client, build_pedido_pdf())
-        assert "Revisá esto antes de guardar" not in resp.get_data(as_text=True)
+        html = resp.get_data(as_text=True)
+        assert "Revisá esto antes de guardar" in html
+        assert "no indica la forma de pago" in html
+        # ...but nothing else ambiguous is flagged -- still just this one.
+        assert "No se pudo leer" not in html
+        assert "no marca el tipo de placa" not in html
 
 
 class TestGracefulFailure:
@@ -207,6 +238,7 @@ class TestSavingWhatThePdfProduced:
         header, lines, _ = _form_from_pedido(parse_pedido_pdf(build_pedido_pdf()))
 
         resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_date": header["order_date"],
             "order_number": header["order_number"],
             "requested_by": header["requested_by"],
@@ -245,6 +277,7 @@ class TestSavingWhatThePdfProduced:
         _header, lines, _ = _form_from_pedido(parse_pedido_pdf(pdf))
 
         authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
             "order_date": "2026-01-01", "order_number": "9002", "requested_by": "CLIENTE DEMO",
             "line_type": [line["line_type"] for line in lines],
             "plate_type": [line["plate_type"] for line in lines],
