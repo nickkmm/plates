@@ -180,14 +180,12 @@ class TestNotices:
         assert "No se pudo leer la fecha" in html
         assert "ABC12D" in html
 
-    def test_clean_pedido_still_flags_the_missing_payment_method(self, authenticated_client, clean_db):
-        """Fase 3: payment_method has no printed field anywhere in the PDF
-        yet (that's Fase 4's footer-parsing job, not built here) -- so even
-        an otherwise-clean pedido always surfaces this one notice today, per
-        the plan ('si viene vacío desde un PDF, mostrar el mismo tipo de
-        aviso'). This replaces the old 'clean pedido shows zero notices'
-        invariant, which this field's addition deliberately breaks until
-        Fase 4 lands."""
+    def test_clean_pedido_still_flags_a_blank_payment_method(self, authenticated_client, clean_db):
+        """Fase 4 parses FORMA DE PAGO: from the PDF's footer, but the
+        default fixture still prints that label with no value (real pedidos
+        very often leave it blank) -- so a genuinely clean pedido still
+        surfaces this one notice, per the plan ('si viene vacío desde un PDF,
+        mostrar el mismo tipo de aviso')."""
         resp = upload(authenticated_client, build_pedido_pdf())
         html = resp.get_data(as_text=True)
         assert "Revisá esto antes de guardar" in html
@@ -195,6 +193,75 @@ class TestNotices:
         # ...but nothing else ambiguous is flagged -- still just this one.
         assert "No se pudo leer" not in html
         assert "no marca el tipo de placa" not in html
+
+    def test_a_recognized_payment_method_clears_the_notice(self, authenticated_client, clean_db):
+        """Fase 4: when the PDF's footer actually names a known forma de
+        pago, the notice must NOT fire -- it's no longer unconditional."""
+        resp = upload(authenticated_client, build_pedido_pdf(forma_pago="EFECTIVO"))
+        html = resp.get_data(as_text=True)
+        assert "no indica la forma de pago" not in html
+        assert 'name="payment_method"' in html
+        assert '<option value="EFECTIVO" selected>' in html
+
+    def test_an_unrecognized_payment_method_is_flagged_and_left_blank(
+        self, authenticated_client, clean_db
+    ):
+        """normalize_choice never invents a value -- a PDF value that doesn't
+        match a known PAYMENT_METHODS option must still surface the notice
+        and leave the field for the person to pick, exactly like a missing
+        value."""
+        resp = upload(authenticated_client, build_pedido_pdf(forma_pago="BITCOIN"))
+        html = resp.get_data(as_text=True)
+        assert "no indica la forma de pago" in html
+        assert '<option value="EFECTIVO" selected>' not in html
+
+
+class TestFase4FooterPrefill:
+    """The PDF's footer/extra-header fields (Fase 4) must reach the same
+    /ingest form inputs a manual entry would fill by hand."""
+
+    def test_every_new_field_is_prefilled(self, authenticated_client, clean_db):
+        resp = upload(authenticated_client, build_pedido_pdf(
+            nit="1117521679", guia="G-500", fecha_entrega="20/09/2026",
+            fecha_pago="21/09/2026", responsable="JUAN PEREZ", telefono="3001234567",
+            recibe="MARIA GOMEZ", forma_pago="EFECTIVO", observaciones="ENTREGAR EN LA TARDE",
+        ))
+        html = resp.get_data(as_text=True)
+        assert 'name="customer_document_number" id="documentNumber" value="1117521679"' in html
+        assert 'name="tracking_number" value="G-500"' in html
+        assert 'name="delivery_date" value="2026-09-20"' in html
+        assert 'name="payment_date" value="2026-09-21"' in html
+        assert 'name="dispatched_by" value="JUAN PEREZ"' in html
+        assert 'name="customer_phone" id="customerPhone" value="3001234567"' in html
+        assert 'name="received_by" value="MARIA GOMEZ"' in html
+        assert 'name="notes" value="ENTREGAR EN LA TARDE"' in html
+        assert '<option value="EFECTIVO" selected>' in html
+
+    def test_the_client_facing_pedido_number_is_prefilled_separately_from_order_number(
+        self, authenticated_client, clean_db
+    ):
+        resp = upload(authenticated_client, build_pedido_pdf(order_number="9001", pedido_numero="28"))
+        html = resp.get_data(as_text=True)
+        assert 'name="order_number" value="9001"' in html
+        assert 'name="client_order_number" value="28"' in html
+
+    def test_nit_offset_row_prefills_blank_not_a_wrong_value(self, authenticated_client, clean_db):
+        resp = upload(
+            authenticated_client, build_pedido_pdf(nit_value_in_next_row=True, nit="999999999")
+        )
+        html = resp.get_data(as_text=True)
+        assert 'name="customer_document_number" id="documentNumber" value=""' in html
+
+    def test_always_manual_fields_stay_blank(self, authenticated_client, clean_db):
+        """receipt_type/receipt_number/customer_type/customer_document_type/
+        customer_document_relation/customer_email/customer_transit_license
+        have no printed field anywhere on the document."""
+        resp = upload(authenticated_client, build_pedido_pdf(
+            nit="1117521679", forma_pago="EFECTIVO", responsable="JUAN PEREZ",
+        ))
+        html = resp.get_data(as_text=True)
+        assert 'name="customer_email" id="customerEmail" value=""' in html
+        assert 'name="receipt_number" value=""' in html
 
 
 class TestGracefulFailure:
