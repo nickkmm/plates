@@ -152,19 +152,29 @@
 
     <fieldset>
       <legend>Cliente</legend>
-      <p class="muted">Si "Cliente / Solicitado por" coincide con un cliente ya guardado, estos datos se autocompletan. Si es nuevo, completalos a mano (todos opcionales).</p>
+      <p class="muted">
+        Si "Cliente / Solicitado por" coincide con un cliente ya guardado, estos datos se
+        autocompletan. Si es nuevo, completalos a mano (todos opcionales). Un dato que el
+        cliente ya tiene guardado queda bloqueado acá -- escribir uno distinto no lo cambiaría
+        de todas formas (nunca se reemplaza un dato ya guardado desde una orden).
+        {% if session.get('role') in full_access_roles %}
+        Para corregirlo, andá a <a href="{{ url_for('customers.customers') }}">Clientes</a>.
+        {% endif %}
+      </p>
       <div class="header">
         <label>Tipo de cliente
           <select name="customer_type" id="customerType" onchange="toggleTransitLicense()">
             <option value="" {% if not (header and header.customer_type) %}selected{% endif %}>— sin definir —</option>
             {% for ct in customer_types %}<option value="{{ ct }}" {% if header and header.customer_type==ct %}selected{% endif %}>{{ ct }}</option>{% endfor %}
           </select>
+          <input type="hidden" name="customer_type" id="customerTypeLocked" disabled>
         </label>
         <label>Tipo de documento
           <select name="customer_document_type" id="documentType" onchange="toggleDocumentRelation()">
             <option value="" {% if not (header and header.customer_document_type) %}selected{% endif %}>— sin definir —</option>
             {% for dt in document_types %}<option value="{{ dt }}" {% if header and header.customer_document_type==dt %}selected{% endif %}>{{ dt }}</option>{% endfor %}
           </select>
+          <input type="hidden" name="customer_document_type" id="documentTypeLocked" disabled>
         </label>
         <label>N° de documento<input type="text" name="customer_document_number" id="documentNumber" value="{{ header.customer_document_number if header else '' }}"></label>
         <label>Relación con el documento
@@ -352,23 +362,79 @@
     function _foldName(s) {
       return (s || '').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     }
+    // A <select>'s 'disabled' keeps it from being POSTed at all (unlike
+    // 'readonly', which <select> doesn't support) -- for customerType/
+    // documentType that's a problem, since the SERVER-side forcing logic
+    // (customer_fields_from_form) needs to see their submitted value to
+    // decide document_relation/transit_license, not just the DB's existing
+    // value. So locking those two disables the visible <select> (for
+    // interaction) but submits its value through a same-named hidden
+    // mirror input instead -- only one of the pair is ever enabled at a
+    // time. documentNumber/customerPhone/customerEmail have no such
+    // downstream dependent, so a plain 'disabled' (simply not submitted,
+    // same as leaving them blank) is enough for them.
+    function _lockSelectWithMirror(selectId, mirrorId, value) {
+      const sel = document.getElementById(selectId);
+      const mirror = document.getElementById(mirrorId);
+      sel.disabled = !!value;
+      mirror.disabled = !value;
+      mirror.value = value || '';
+    }
+    function _lockPlainField(id, value) {
+      document.getElementById(id).disabled = !!value;
+    }
+    // Only ADDS a lock -- never force-enables a field toggleDocumentRelation/
+    // toggleTransitLicense already disabled because it's inapplicable given
+    // another field's current value (e.g. document_relation when
+    // document_type isn't CÉDULA).
+    function _addLock(id, value) {
+      if (value) document.getElementById(id).disabled = true;
+    }
+
     function autofillCustomer(typed) {
       const folded = _foldName(typed);
-      if (!folded) return;
+
+      // Always start unlocked -- toggleDocumentRelation()/toggleTransitLicense()
+      // below recompute the APPLICABILITY-based disabling on their own; this
+      // only resets the separate VALUE-based lock from a previous match.
+      _lockSelectWithMirror('customerType', 'customerTypeLocked', '');
+      _lockSelectWithMirror('documentType', 'documentTypeLocked', '');
+      _lockPlainField('documentNumber', '');
+      _lockPlainField('customerPhone', '');
+      _lockPlainField('customerEmail', '');
+
       let match = null;
-      for (const name in CUSTOMERS) {
-        if (_foldName(name) === folded) { match = CUSTOMERS[name]; break; }
+      if (folded) {
+        for (const name in CUSTOMERS) {
+          if (_foldName(name) === folded) { match = CUSTOMERS[name]; break; }
+        }
       }
-      if (!match) return;
-      document.getElementById('customerType').value = match.type || '';
-      document.getElementById('documentType').value = match.document_type || '';
-      document.getElementById('documentNumber').value = match.document_number || '';
-      document.getElementById('documentRelation').value = match.document_relation || '';
-      document.getElementById('customerPhone').value = match.phone || '';
-      document.getElementById('customerEmail').value = match.email || '';
-      document.getElementById('transitLicense').value = match.transit_license || '';
+
+      if (match) {
+        document.getElementById('customerType').value = match.type || '';
+        document.getElementById('documentType').value = match.document_type || '';
+        document.getElementById('documentNumber').value = match.document_number || '';
+        document.getElementById('documentRelation').value = match.document_relation || '';
+        document.getElementById('customerPhone').value = match.phone || '';
+        document.getElementById('customerEmail').value = match.email || '';
+        document.getElementById('transitLicense').value = match.transit_license || '';
+      }
       toggleDocumentRelation();
       toggleTransitLicense();
+      if (!match) return;
+
+      // A field the customer ALREADY has a value for gets locked here --
+      // writing a different one would silently do nothing anyway (see
+      // db.resolve_or_create_customer's COALESCE: it never overwrites an
+      // existing attribute), so don't even offer the option. Fix a wrong
+      // value from /customers instead (admin-only).
+      _lockSelectWithMirror('customerType', 'customerTypeLocked', match.type);
+      _lockSelectWithMirror('documentType', 'documentTypeLocked', match.document_type);
+      _lockPlainField('documentNumber', match.document_number);
+      _lockPlainField('customerPhone', match.phone);
+      _lockPlainField('customerEmail', match.email);
+      _addLock('documentRelation', match.document_relation);
+      _addLock('transitLicense', match.transit_license);
     }
 
     // Una fila en blanco al cargar, salvo que el servidor ya haya prellenado
