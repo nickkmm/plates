@@ -8,9 +8,11 @@ ruff==0.8.4
 mypy==1.14.1
 mutmut==3.7.0
 
-# Builds the synthetic pedido PDFs the pdf_extract tests parse. The two real
-# sample PDFs are gitignored business data, so no test may depend on them.
-reportlab==5.0.0
+# reportlab is now a real production dependency (Fase 5b, /cuadre/pdf) --
+# see requirements.txt. It also builds the synthetic pedido PDFs the
+# pdf_extract tests parse (the two real sample PDFs are gitignored business
+# data, so no test may depend on them) and is pulled in here transitively
+# via `-r requirements.txt` above.
 
 # Type stubs for mypy.
 pandas-stubs==2.2.3.241126

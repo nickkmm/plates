@@ -9,3 +9,7 @@ openpyxl==3.1.5
 pdfplumber==0.11.10
 python-dateutil==2.9.0.post0
 tzdata==2024.2
+# Runtime (not dev-only, Fase 5b): /cuadre/pdf renders the cuadre de caja
+# export with it. Was dev-only (tests/pdf_fixtures.py's synthetic pedido
+# PDFs); promoted here now that a real route uses it in production too.
+reportlab==5.0.0
