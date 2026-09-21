@@ -3,17 +3,84 @@ lines, built by hand or pre-filled from an uploaded pedido PDF)."""
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, render_template, request
+from flask import Blueprint, current_app, render_template, request, session
 
 from app.core import db
 from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
 from app.core.models import ExtractedRow
-from app.core.normalize import validate_plate
+from app.core.normalize import (
+    CUSTOMER_TYPES,
+    DOCUMENT_RELATIONS,
+    DOCUMENT_TYPES,
+    PAYMENT_METHODS,
+    REASONS,
+    RECEIPT_TYPES,
+    normalize_choice,
+    validate_plate,
+)
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
-from app.web.auth import login_required
+from app.web.auth import pos_allowed
 from app.web.helpers import FORM_PLATE_TYPES, _options, _padded, _validate_order_header, today_iso
 
 bp = Blueprint("ingest", __name__)
+
+# Order-level fields the "sticky" header dict carries (Fase 3): the original
+# order_date/order_number/requested_by plus every POS field added on top.
+# Single source of truth for this key set, used by _sticky_header_from_form
+# (rebuilds it from a bounced POST) AND _form_from_pedido (builds it from a
+# parsed PDF) -- these two used to drift independently (three separate
+# hand-written dicts before this refactor: two inline in ingest_post, one in
+# _form_from_pedido), which is exactly how a field silently stops
+# round-tripping as more of them get added.
+_STICKY_HEADER_FIELDS: tuple[str, ...] = (
+    "order_date", "order_number", "requested_by",
+    "receipt_type", "receipt_number",
+    "customer_type", "customer_document_type", "customer_document_number",
+    "customer_document_relation", "customer_phone", "customer_email",
+    "customer_transit_license",
+    "payment_method", "tracking_number", "client_order_number",
+    "delivery_date", "payment_date", "dispatched_by", "received_by", "notes",
+)
+
+
+def _sticky_header_from_form(form) -> dict:
+    """Re-derive the order-header fields (order + cliente fieldsets) exactly
+    as typed, to redisplay the form without losing work when a duplicate-
+    order/duplicate-plate notice interrupts the save. The one place this
+    dict is built -- see _STICKY_HEADER_FIELDS' docstring."""
+    return {field: form.get(field, "") for field in _STICKY_HEADER_FIELDS}
+
+
+def _customer_fields_from_form(form) -> dict[str, str | None]:
+    """Customer attributes typed in the /ingest 'cliente' fieldset, keyed to
+    match db.resolve_or_create_customer's kwargs (name is handled
+    separately, via requested_by).
+
+    document_relation/transit_license are forced back to None here whenever
+    their governing field doesn't allow them (document_relation only makes
+    sense for CÉDULA; transit_license only for PERSONA NATURAL) -- the HTML
+    already disables those inputs client-side so a browser never sends them,
+    but a raw POST (curl, a modified request) could still carry a stale
+    value, so this is enforced again here rather than trusted from the
+    client alone.
+    """
+    customer_type = normalize_choice(form.get("customer_type"), CUSTOMER_TYPES)
+    document_type = normalize_choice(form.get("customer_document_type"), DOCUMENT_TYPES)
+    document_relation = normalize_choice(form.get("customer_document_relation"), DOCUMENT_RELATIONS)
+    if document_type != "CÉDULA":
+        document_relation = None
+    transit_license = (form.get("customer_transit_license") or "").strip() or None
+    if customer_type != "PERSONA NATURAL":
+        transit_license = None
+    return {
+        "type": customer_type,
+        "document_type": document_type,
+        "document_number": (form.get("customer_document_number") or "").strip() or None,
+        "document_relation": document_relation,
+        "phone": (form.get("customer_phone") or "").strip() or None,
+        "email": (form.get("customer_email") or "").strip() or None,
+        "transit_license": transit_license,
+    }
 
 
 def _rows_from_form(form) -> list[ExtractedRow]:
@@ -28,17 +95,49 @@ def _rows_from_form(form) -> list[ExtractedRow]:
 
     Ciudad is per LINE, not per order: one order can ship plates to several
     cities, so each line carries its own (no header field, no inheritance).
+
+    receipt_type/receipt_number/payment_method/tracking_number/
+    client_order_number/delivery_date/payment_date/dispatched_by/
+    received_by/notes (Fase 2 POS) are genuinely order-level -- read ONCE
+    here and stamped identically onto every row of this order, same as
+    order_number/order_date/requested_by already are. reason/vehicle_brand/
+    unit_price are genuinely per-line (a vehicle brand belongs to one plate,
+    not the whole order), so those are read per-row like plate_type/city.
     """
     order_number = form["order_number"].strip()
     order_date = form["order_date"]
     requested_by = form["requested_by"].strip()
     _validate_order_header(requested_by=requested_by, order_date=order_date)
 
+    # payment_method is the one POS field that's genuinely required (per the
+    # plan: it's the key /cuadre groups by, and blank silently defeats that
+    # report) -- enforced here, not just via the <select required> in HTML,
+    # since a raw POST could still omit it.
+    payment_method = normalize_choice(form.get("payment_method"), PAYMENT_METHODS)
+    if not payment_method:
+        raise ValueError("Elegí una forma de pago antes de guardar.")
+
+    receipt_type = normalize_choice(form.get("receipt_type"), RECEIPT_TYPES)
+    receipt_number = (form.get("receipt_number") or "").strip() or None
+    tracking_number = (form.get("tracking_number") or "").strip() or None
+    client_order_number = (form.get("client_order_number") or "").strip() or None
+    delivery_date = (form.get("delivery_date") or "").strip() or None
+    payment_date = (form.get("payment_date") or "").strip() or None
+    dispatched_by = (form.get("dispatched_by") or "").strip() or None
+    received_by = (form.get("received_by") or "").strip() or None
+    notes = (form.get("notes") or "").strip() or None
+
+    plate_types = form.getlist("plate_type")
+    n = len(plate_types)
     rows: list[ExtractedRow] = []
-    for lt, pt, pn, pto, qty, ct in zip(
-        form.getlist("line_type"), form.getlist("plate_type"),
+    for lt, pt, pn, pto, qty, ct, rs, vb, up in zip(
+        form.getlist("line_type"), plate_types,
         form.getlist("plate_number"), form.getlist("plate_to"), form.getlist("quantity"),
-        _padded(form.getlist("city"), len(form.getlist("plate_type"))), strict=False,
+        _padded(form.getlist("city"), n),
+        _padded(form.getlist("reason"), n),
+        _padded(form.getlist("vehicle_brand"), n),
+        _padded(form.getlist("unit_price"), n),
+        strict=False,
     ):
         if not (pt or "").strip():
             continue  # skip empty line
@@ -72,20 +171,35 @@ def _rows_from_form(form) -> list[ExtractedRow]:
             plate_type=pt.strip(), plate_number=plate_number, plate_to=plate_to,
             quantity=int(qty or 1), is_batch_replacement=is_batch, is_voided=is_voided,
             is_plate_annulled=is_plate_annulled,
+            receipt_type=receipt_type, receipt_number=receipt_number,
+            payment_method=payment_method, tracking_number=tracking_number,
+            client_order_number=client_order_number, delivery_date=delivery_date,
+            payment_date=payment_date, dispatched_by=dispatched_by, received_by=received_by,
+            notes=notes,
+            reason=normalize_choice(rs, REASONS), vehicle_brand=(vb or "").strip() or None,
+            unit_price=(up or "").strip() or None,
         ))
     return rows
 
 
 def _sticky_lines_from_form(form) -> list[dict]:
     """Re-derive the plate-line table as-typed, to redisplay the form without
-    losing work when a duplicate warning interrupts the save."""
+    losing work when a duplicate warning interrupts the save. reason/
+    vehicle_brand/unit_price (Fase 2) are _padded(...)-wrapped exactly like
+    city already is -- they're optional per-line inputs, so a shorter list
+    would otherwise truncate the zip and silently drop plate lines."""
+    plate_types = form.getlist("plate_type")
+    n = len(plate_types)
     return [
         {"line_type": lt, "plate_type": pt, "plate_number": pn, "plate_to": pto,
-         "quantity": qty, "city": ct}
-        for lt, pt, pn, pto, qty, ct in zip(
-            form.getlist("line_type"), form.getlist("plate_type"),
+         "quantity": qty, "city": ct, "reason": rs, "vehicle_brand": vb, "unit_price": up}
+        for lt, pt, pn, pto, qty, ct, rs, vb, up in zip(
+            form.getlist("line_type"), plate_types,
             form.getlist("plate_number"), form.getlist("plate_to"), form.getlist("quantity"),
-            _padded(form.getlist("city"), len(form.getlist("plate_type"))),
+            _padded(form.getlist("city"), n),
+            _padded(form.getlist("reason"), n),
+            _padded(form.getlist("vehicle_brand"), n),
+            _padded(form.getlist("unit_price"), n),
             strict=False,
         )
         if (pt or "").strip()
@@ -96,8 +210,13 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
     """Turn a parsed PDF into (header, lines, notices) for the /ingest form.
 
     Deliberately produces the exact same `header`/`lines` shapes the duplicate-
-    warning path builds (see `_sticky_lines_from_form`), so the review step is
-    the real form, pre-filled — not a second UI that could drift from it.
+    warning path builds (see `_sticky_header_from_form`/`_sticky_lines_from_form`),
+    so the review step is the real form, pre-filled — not a second UI that could
+    drift from it. header uses the SAME key set as _sticky_header_from_form
+    (_STICKY_HEADER_FIELDS) even though pdf_extract doesn't parse any of the
+    POS fields yet (that's Fase 4 -- the PDF's footer block) -- every key
+    beyond order_date/order_number/requested_by is simply blank, left for the
+    person to fill by hand, same as an unrecognized plate_type already is.
 
     Anything the PDF left ambiguous is surfaced as a notice and left BLANK
     rather than guessed, so a wrong value can't ride along unnoticed.
@@ -113,6 +232,7 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
         )
     if not pedido.requested_by:
         notices.append("No se pudo leer el cliente — completalo antes de guardar.")
+    notices.append("El PDF no indica la forma de pago — elegila antes de guardar.")
 
     no_type = [str(i) for i, line in enumerate(pedido.lines, start=1) if not line.plate_type]
     if no_type:
@@ -123,11 +243,10 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
 
     # City is stored per plate, so a pedido listing several cities needs no
     # disambiguation: each line just carries its own, exactly as the PDF has it.
-    header = {
-        "order_date": pedido.order_date.isoformat() if pedido.order_date else "",
-        "order_number": pedido.order_number,
-        "requested_by": pedido.requested_by,
-    }
+    header = dict.fromkeys(_STICKY_HEADER_FIELDS, "")
+    header["order_date"] = pedido.order_date.isoformat() if pedido.order_date else ""
+    header["order_number"] = pedido.order_number
+    header["requested_by"] = pedido.requested_by
     lines = [
         {
             "line_type": line.line_type,
@@ -136,23 +255,64 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
             "plate_to": line.plate_to,
             "quantity": line.quantity,
             "city": line.city or "",
+            "reason": "",
+            "vehicle_brand": "",
+            "unit_price": "",
         }
         for line in pedido.lines
     ]
     return header, lines, notices
 
 
+def _pricing_context(conn) -> dict[str, str]:
+    """{plate_type: unit_price} as JSON-safe strings (Decimal isn't directly
+    serializable) -- embedded in ingest.html so its JS can pre-fill a line's
+    "Valor" input with the current suggested tariff the moment a plate_type
+    is chosen, without a round trip. A type with no configured tariff yet is
+    simply absent (never a fabricated 0), same contract as
+    db.current_prices itself."""
+    return {plate_type: str(price) for plate_type, price in db.current_prices(conn).items()}
+
+
+def _customers_context(conn) -> dict[str, dict]:
+    """{customer.name: {attributes...}} embedded in ingest.html so its JS can
+    auto-fill the 'cliente' fieldset the instant the typed/selected name
+    matches an existing customer -- same "embed the whole small lookup list"
+    pattern already used for distinct_requested_by/distinct_cities (this app
+    has no JSON/AJAX endpoints anywhere else, so a lookup endpoint would be
+    the odd one out). Matching against this dict is a client-side
+    convenience only -- resolve_or_create_customer (server-side, via
+    normalize_requested_by) is what actually decides which customer an order
+    resolves to, so a miss here is harmless."""
+    return {
+        c.name: {
+            "type": c.type or "", "document_type": c.document_type or "",
+            "document_number": c.document_number or "", "document_relation": c.document_relation or "",
+            "phone": c.phone or "", "email": c.email or "", "transit_license": c.transit_license or "",
+        }
+        for c in db.list_customers(conn)
+    }
+
+
 @bp.get("/ingest")
-@login_required
+@pos_allowed
 def ingest():
     with db.get_conn() as conn:
         requesters, cities = _options(conn)
-    return render_template("ingest.html", requesters=requesters, cities=cities,
-                           categories=FORM_PLATE_TYPES, today=today_iso())
+        prices = _pricing_context(conn)
+        customers = _customers_context(conn)
+    return render_template(
+        "ingest.html", requesters=requesters, cities=cities,
+        categories=FORM_PLATE_TYPES, today=today_iso(),
+        receipt_types=RECEIPT_TYPES, customer_types=CUSTOMER_TYPES,
+        document_types=DOCUMENT_TYPES, document_relations=DOCUMENT_RELATIONS,
+        payment_methods=PAYMENT_METHODS, reasons=REASONS,
+        prices=prices, customers=customers,
+    )
 
 
 @bp.post("/ingest")
-@login_required
+@pos_allowed
 def ingest_post():
     summary = None
     error = None
@@ -173,7 +333,11 @@ def ingest_post():
             # so nothing already there can register as "already existing"
             # against the fresh rows being inserted in its place.
             with db.get_conn() as conn:
-                summary = replace_order(conn, rows[0].order_number, rows)
+                db.resolve_or_create_customer(
+                    conn, rows[0].requested_by, **_customer_fields_from_form(request.form)
+                )
+                summary = replace_order(conn, rows[0].order_number, rows,
+                                        created_by=session.get("user_id"))
         else:
             # One connection for the whole route from here down: the
             # order-number collision check, the plate-number dup check, and
@@ -190,11 +354,7 @@ def ingest_post():
                 # the real WCY449/pedido 1030 case this guards against).
                 order_duplicates = db.find_orders_by_number(conn, rows[0].order_number)
                 if order_duplicates and not request.form.get("confirm_order_duplicate"):
-                    header = {
-                        "order_date": request.form.get("order_date", ""),
-                        "order_number": request.form.get("order_number", ""),
-                        "requested_by": request.form.get("requested_by", ""),
-                    }
+                    header = _sticky_header_from_form(request.form)
                     lines = _sticky_lines_from_form(request.form)
                 else:
                     order_duplicates = None  # not a collision the user needs to see anymore
@@ -203,29 +363,34 @@ def ingest_post():
                         duplicates = {
                             pn: db.find_orders_for_plate(conn, pn) for pn in sorted(dup_plate_numbers)
                         }
-                        header = {
-                            "order_date": request.form.get("order_date", ""),
-                            "order_number": request.form.get("order_number", ""),
-                            "requested_by": request.form.get("requested_by", ""),
-                        }
+                        header = _sticky_header_from_form(request.form)
                         lines = _sticky_lines_from_form(request.form)
                     else:
-                        summary = process_rows(conn, rows)
+                        db.resolve_or_create_customer(
+                            conn, rows[0].requested_by, **_customer_fields_from_form(request.form)
+                        )
+                        summary = process_rows(conn, rows, created_by=session.get("user_id"))
     except Exception as e:  # surface validation/DB errors without crashing
         error = f"Error: {e}"
 
     with db.get_conn() as conn:
         requesters, cities = _options(conn)
+        prices = _pricing_context(conn)
+        customers = _customers_context(conn)
     return render_template(
         "ingest.html", requesters=requesters, cities=cities,
         categories=FORM_PLATE_TYPES, today=today_iso(),
+        receipt_types=RECEIPT_TYPES, customer_types=CUSTOMER_TYPES,
+        document_types=DOCUMENT_TYPES, document_relations=DOCUMENT_RELATIONS,
+        payment_methods=PAYMENT_METHODS, reasons=REASONS,
+        prices=prices, customers=customers,
         summary=summary.model_dump() if summary else None, error=error,
         duplicates=duplicates, order_duplicates=order_duplicates, header=header, lines=lines,
     )
 
 
 @bp.route("/ingest/pdf", methods=["GET", "POST"])
-@login_required
+@pos_allowed
 def ingest_pdf():
     """Upload a pedido PDF (GET) and review the parse in the normal form (POST).
 
@@ -260,8 +425,14 @@ def ingest_pdf():
             db.find_orders_by_number(conn, pedido.order_number) if pedido.order_number else []
         )
         requesters, cities = _options(conn)
+        prices = _pricing_context(conn)
+        customers = _customers_context(conn)
     return render_template(
         "ingest.html", requesters=requesters, cities=cities,
         categories=FORM_PLATE_TYPES, today=today_iso(),
+        receipt_types=RECEIPT_TYPES, customer_types=CUSTOMER_TYPES,
+        document_types=DOCUMENT_TYPES, document_relations=DOCUMENT_RELATIONS,
+        payment_methods=PAYMENT_METHODS, reasons=REASONS,
+        prices=prices, customers=customers,
         header=header, lines=lines, notices=notices, order_duplicates=order_duplicates,
     )
