@@ -16,6 +16,8 @@ one module per domain:
                       tariff editor, Fase 5a)
   cash_summary.py  -- GET /cuadre, GET /cuadre/pdf (daily cash-reconciliation
                       report, Fase 5b)
+  customers.py     -- GET /customers, GET/POST /customers/<id> (admin-only
+                      customer master-data editor, Fase 6)
   auth_routes.py   -- GET/POST /login, GET/POST /logout
 
 All routes except /login, /logout and /healthz require an authenticated
@@ -39,6 +41,7 @@ from app.web import auth
 from app.web.auth import consulta_allowed
 from app.web.blueprints.auth_routes import bp as auth_routes_bp
 from app.web.blueprints.cash_summary import bp as cash_summary_bp
+from app.web.blueprints.customers import bp as customers_bp
 from app.web.blueprints.ingest import bp as ingest_bp
 from app.web.blueprints.inventory import bp as inventory_bp
 from app.web.blueprints.pricing import bp as pricing_bp
@@ -75,6 +78,7 @@ app.secret_key = SECRET_KEY
 
 app.register_blueprint(auth_routes_bp)
 app.register_blueprint(cash_summary_bp)
+app.register_blueprint(customers_bp)
 app.register_blueprint(ingest_bp)
 app.register_blueprint(inventory_bp)
 app.register_blueprint(pricing_bp)

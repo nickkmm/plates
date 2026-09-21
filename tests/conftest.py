@@ -258,19 +258,31 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
     attributes, restored via the captured originals in `finally`, not via
     `monkeypatch` -- ordering relative to this fixture's own final real
     rollback needs to be exact, not left to monkeypatch's generic LIFO
-    teardown) to instead RELEASE+re-SAVEPOINT / ROLLBACK TO the ONE ongoing
-    savepoint. `db.get_conn()` itself is reassigned (via `monkeypatch`, the
-    ordinary case it's built for) to a context manager that does the
-    equivalent on a clean/exceptional exit -- replicating the original
-    pool's own "commit on success, rollback on exception" `with` behavior
-    (see `app/core/db/__init__.py::get_conn`), which
-    `tests/core/test_ingestion.py::TestAtomicity` depends on. Since there's
-    only ONE savepoint (not a stack), nested `with db.get_conn()` calls
-    (e.g. a test's own `db_conn` fixture staying open around HTTP requests
-    the test drives, each internally calling `db.get_conn()` again) are
-    safe: an inner block's checkpoint/rollback just moves the SAME
-    savepoint forward or back, and a redundant `ROLLBACK TO` from an outer
-    handler after an inner one already fired is a harmless no-op.
+    teardown) to instead RELEASE+re-SAVEPOINT / ROLLBACK TO the CURRENT
+    (innermost) savepoint. `db.get_conn()` itself is reassigned (via
+    `monkeypatch`, the ordinary case it's built for) to a context manager
+    that PUSHES a new savepoint on entry and pops it on exit (RELEASE on a
+    clean exit, ROLLBACK TO + RELEASE on an exception) -- replicating the
+    original pool's own "commit on success, rollback on exception" `with`
+    behavior (see `app/core/db/__init__.py::get_conn`), which
+    `tests/core/test_ingestion.py::TestAtomicity` depends on.
+
+    **A real STACK of savepoints, not just one** -- `with db.get_conn()`
+    blocks genuinely nest (a test's own `db_conn` fixture holds one open
+    around a whole test; an HTTP request the test drives through
+    `authenticated_client` opens another one inside it). A single shared
+    savepoint was tried first and is wrong: an exception in the INNER block
+    would roll back the OUTER block's earlier work too, even work that
+    logically has nothing to do with the failure -- caught by a real test
+    that set up two customers via `db_conn` with no explicit commit (correct
+    under this design -- same-connection visibility needs none), then
+    POSTed a request expected to fail; the failure's rollback wiped out
+    BOTH customers, not just the failed request's own attempted write, and
+    the next `db.get_conn()` call (inside the route's own error-handling
+    re-render) couldn't find the still-should-exist row. Pushing/popping a
+    real stack fixes this: an inner block's failure only unwinds ITS OWN
+    savepoint, never a savepoint an outer, still-open block already
+    established.
 
     Reseeds `inventory_categories` with the 3 fixed materials right after
     truncating it (mirroring init.sql/0002_reference_integrity.sql, which
@@ -300,6 +312,35 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
     pool = db._get_pool()
     conn = pool.getconn()
     real_commit, real_rollback = conn.commit, conn.rollback
+    # A STACK of savepoints, not just one: `with db.get_conn() as conn:`
+    # blocks nest for real (e.g. db_conn's fixture holds one open around a
+    # whole test, and an HTTP request the test drives opens another one
+    # inside it) -- a single shared savepoint would make an exception in the
+    # INNER block roll back the OUTER block's earlier, already-"successful"
+    # work too (discovered via a real test failure: a test's own setup
+    # through `db_conn`, never explicitly committed, disappeared after a
+    # LATER route call in the same test failed on purpose). Each `with
+    # db.get_conn()` push/pops its own savepoint; conn.commit()/.rollback()
+    # (called explicitly, mid-block, by both real app code and test code)
+    # only ever touch the CURRENT (innermost) one, replacing it with a fresh
+    # savepoint of the same "level" so the block's own eventual pop still
+    # has something to act on.
+    savepoints: list[str] = []
+    _counter = {"n": 0}
+
+    def _new_savepoint_name() -> str:
+        _counter["n"] += 1
+        return f"{_CLEAN_DB_SAVEPOINT}_{_counter['n']}"
+
+    def _execute(sql: str) -> None:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+
+    def _push_savepoint() -> None:
+        name = _new_savepoint_name()
+        _execute(f"SAVEPOINT {name}")
+        savepoints.append(name)
+
     try:
         with conn.cursor() as cur:
             cur.execute(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE")
@@ -311,7 +352,7 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
                 "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)",
                 _TEST_USERS,
             )
-            cur.execute(f"SAVEPOINT {_CLEAN_DB_SAVEPOINT}")
+        _push_savepoint()
 
         def _checkpoint_commit() -> None:
             # A real conn.commit() on an aborted transaction is one of
@@ -328,26 +369,31 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
             if conn.info.transaction_status == psycopg.pq.TransactionStatus.INERROR:
                 _checkpoint_rollback()
                 return
-            with conn.cursor() as cur:
-                cur.execute(f"RELEASE SAVEPOINT {_CLEAN_DB_SAVEPOINT}")
-                cur.execute(f"SAVEPOINT {_CLEAN_DB_SAVEPOINT}")
+            _execute(f"RELEASE SAVEPOINT {savepoints[-1]}")
+            savepoints[-1] = _new_savepoint_name()
+            _execute(f"SAVEPOINT {savepoints[-1]}")
 
         def _checkpoint_rollback() -> None:
-            with conn.cursor() as cur:
-                cur.execute(f"ROLLBACK TO SAVEPOINT {_CLEAN_DB_SAVEPOINT}")
+            _execute(f"ROLLBACK TO SAVEPOINT {savepoints[-1]}")
 
         conn.commit = _checkpoint_commit
         conn.rollback = _checkpoint_rollback
 
         @contextmanager
         def _shared_get_conn():
+            _push_savepoint()
             try:
                 yield conn
             except BaseException:
-                _checkpoint_rollback()
+                name = savepoints.pop()
+                _execute(f"ROLLBACK TO SAVEPOINT {name}")
+                _execute(f"RELEASE SAVEPOINT {name}")
                 raise
             else:
-                _checkpoint_commit()
+                name = savepoints.pop()
+                if conn.info.transaction_status == psycopg.pq.TransactionStatus.INERROR:
+                    _execute(f"ROLLBACK TO SAVEPOINT {name}")
+                _execute(f"RELEASE SAVEPOINT {name}")
 
         monkeypatch.setattr(db, "get_conn", _shared_get_conn)
         yield

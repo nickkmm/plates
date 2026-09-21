@@ -14,7 +14,14 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from app.core import db
-from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
+from app.core.normalize import (
+    CUSTOMER_TYPES,
+    DOCUMENT_RELATIONS,
+    DOCUMENT_TYPES,
+    INVENTORY_CATEGORIES,
+    PLATE_TYPES,
+    normalize_choice,
+)
 
 # Plate TYPES are what the user picks per plate (granular, 5). Inventory
 # CATEGORIES are the 3 materials those types discount from (público merged).
@@ -50,6 +57,41 @@ def _validate_order_header(*, requested_by: str, order_date: str) -> None:
         raise ValueError("'Solicitado por' no debería contener números (parece una placa). Revisá ese campo.")
     if order_date and order_date > today_iso():
         raise ValueError(f"La fecha {order_date} es futura. Corregí la fecha.")
+
+
+def customer_fields_from_form(form) -> dict[str, str | None]:
+    """Customer attributes typed in a 'cliente' fieldset, keyed to match
+    db.resolve_or_create_customer's/db.update_customer's kwargs (name is
+    handled separately by each caller). Shared by /ingest (Fase 3's
+    "cliente" fieldset) and /customers (the admin edit screen, Fase 6) --
+    moved here rather than living in either blueprint once a second one
+    needed it.
+
+    document_relation/transit_license are forced back to None here whenever
+    their governing field doesn't allow them (document_relation only makes
+    sense for CÉDULA; transit_license only for PERSONA NATURAL) -- the HTML
+    already disables those inputs client-side so a browser never sends them,
+    but a raw POST (curl, a modified request) could still carry a stale
+    value, so this is enforced again here rather than trusted from the
+    client alone.
+    """
+    customer_type = normalize_choice(form.get("customer_type"), CUSTOMER_TYPES)
+    document_type = normalize_choice(form.get("customer_document_type"), DOCUMENT_TYPES)
+    document_relation = normalize_choice(form.get("customer_document_relation"), DOCUMENT_RELATIONS)
+    if document_type != "CÉDULA":
+        document_relation = None
+    transit_license = (form.get("customer_transit_license") or "").strip() or None
+    if customer_type != "PERSONA NATURAL":
+        transit_license = None
+    return {
+        "type": customer_type,
+        "document_type": document_type,
+        "document_number": (form.get("customer_document_number") or "").strip() or None,
+        "document_relation": document_relation,
+        "phone": (form.get("customer_phone") or "").strip() or None,
+        "email": (form.get("customer_email") or "").strip() or None,
+        "transit_license": transit_license,
+    }
 
 
 def format_cop(value: Decimal | None) -> str:

@@ -8,7 +8,7 @@ retiene las 2 rutas demasiado chicas para tener el suyo propio (`/` y
 `/healthz`) — 83 líneas en total. Las rutas reales viven en
 `app/web/blueprints/`, un módulo por dominio; helpers compartidos por 2+
 blueprints (`today_iso`, `_options`, `_padded`, `_validate_order_header`,
-etc.) viven en `app/web/helpers.py`.
+`customer_fields_from_form`, etc.) viven en `app/web/helpers.py`.
 
 ## Rutas
 
@@ -28,6 +28,9 @@ etc.) viven en `app/web/helpers.py`.
 | POST | `/inventory/alistado` | `inventory.py` | Registra un alistamiento | `db.insert_blank_preparation`, `recalc_inventory` | (redirect) | `@login_required` |
 | GET | `/precios` | `pricing.py` | Tabla de tarifas por tipo de placa, editable (Fase 5a) | `db.price_list` | `pricing.html` | `@login_required` (admin-only, nunca `@pos_allowed`) |
 | POST | `/precios/<plate_type>` | `pricing.py` | Fija/actualiza la tarifa de un tipo | `db.set_price` | (redirect) | `@login_required` |
+| GET | `/customers` | `customers.py` | Lista de clientes, con filtro `?q=` por nombre (Fase 6) | `db.list_customers` | `customers.html` | `@login_required` (admin-only, mismo nivel que `/precios`) |
+| GET | `/customers/<id>` | `customers.py` | Form de edición de un cliente | `db.get_customer` | `customer_detail.html` | `@login_required` |
+| POST | `/customers/<id>` | `customers.py` | Sobreescribe los atributos del cliente (nombre incluido) — a diferencia de `db.resolve_or_create_customer`, esto SÍ reemplaza un valor ya guardado | `db.update_customer` | (redirect) | `@login_required` |
 | GET | `/cuadre` | `cash_summary.py` | Cuadre de caja: totales por fecha/forma de pago en `[desde, hasta]` (default hoy, Fase 5b) | `cash_summary.build_cash_summary` | `cash_summary.html` | `@pos_allowed` |
 | GET | `/cuadre/pdf` | `cash_summary.py` | Mismo reporte, exportado a PDF | `cash_summary.build_cash_summary`, `render_cash_summary_pdf` | (descarga PDF) | `@pos_allowed` |
 | GET | `/records` | `records.py` | Registros: recientes, o búsqueda por placa/orden | `db.recent_orders`, `search_plates_by_number`, `search_orders_by_number` | `records.html` | `@consulta_allowed` |

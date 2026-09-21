@@ -181,9 +181,9 @@ def record_save(order_id):
     `requested_by` on every save (db.resolve_or_create_customer, name only)
     -- per the plan's B5, this may only change WHICH customer the order
     points to, never rewrite an existing customer's own stored attributes
-    (type/document/phone/etc; that's out of scope here, deferred to a future
-    dedicated customers screen), so no customer attribute is read from this
-    form at all.
+    (type/document/phone/etc; that's out of scope here, on purpose -- see
+    /customers, Fase 6, the actual place to fix a customer's own data), so
+    no customer attribute is read from this form at all.
     """
     order_number = (request.form.get("order_number") or "").strip()
     order_date = request.form.get("order_date") or ""

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Cliente {{ customer.name }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.3rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .error { background:#fdecec; border:1px solid #d33; border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
+    fieldset { border:1px solid #ddd; border-radius:10px; margin-bottom:1.2rem; padding:1rem; }
+    legend { font-weight:600; padding:0 .4rem; }
+    .header { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.8rem; align-items:end; }
+    label { font-size:.8rem; color:#555; display:flex; flex-direction:column; gap:.25rem; }
+    input, select { padding:.3rem; border:1px solid #ccc; border-radius:5px; font-size:.9rem; box-sizing:border-box; width:100%; }
+    input:disabled, select:disabled { background:#f0f0f0; color:#999; }
+    .muted { color:#777; font-size:.9rem; }
+    .save-row { display:flex; justify-content:flex-end; align-items:center; gap:.7rem; margin-top:.8rem; }
+    button, .btn-link { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
+    .submit { background:#1a9c5b; color:#fff; font-size:1.05rem; padding:.65rem 1.4rem; }
+    a.back { display:inline-block; background:#0b6bcb; color:#fff; text-decoration:none; padding:.5rem .95rem; border-radius:7px; font-size:.9rem; }
+    a.back:hover { background:#095bb0; }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  <h1>Cliente: {{ customer.name }}</h1>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <form method="post" action="{{ url_for('customers.customer_save', customer_id=customer.id) }}">
+    <fieldset>
+      <legend>Datos del cliente</legend>
+      <p class="muted">
+        Un campo que ya tiene un valor guardado en otra parte de la app (por ejemplo, al tipearlo
+        en una orden nueva) nunca se sobreescribe solo con datos en blanco — pero acá SÍ podés
+        corregir cualquier valor a mano, incluido el nombre.
+      </p>
+      <div class="header">
+        <label>Nombre<input type="text" name="name" value="{{ customer.name }}" required></label>
+        <label>Tipo de cliente
+          <select name="customer_type" id="customerType" onchange="toggleTransitLicense()">
+            <option value="" {% if not customer.type %}selected{% endif %}>— sin definir —</option>
+            {% for ct in customer_types %}<option value="{{ ct }}" {% if customer.type==ct %}selected{% endif %}>{{ ct }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Tipo de documento
+          <select name="customer_document_type" id="documentType" onchange="toggleDocumentRelation()">
+            <option value="" {% if not customer.document_type %}selected{% endif %}>— sin definir —</option>
+            {% for dt in document_types %}<option value="{{ dt }}" {% if customer.document_type==dt %}selected{% endif %}>{{ dt }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>N° de documento<input type="text" name="customer_document_number" id="documentNumber" value="{{ customer.document_number or '' }}"></label>
+        <label>Relación con el documento
+          <select name="customer_document_relation" id="documentRelation" {% if customer.document_type!='CÉDULA' %}disabled{% endif %}>
+            <option value="" {% if not customer.document_relation %}selected{% endif %}>— sin definir —</option>
+            {% for dr in document_relations %}<option value="{{ dr }}" {% if customer.document_relation==dr %}selected{% endif %}>{{ dr }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Teléfono<input type="text" name="customer_phone" value="{{ customer.phone or '' }}"></label>
+        <label>Correo<input type="email" name="customer_email" value="{{ customer.email or '' }}"></label>
+        <label>Licencia de tránsito<input type="text" name="customer_transit_license" id="transitLicense" value="{{ customer.transit_license or '' }}" {% if customer.type!='PERSONA NATURAL' %}disabled{% endif %}></label>
+      </div>
+    </fieldset>
+
+    <div class="save-row">
+      <a class="back" href="{{ url_for('customers.customers') }}">← Volver a Clientes</a>
+      <button type="submit" class="submit">Guardar cambios</button>
+    </div>
+  </form>
+
+  <script>
+    function toggleDocumentRelation() {
+      const enabled = document.getElementById('documentType').value === 'CÉDULA';
+      const sel = document.getElementById('documentRelation');
+      sel.disabled = !enabled;
+      if (!enabled) sel.value = '';
+    }
+    function toggleTransitLicense() {
+      const enabled = document.getElementById('customerType').value === 'PERSONA NATURAL';
+      const inp = document.getElementById('transitLicense');
+      inp.disabled = !enabled;
+      if (!enabled) inp.value = '';
+    }
+  </script>
+</body>
+</html>

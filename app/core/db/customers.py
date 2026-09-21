@@ -104,8 +104,9 @@ def resolve_or_create_customer(
     NULL attributes -- the old Excel ledger never captured them) get their
     real data filled in naturally the next time someone types it while
     placing an order for them, instead of staying blank forever with no way
-    to fix them short of a dedicated customers admin screen (still doesn't
-    exist) or a manual DB edit. ingestion.py's calls (name only, via
+    to fix them short of a dedicated customers admin screen (see
+    update_customer below, Fase 6) or a manual DB edit. ingestion.py's
+    calls (name only, via
     process_rows/replace_order) and record_save's call (also name only) pass
     every keyword as NULL, so COALESCE(existing, NULL) = existing for them --
     a true no-op, unchanged from before.
@@ -136,3 +137,42 @@ def resolve_or_create_customer(
         row = cur.fetchone()
         assert row is not None, "INSERT ... RETURNING id always yields a row"
         return row["id"]
+
+
+def update_customer(
+    conn: psycopg.Connection[DictRow], customer_id: int, *, name: str,
+    type: str | None, document_type: str | None, document_number: str | None,
+    document_relation: str | None, phone: str | None, email: str | None,
+    transit_license: str | None,
+) -> None:
+    """Overwrite every attribute of an existing customer -- the deliberate
+    admin-edit counterpart to resolve_or_create_customer's passive,
+    never-overwrite-an-existing-value backfill above. This is the ONE place
+    in the app that may knowingly replace a customer's already-stored data
+    (fixing a typo, correcting a wrong phone, filling in one of the 191
+    pre-POS historical rows by hand) -- everywhere else (ingestion.py,
+    record_save) only ever resolves/creates by name, never rewrites
+    attributes. Used by the /customers admin screen (Fase 6).
+
+    `name` is expected already-canonical (normalize_requested_by applied by
+    the caller, same as resolve_or_create_customer) -- passed through
+    as-is here, not re-normalized, so this function has one single
+    responsibility (write exactly what it's given).
+
+    No uniqueness pre-check -- same "let the DB constraint be the source of
+    truth" convention as create_user/resolve_or_create_customer: renaming
+    to a name that collides with a DIFFERENT existing customer raises
+    psycopg.errors.UniqueViolation, which the web route catches to show a
+    friendly message instead of a 500.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE customers SET
+                name = %s, type = %s, document_type = %s, document_number = %s,
+                document_relation = %s, phone = %s, email = %s, transit_license = %s
+            WHERE id = %s
+            """,
+            (name, type, document_type, document_number, document_relation,
+             phone, email, transit_license, customer_id),
+        )

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Clientes</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .muted { color:#777; font-size:.9rem; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { border:1px solid #e3e3e3; padding:.4rem .55rem; text-align:left; vertical-align:top; }
+    th { background:#f6f6f6; }
+    .actions { white-space:nowrap; }
+    a.ver { display:inline-block; border:0; border-radius:6px; padding:.38rem .8rem; font-size:.82rem; cursor:pointer; text-decoration:none; background:#0b6bcb; color:#fff; }
+    a.ver:hover { background:#095bb0; }
+    .search { display:flex; gap:.5rem; margin-bottom:1.2rem; }
+    .search input { flex:1; max-width:320px; padding:.5rem .7rem; border:1px solid #ccc; border-radius:6px; font-size:.95rem; text-transform:uppercase; }
+    .search button { border:0; border-radius:6px; padding:.5rem 1rem; background:#0b6bcb; color:#fff; font-size:.9rem; cursor:pointer; }
+    .search a.clear { align-self:center; color:#777; font-size:.85rem; text-decoration:none; }
+    .badge { display:inline-block; border-radius:5px; padding:.15rem .5rem; font-size:.78rem; }
+    .badge.sin-datos { background:#fdecec; color:#900; }
+    .badge.completo { background:#e8f6ee; color:#1a7a45; }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  <h1>Clientes</h1>
+  <p class="muted">
+    Datos de contacto de cada cliente (tipo, documento, teléfono, correo). Se completan solos
+    la primera vez que alguien los tipea en una orden nueva — acá se pueden corregir a mano
+    en cualquier momento.
+  </p>
+
+  <form class="search" method="get" action="{{ url_for('customers.customers') }}">
+    <input type="text" name="q" value="{{ query or '' }}" placeholder="Buscar por nombre, ej. PTO.V" autofocus>
+    <button type="submit">Buscar</button>
+    {% if query %}<a class="clear" href="{{ url_for('customers.customers') }}">Limpiar</a>{% endif %}
+  </form>
+
+  {% if rows %}
+  <table>
+    <thead>
+      <tr><th>Nombre</th><th>Tipo</th><th>Teléfono</th><th>Correo</th><th>Datos</th><th>Acciones</th></tr>
+    </thead>
+    <tbody>
+      {% for c in rows %}
+      {% set has_data = c.type or c.document_number or c.phone or c.email %}
+      <tr>
+        <td>{{ c.name }}</td>
+        <td>{{ c.type or '—' }}</td>
+        <td>{{ c.phone or '—' }}</td>
+        <td>{{ c.email or '—' }}</td>
+        <td>
+          {% if has_data %}<span class="badge completo">completo</span>
+          {% else %}<span class="badge sin-datos">sin datos</span>{% endif %}
+        </td>
+        <td class="actions"><a class="ver" href="{{ url_for('customers.customer_detail', customer_id=c.id) }}">Editar</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif query %}
+  <p>No se encontró ningún cliente que coincida con "{{ query }}".</p>
+  {% else %}
+  <p>No hay clientes registrados todavía.</p>
+  {% endif %}
+</body>
+</html>
