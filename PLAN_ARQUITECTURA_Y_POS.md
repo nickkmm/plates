@@ -502,6 +502,51 @@ estructura nueva (`app/core/db/orders.py`, `app/core/ingestion.py`,
 `app/web/blueprints/ingest.py`, etc.) — no hay que traducir nada, se puede
 implementar tal cual está escrito.
 
+## Fase 3 / 5a — ya ejecutadas (registro, 2026-09-20)
+
+- **Fase 3** (PR #23, mergeado): `/ingest` y `/ingest/pdf` ahora
+  `@pos_allowed` (antes `@login_required`) — `punto_venta` ya puede usarlos
+  como su punto de entrada diario (`landing_url()` lo manda ahí). Nuevo
+  fieldset de orden completo (comprobante/cliente/forma de pago obligatoria/
+  guía#/pedido#/fechas/responsable/observaciones) + columnas por línea
+  `reason`/`vehicle_brand`/`unit_price` (pre-llenado por JS desde
+  `plate_type_prices`, editable). Autocompletado de cliente: la lista
+  completa de `customers` se embebe como JSON en `ingest.html`
+  (`_customers_context`, mismo patrón que `distinct_requested_by`/
+  `distinct_cities` — esta app no tiene endpoints AJAX) y el JS auto-llena
+  el fieldset de cliente cuando el nombre tipeado matchea. Las 3 copias
+  independientes del dict "sticky" se unificaron en
+  `_sticky_header_from_form(form)` (única fuente, usada también por
+  `_form_from_pedido`) — la clave completa de 20 campos vive en la
+  constante `_STICKY_HEADER_FIELDS` de `app/web/blueprints/ingest.py`, que
+  cualquier trabajo de Fase 4 (PDF) debe reusar tal cual, no reinventar.
+  `resolve_or_create_customer` ganó kwargs de atributos, **solo escritos en
+  la rama INSERT** (cliente genuinamente nuevo) — la rama
+  `ON CONFLICT` sigue sin tocar atributos de un cliente existente, por B5.
+  Paridad completa en `record_detail.html`/`record_save`
+  (`@pos_allowed` también en `/records/<id>/save`): re-resuelve
+  `customer_id` desde `requested_by` en cada guardado, pero nunca reescribe
+  los atributos propios del cliente (B5, confirmado). `unit_price` de una
+  placa editada sigue sin ser un parámetro expuesto en ningún form — la
+  regla de re-snapshot en `db/plates.py` es el único camino que la fija.
+  `format_cop` (nuevo, `app/web/helpers.py`) es el filtro Jinja `| cop` para
+  moneda colombiana.
+- **Fase 5a** (PR #22, mergeado): `app/web/blueprints/pricing.py` nuevo,
+  `GET/POST /precios`, `@login_required` (admin-only, nunca `@pos_allowed`
+  — `punto_venta` no edita tarifas). Tab "Precios" en `_nav.html`
+  (gateada por `full_access_roles`, no `pos_roles`).
+
+**Para quien implemente Fase 4 en adelante**: el diccionario `header` que
+produce `/ingest` (tanto a mano como desde un PDF) tiene EXACTAMENTE las 20
+claves de `_STICKY_HEADER_FIELDS` en `app/web/blueprints/ingest.py` — Fase 4
+debe mapear las etiquetas nuevas del pie del PDF hacia esas claves
+(`customer_type`/`customer_document_type`/`customer_document_number`/
+`customer_document_relation`/`customer_phone`/`customer_email`/
+`customer_transit_license` para el cliente; el resto tal como ya describía
+este plan). `_form_from_pedido` hoy deja todas esas claves en blanco salvo
+`order_date`/`order_number`/`requested_by` — es el punto exacto que Fase 4
+extiende.
+
 ---
 
 ## Fase 1d — Refactor de arquitectura por dominios (antes de Fase 2)
