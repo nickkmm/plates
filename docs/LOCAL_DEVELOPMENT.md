@@ -56,18 +56,17 @@ mano igual que el bloque de `cargador.ingse.co`). En local, directo en
   antes de cualquier `from app...` — si no, una corrida local heredaría
   las credenciales reales del `.env` y los logins de test fallarían en
   silencio.
-- Cuatro identidades de test ya definidas: `testuser`/`testpass123`
-  (admin), `consultauser`/`consultapass123` (consulta),
-  `produccionuser`/`produccionpass123` (producción),
+- Tres identidades de test ya definidas: `testuser`/`testpass123`
+  (admin), `produccionuser`/`produccionpass123` (producción),
   `puntoventauser`/`puntoventapass123` (`punto_venta`, Fase 2) — las
-  cuatro son filas reales en la tabla `users` de la base de test desde que
+  tres son filas reales en la tabla `users` de la base de test desde que
   el login pasó a ser DB-backed, no solo entradas de `AUTH_USERS`/
   `AUTH_ROLES`.
 - El fixture `clean_db` hace **`TRUNCATE ... RESTART IDENTITY CASCADE`**
   de 7 tablas (`plates`, `production_orders`, `blank_preparations`,
   `inventory_categories`, `customers`, `users`, `plate_type_prices` — no
   toca `plate_types`, tabla de referencia estática) y vuelve a sembrar
-  las 4 identidades de test en `users` antes de cada test que depende de
+  las 3 identidades de test en `users` antes de cada test que depende de
   él — **no** hay rollback transaccional por test
   todavía. Desde Fase 1d, `db.get_conn()` reusa conexiones de un pool
   (`psycopg_pool.ConnectionPool`) en vez de abrir un socket nuevo por

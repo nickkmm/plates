@@ -268,7 +268,7 @@ class TestBackfillCustomers:
 class TestBackfillUsers:
     def test_creates_one_user_per_auth_user_with_matching_role(self, db_conn, monkeypatch):
         monkeypatch.setenv("AUTH_USERS", "alice:pbkdf2:sha256:abc$def,bob:pbkdf2:sha256:xyz")
-        monkeypatch.setenv("AUTH_ROLES", "bob:consulta")
+        monkeypatch.setenv("AUTH_ROLES", "bob:produccion")
 
         schema_migrate.backfill_users(db_conn)
 
@@ -277,7 +277,7 @@ class TestBackfillUsers:
             rows = {username: (pw_hash, role) for username, pw_hash, role in cur.fetchall()}
         # alice has no AUTH_ROLES entry -> defaults to admin, same as auth.role_for().
         assert rows["alice"] == ("pbkdf2:sha256:abc$def", "admin")
-        assert rows["bob"] == ("pbkdf2:sha256:xyz", "consulta")
+        assert rows["bob"] == ("pbkdf2:sha256:xyz", "produccion")
 
     def test_rerun_creates_no_duplicate_users(self, db_conn, monkeypatch):
         """Counts only 'alice' specifically (not `SELECT count(*) FROM

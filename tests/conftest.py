@@ -40,24 +40,17 @@ TEST_USERNAME = "testuser"
 TEST_PASSWORD = "testpass123"
 _TEST_PASSWORD_HASH = generate_password_hash(TEST_PASSWORD)
 
-# A second user with the read-only 'consulta' role, for testing the
-# default-deny role restrictions (see app.web.auth.consulta_allowed).
-# TEST_USERNAME deliberately has role 'admin' below -- it must keep behaving
-# as full-access, matching production today (every AUTH_USERS-era account
-# with no AUTH_ROLES entry defaulted to admin).
-CONSULTA_USERNAME = "consultauser"
-CONSULTA_PASSWORD = "consultapass123"
-_CONSULTA_PASSWORD_HASH = generate_password_hash(CONSULTA_PASSWORD)
-
-# A third user with the 'produccion' role -- also read-only today (demoted
-# from its original full-access grant once real usage showed it should only
-# ever look things up), but kept as its own role/test user in case it
-# diverges from 'consulta' again later.
+# A second user with the 'produccion' role -- read-only today (demoted from
+# its original full-access grant once real usage showed it should only ever
+# look things up), for testing the default-deny role restrictions (see
+# app.web.auth.consulta_allowed). TEST_USERNAME deliberately has role 'admin'
+# below -- it must keep behaving as full-access, matching production today
+# (every AUTH_USERS-era account with no AUTH_ROLES entry defaulted to admin).
 PRODUCCION_USERNAME = "produccionuser"
 PRODUCCION_PASSWORD = "produccionpass123"
 _PRODUCCION_PASSWORD_HASH = generate_password_hash(PRODUCCION_PASSWORD)
 
-# A fourth user with the new (Fase 2) 'punto_venta' role -- this one has NO
+# A third user with the new (Fase 2) 'punto_venta' role -- this one has NO
 # AUTH_USERS/AUTH_ROLES equivalent at all (the role is DB-native from birth,
 # never lived in the env-var world), so it's seeded into `users` only, never
 # exported below.
@@ -70,12 +63,9 @@ os.environ["SECRET_KEY"] = "test-secret-key-do-not-use-in-production"
 # docstring above) -- NOT read by the live login flow anymore.
 os.environ["AUTH_USERS"] = (
     f"{TEST_USERNAME}:{_TEST_PASSWORD_HASH},"
-    f"{CONSULTA_USERNAME}:{_CONSULTA_PASSWORD_HASH},"
     f"{PRODUCCION_USERNAME}:{_PRODUCCION_PASSWORD_HASH}"
 )
-os.environ["AUTH_ROLES"] = (
-    f"{CONSULTA_USERNAME}:consulta,{PRODUCCION_USERNAME}:produccion"
-)
+os.environ["AUTH_ROLES"] = f"{PRODUCCION_USERNAME}:produccion"
 
 # --- Test database ----------------------------------------------------------
 # Point at a SEPARATE database (`plates_test`) on the same already-running
@@ -131,11 +121,10 @@ _SCHEMA_PATH = os.path.join(_REPO_ROOT, "init.sql")
 
 # Seeded into `users` by `clean_db` on every test (see its docstring) --
 # (username, password_hash, role). This is now the ONLY place these three
-# (four, with punto_venta) identities are made valid for an actual login;
-# AUTH_USERS/AUTH_ROLES above no longer feed the live login flow at all.
+# identities are made valid for an actual login; AUTH_USERS/AUTH_ROLES above
+# no longer feed the live login flow at all.
 _TEST_USERS: tuple[tuple[str, str, str], ...] = (
     (TEST_USERNAME, _TEST_PASSWORD_HASH, "admin"),
-    (CONSULTA_USERNAME, _CONSULTA_PASSWORD_HASH, "consulta"),
     (PRODUCCION_USERNAME, _PRODUCCION_PASSWORD_HASH, "produccion"),
     (PUNTO_VENTA_USERNAME, _PUNTO_VENTA_PASSWORD_HASH, "punto_venta"),
 )
@@ -244,8 +233,7 @@ def clean_db(_db_ready: bool):
     so without this, every test AFTER the very first `clean_db` call in a
     session would find `users` empty and login would fail for the rest of
     the suite. Truncating/reseeding here, every test, is what makes the
-    three (four, with punto_venta) test identities reliably able to log in
-    regardless of run order.
+    three test identities reliably able to log in regardless of run order.
     """
     if not _db_ready:
         pytest.skip("Postgres test database not reachable at 127.0.0.1:5433 (plates_test)")
@@ -282,13 +270,6 @@ def test_credentials(clean_db: None) -> tuple[str, str]:
     out ("el login pasa a depender de la BD").
     """
     return TEST_USERNAME, TEST_PASSWORD
-
-
-@pytest.fixture
-def consulta_credentials(clean_db: None) -> tuple[str, str]:
-    """The (username, password) pair for the read-only 'consulta'-role test
-    user. See test_credentials' docstring re: the `clean_db` dependency."""
-    return CONSULTA_USERNAME, CONSULTA_PASSWORD
 
 
 @pytest.fixture

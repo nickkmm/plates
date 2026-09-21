@@ -1,9 +1,9 @@
 """Integration tests for GET /cuadre and GET /cuadre/pdf (Fase 5b).
 
 The contract under test:
-- @pos_allowed on BOTH routes -- admin and punto_venta get 200, consulta and
-  produccion 403 (the plan is explicit both the HTML view and the PDF export
-  need this, unlike /precios which is admin-only).
+- @pos_allowed on BOTH routes -- admin and punto_venta get 200, produccion
+  403 (the plan is explicit both the HTML view and the PDF export need
+  this, unlike /precios which is admin-only).
 - Both params default to today when omitted.
 - The SIN FORMA DE PAGO bucket renders as a normal row, not hidden.
 - A NULL unit_price plate shows up in the visible warning section, linked to
@@ -52,9 +52,6 @@ def _insert_plate(conn, order_id: int, **overrides: object) -> None:
 
 
 class TestCuadreForbidden:
-    def test_get_is_forbidden_for_consulta(self, consulta_client):
-        assert consulta_client.get(CUADRE_URL).status_code == 403
-
     def test_get_is_forbidden_for_produccion(self, produccion_client):
         assert produccion_client.get(CUADRE_URL).status_code == 403
 
@@ -63,9 +60,6 @@ class TestCuadreForbidden:
 
     def test_get_is_allowed_for_punto_venta(self, punto_venta_client):
         assert punto_venta_client.get(CUADRE_URL).status_code == 200
-
-    def test_pdf_is_forbidden_for_consulta(self, consulta_client):
-        assert consulta_client.get(CUADRE_PDF_URL).status_code == 403
 
     def test_pdf_is_forbidden_for_produccion(self, produccion_client):
         assert produccion_client.get(CUADRE_PDF_URL).status_code == 403
@@ -209,10 +203,10 @@ class TestCuadrePdfExport:
         assert "2026-06-01" in disposition
         assert "2026-06-02" in disposition
 
-    def test_forbidden_clients_never_reach_pdf_rendering(self, consulta_client):
+    def test_forbidden_clients_never_reach_pdf_rendering(self, produccion_client):
         """A 403 from the decorator must short-circuit before any PDF work --
         confirm the body is a plain 403, not any PDF bytes."""
-        resp = consulta_client.get(CUADRE_PDF_URL)
+        resp = produccion_client.get(CUADRE_PDF_URL)
         assert resp.status_code == 403
         assert resp.data[:4] != b"%PDF"
 
@@ -225,10 +219,6 @@ class TestCuadreNavLink:
     def test_cuadre_link_visible_for_punto_venta(self, punto_venta_client):
         html = punto_venta_client.get("/records").data.decode()
         assert "Cuadre" in html
-
-    def test_cuadre_link_hidden_for_consulta(self, consulta_client):
-        html = consulta_client.get("/records").data.decode()
-        assert "Cuadre" not in html
 
     def test_cuadre_link_hidden_for_produccion(self, produccion_client):
         html = produccion_client.get("/records").data.decode()

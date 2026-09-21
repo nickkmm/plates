@@ -1370,14 +1370,14 @@ class TestCreateUser:
         )
 
     def test_active_defaults_to_true(self, db_conn):
-        user_id = db.create_user(db_conn, username="bob", password_hash="hash2", role="consulta")
+        user_id = db.create_user(db_conn, username="bob", password_hash="hash2", role="produccion")
         user = db.get_user_by_id(db_conn, user_id)
         assert user is not None
         assert user.active is True
 
     def test_active_can_be_set_false(self, db_conn):
         user_id = db.create_user(
-            db_conn, username="carol", password_hash="hash3", role="consulta", active=False
+            db_conn, username="carol", password_hash="hash3", role="produccion", active=False
         )
         user = db.get_user_by_id(db_conn, user_id)
         assert user is not None
@@ -1411,13 +1411,13 @@ class TestGetUserByUsername:
 
 class TestListUsers:
     """`users` is never actually empty under `db_conn`/`clean_db` (Fase 2's
-    conftest.py pre-seeds its own 4 test identities into it on every test --
+    conftest.py pre-seeds its own 3 test identities into it on every test --
     see tests/conftest.py's clean_db docstring) -- these tests check the two
     NEW ones added here appear, not the table's total contents."""
 
     def test_returns_every_user_ordered_by_id(self, db_conn):
         first = db.create_user(db_conn, username="a1", password_hash="h", role="admin")
-        second = db.create_user(db_conn, username="a2", password_hash="h", role="consulta")
+        second = db.create_user(db_conn, username="a2", password_hash="h", role="produccion")
         users = db.list_users(db_conn)
         ids = [u.id for u in users]
         assert ids == sorted(ids)  # ordered by id
@@ -1425,7 +1425,7 @@ class TestListUsers:
 
     def test_seeded_test_users_are_present(self, db_conn):
         usernames = {u.username for u in db.list_users(db_conn)}
-        assert {"testuser", "consultauser", "produccionuser", "puntoventauser"} <= usernames
+        assert {"testuser", "produccionuser", "puntoventauser"} <= usernames
 
 
 class TestCurrentPrices:

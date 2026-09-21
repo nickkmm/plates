@@ -34,24 +34,15 @@ def authenticated_client(client, test_credentials):
 
 
 @pytest.fixture
-def consulta_client(client, consulta_credentials):
-    """A test client logged in as the read-only 'consulta'-role test user (see
-    tests/conftest.py's CONSULTA_USERNAME/CONSULTA_PASSWORD and AUTH_ROLES).
+def produccion_client(client, produccion_credentials):
+    """A test client logged in as the read-only 'produccion'-role test user
+    (see tests/conftest.py's PRODUCCION_USERNAME/PRODUCCION_PASSWORD and
+    AUTH_ROLES).
 
     Used to assert the default-deny role restrictions: full-access-only
     routes must 403 for this client while the small consult-only allowlist
     (/records, /records/<id>) still returns 200.
     """
-    username, password = consulta_credentials
-    client.post("/login", data={"username": username, "password": password})
-    return client
-
-
-@pytest.fixture
-def produccion_client(client, produccion_credentials):
-    """A test client logged in as the 'produccion'-role test user -- read-only
-    today, same access level as 'consulta' (see tests/conftest.py's
-    PRODUCCION_USERNAME/PRODUCCION_PASSWORD and AUTH_ROLES)."""
     username, password = produccion_credentials
     client.post("/login", data={"username": username, "password": password})
     return client
@@ -62,7 +53,7 @@ def punto_venta_client(client, punto_venta_credentials):
     """A test client logged in as the new (Fase 2) 'punto_venta'-role test
     user (see tests/conftest.py's PUNTO_VENTA_USERNAME/PUNTO_VENTA_PASSWORD)
     -- POS_ROLES access (admin + punto_venta), narrower than admin but wider
-    than the read-only consulta/produccion roles."""
+    than the read-only 'produccion' role."""
     username, password = punto_venta_credentials
     client.post("/login", data={"username": username, "password": password})
     return client

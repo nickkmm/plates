@@ -110,14 +110,7 @@ class TestPreciosValidation:
 
 class TestPreciosForbidden:
     """@login_required (admin-only), NOT @pos_allowed -- 'punto_venta' edits
-    orders/payments, never tariffs, so it 403s here same as consulta/produccion."""
-
-    def test_get_is_forbidden_for_consulta(self, consulta_client):
-        assert consulta_client.get(PRECIOS_URL).status_code == 403
-
-    def test_post_is_forbidden_for_consulta(self, consulta_client):
-        resp = consulta_client.post(_price_update_url("CARRO PARTICULAR"), data={"unit_price": "1000"})
-        assert resp.status_code == 403
+    orders/payments, never tariffs, so it 403s here same as produccion."""
 
     def test_get_is_forbidden_for_produccion(self, produccion_client):
         assert produccion_client.get(PRECIOS_URL).status_code == 403
@@ -137,9 +130,9 @@ class TestPreciosForbidden:
         assert resp.status_code == 403
         assert "CARRO PARTICULAR" not in db.current_prices(db_conn)
 
-    def test_forbidden_clients_never_reach_the_db(self, consulta_client, db_conn):
+    def test_forbidden_clients_never_reach_the_db(self, produccion_client, db_conn):
         """A 403 from the decorator must short-circuit before set_price() runs
         -- confirm the table stays empty, not just that the response code is
         right."""
-        consulta_client.post(_price_update_url("CARRO PARTICULAR"), data={"unit_price": "1000"})
+        produccion_client.post(_price_update_url("CARRO PARTICULAR"), data={"unit_price": "1000"})
         assert db.current_prices(db_conn) == {}
