@@ -27,9 +27,13 @@ speaking) user stays in Spanish.** This applies to:
   stores the Spanish values `EFECTIVO`/`TRANSFERENCIA`/`CREDITO`/`OTROS`,
   because that's the real-world business term Colombian staff use. A
   `plate_type` column stores `CARRO PARTICULAR`, `MOTO PARTICULAR`, etc.
-  Existing role values (`admin`, `producción`, `consulta`) follow the same
-  rule — the column and the constant that validates it are English, the
-  values are Spanish business terms.
+  `users.role` is **not** one of these: it's never rendered to a user
+  (verified — no template prints a role value, only checks it for
+  permission logic), so it's an internal identifier, not
+  business-domain content — role values are English (`admin`,
+  `production`, `point_of_sale`, ...). If a future screen ever displays a
+  role by name, translate it at the display layer, not by changing the
+  stored value.
 - Code comments explaining a Spanish business rule may quote the Spanish
   term the rule is about.
 
