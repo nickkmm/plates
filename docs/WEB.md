@@ -42,11 +42,11 @@ documentado explícitamente como solo-lectura/preview en sus docstrings.
 ## Roles y permisos (`auth.py`)
 
 - **Roles**: `admin`, `punto_venta`, `producción` (valor real guardado:
-  `produccion`, sin tilde), `consulta`.
+  `produccion`, sin tilde).
 - **`FULL_ACCESS_ROLES = {admin}`** — solo `admin` puede escribir fuera de
   `/ingest`/`/cuadre`. `producción` originalmente tenía acceso completo, se
-  degradó a solo lectura (igual que `consulta`); se mantiene como rol
-  separado por si necesita volver a divergir.
+  degradó a solo lectura (hoy el único rol de solo lectura); se mantiene
+  como rol separado por si necesita volver a divergir.
 - **`POS_ROLES = {admin, punto_venta}`** (Fase 2) — el nivel intermedio de
   `punto_venta`: puede capturar ventas (`/ingest`, `/ingest/pdf`,
   `/records/<id>/save`) y consultar el cuadre de caja (`/cuadre`,
@@ -66,7 +66,7 @@ documentado explícitamente como solo-lectura/preview en sus docstrings.
   escribe fuera del alcance de POS — 403 si el rol no es full-access) vs.
   `@consulta_allowed` (deja pasar cualquier rol autenticado — **nunca
   aplicar a algo que escribe**) vs. `@pos_allowed` (Fase 2/3, deja pasar
-  `POS_ROLES` — 403 para `consulta`/`producción`).
+  `POS_ROLES` — 403 para `producción`, el único rol de solo lectura).
 - Sesión firmada con `SECRET_KEY` (obligatoria, sin default), cookie
   `HTTPONLY` + `SAMESITE=Lax` + `SECURE` condicionada a `COOKIE_SECURE`,
   12 horas de duración.
@@ -74,8 +74,8 @@ documentado explícitamente como solo-lectura/preview en sus docstrings.
   mismo origen.
 - `landing_url()` (a dónde cae un login sin `?next=`): `POS_ROLES` cae en
   Registrar (`/ingest`, su punto de entrada diario); el resto cae en
-  Registros (`producción`/`consulta` no pueden llegar a `/ingest` de
-  ningún modo, así que mandarlos ahí solo rebotaría en un 403).
+  Registros (`producción` no puede llegar a `/ingest` de ningún modo, así
+  que mandarla ahí solo rebotaría en un 403).
 
 ## Templates
 

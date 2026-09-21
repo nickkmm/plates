@@ -26,7 +26,7 @@
 > (mapeo completo más abajo, sección de `production_orders`/`plates`) —
 > tanto en producción como en `init.sql` para instalaciones nuevas. Los
 > *valores* guardados (nombres de clientes, `PERSONA NATURAL`/`CÉDULA`/
-> `DUEÑO`, `admin`/`producción`/`consulta`/`punto_venta`, `EFECTIVO`, etc.)
+> `DUEÑO`, `admin`/`producción`/`punto_venta`, `EFECTIVO`, etc.)
 > no cambiaron — son datos de negocio en español, no identificadores.
 >
 > **Aplicar un cambio de esquema a una base ya existente** (con datos
@@ -101,7 +101,7 @@ erDiagram
         int id PK
         text username "UNIQUE NOT NULL"
         text password_hash
-        text role "admin/produccion/consulta/punto_venta"
+        text role "admin/produccion/punto_venta"
         boolean active
         timestamp created_at
     }
@@ -266,7 +266,7 @@ el backfill original; el login en vivo no los llama más.
 | `id` | SERIAL | PK | Desde la Fase 2, se guarda en `session["user_id"]` al loguearse — es lo que permite `production_orders.created_by` sin volver a consultar por username. |
 | `username` | TEXT | UNIQUE NOT NULL | |
 | `password_hash` | TEXT | NOT NULL | Mismo formato werkzeug (pbkdf2) que `AUTH_USERS` traía — el backfill copió el hash tal cual, nunca reseteó contraseñas. |
-| `role` | TEXT | NOT NULL | `admin`/`produccion`/`consulta`/`punto_venta` — **`produccion` va sin tilde, es el valor real guardado y comparado**, aunque la prosa de este documento diga "producción" por ser español corriente; cambiarlo rompería el login de usuarios existentes. Texto libre validado en Python contra la tupla `auth.ROLES`, sin FK ni `CHECK` en la BD — a diferencia de `plate_type_prices.plate_type`/`plates.plate_type`/`blank_preparations.category`, que desde la Fase 1b sí tienen FK real (ver rarezas). Antes de la Fase 1c, esta columna se llamaba `rol`. `punto_venta` (Fase 2) es el rol nuevo de PTO.V — nivel de acceso intermedio, `POS_ROLES = {admin, punto_venta}`, decorador `@pos_allowed` (ver [`WEB.md`](WEB.md)). |
+| `role` | TEXT | NOT NULL | `admin`/`produccion`/`punto_venta` — **`produccion` va sin tilde, es el valor real guardado y comparado**, aunque la prosa de este documento diga "producción" por ser español corriente; cambiarlo rompería el login de usuarios existentes. Texto libre validado en Python contra la tupla `auth.ROLES`, sin FK ni `CHECK` en la BD — a diferencia de `plate_type_prices.plate_type`/`plates.plate_type`/`blank_preparations.category`, que desde la Fase 1b sí tienen FK real (ver rarezas). Antes de la Fase 1c, esta columna se llamaba `rol`. `punto_venta` (Fase 2) es el rol nuevo de PTO.V — nivel de acceso intermedio, `POS_ROLES = {admin, punto_venta}`, decorador `@pos_allowed` (ver [`WEB.md`](WEB.md)). |
 | `active` | BOOLEAN | DEFAULT true | Antes de la Fase 1c, esta columna se llamaba `activo`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
