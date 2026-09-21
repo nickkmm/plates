@@ -9,6 +9,7 @@ separately in test_normalize.py).
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
@@ -61,13 +62,21 @@ class TestOrderNumberCoercion:
 # --------------------------------------------------------------------------
 
 
+_BLANK_TO_NONE_STR_FIELDS = [
+    "city", "plate_number", "plate_to", "material", "prepared_by",
+    "receipt_type", "receipt_number", "payment_method", "tracking_number",
+    "client_order_number", "dispatched_by", "received_by", "notes",
+    "reason", "vehicle_brand",
+]
+
+
 class TestBlankToNone:
-    @pytest.mark.parametrize("field", ["city", "plate_number", "plate_to", "material", "prepared_by"])
+    @pytest.mark.parametrize("field", _BLANK_TO_NONE_STR_FIELDS)
     def test_empty_string_becomes_none(self, field):
         row = make_row(**{field: ""})
         assert getattr(row, field) is None
 
-    @pytest.mark.parametrize("field", ["city", "plate_number", "plate_to", "material", "prepared_by"])
+    @pytest.mark.parametrize("field", _BLANK_TO_NONE_STR_FIELDS)
     def test_whitespace_only_becomes_none(self, field):
         row = make_row(**{field: "   "})
         assert getattr(row, field) is None
@@ -83,6 +92,68 @@ class TestBlankToNone:
         assert row.plate_to is None
         assert row.material is None
         assert row.prepared_by is None
+        for field in _BLANK_TO_NONE_STR_FIELDS:
+            assert getattr(row, field) is None
+        assert row.delivery_date is None
+        assert row.payment_date is None
+        assert row.unit_price is None
+
+
+# --------------------------------------------------------------------------
+# Fase 2 (POS) fields: blank-string -> None for unit_price and the two date
+# fields, plus normal value coercion
+# --------------------------------------------------------------------------
+
+
+class TestUnitPriceBlankToNone:
+    def test_empty_string_becomes_none(self):
+        row = make_row(unit_price="")
+        assert row.unit_price is None
+
+    def test_whitespace_only_becomes_none(self):
+        row = make_row(unit_price="   ")
+        assert row.unit_price is None
+
+    def test_numeric_string_becomes_decimal(self):
+        row = make_row(unit_price="150000")
+        assert row.unit_price == Decimal("150000")
+        assert isinstance(row.unit_price, Decimal)
+
+    def test_negative_unit_price_rejected(self):
+        with pytest.raises(ValidationError):
+            make_row(unit_price=Decimal("-1"))
+
+    def test_zero_unit_price_allowed(self):
+        row = make_row(unit_price=0)
+        assert row.unit_price == Decimal("0")
+
+
+class TestDeliveryAndPaymentDateBlankToNone:
+    """delivery_date/payment_date need their OWN before-validator (see
+    _blank_date_to_none) because an <input type="date"> posts "" (not
+    omitted) when left empty, and pydantic's date parser rejects "" as-is."""
+
+    @pytest.mark.parametrize("field", ["delivery_date", "payment_date"])
+    def test_empty_string_becomes_none(self, field):
+        row = make_row(**{field: ""})
+        assert getattr(row, field) is None
+
+    @pytest.mark.parametrize("field", ["delivery_date", "payment_date"])
+    def test_whitespace_only_becomes_none(self, field):
+        row = make_row(**{field: "   "})
+        assert getattr(row, field) is None
+
+    @pytest.mark.parametrize("field", ["delivery_date", "payment_date"])
+    def test_real_iso_date_string_is_parsed(self, field):
+        row = make_row(**{field: "2026-03-15"})
+        assert getattr(row, field) == date(2026, 3, 15)
+
+    def test_delivery_date_accepts_a_future_date(self):
+        """Unlike order_date (guarded elsewhere, see
+        app/web/helpers.py._validate_order_header), a future delivery_date is
+        normal and expected -- ExtractedRow itself must never reject it."""
+        row = make_row(delivery_date=date(2099, 1, 1))
+        assert row.delivery_date == date(2099, 1, 1)
 
 
 # --------------------------------------------------------------------------

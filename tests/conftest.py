@@ -11,6 +11,15 @@ it, everything below runs before any ``tests/**/test_*.py`` file is imported.
 
 Do not reorder: the env vars must be set before the ``from app...`` imports
 further down this file.
+
+**Fase 2**: the live login flow now queries the `users` TABLE, not
+AUTH_USERS/AUTH_ROLES (see app/web/auth.py's module docstring) -- so the
+three test identities below are seeded into `users` by the `clean_db`
+fixture itself (see TEST_USERS/its INSERT below), not just exported as env
+vars. AUTH_USERS/AUTH_ROLES are still set here too, because
+app.schema_migrate.backfill_users (a one-time, already-applied-in-production
+migration, still covered by tests/test_schema_migrate.py) reads them --
+that's the ONLY remaining consumer.
 """
 
 from __future__ import annotations
@@ -29,14 +38,16 @@ from werkzeug.security import generate_password_hash
 # regardless of where it's invoked from, matching DB_HOST/DB_PORT below.
 TEST_USERNAME = "testuser"
 TEST_PASSWORD = "testpass123"
+_TEST_PASSWORD_HASH = generate_password_hash(TEST_PASSWORD)
 
 # A second user with the read-only 'consulta' role, for testing the
 # default-deny role restrictions (see app.web.auth.consulta_allowed).
-# TEST_USERNAME deliberately gets NO entry in AUTH_ROLES below -- it must
-# keep defaulting to admin (full access), matching production today, where
-# AUTH_ROLES is entirely unset.
+# TEST_USERNAME deliberately has role 'admin' below -- it must keep behaving
+# as full-access, matching production today (every AUTH_USERS-era account
+# with no AUTH_ROLES entry defaulted to admin).
 CONSULTA_USERNAME = "consultauser"
 CONSULTA_PASSWORD = "consultapass123"
+_CONSULTA_PASSWORD_HASH = generate_password_hash(CONSULTA_PASSWORD)
 
 # A third user with the 'produccion' role -- also read-only today (demoted
 # from its original full-access grant once real usage showed it should only
@@ -44,12 +55,23 @@ CONSULTA_PASSWORD = "consultapass123"
 # diverges from 'consulta' again later.
 PRODUCCION_USERNAME = "produccionuser"
 PRODUCCION_PASSWORD = "produccionpass123"
+_PRODUCCION_PASSWORD_HASH = generate_password_hash(PRODUCCION_PASSWORD)
+
+# A fourth user with the new (Fase 2) 'punto_venta' role -- this one has NO
+# AUTH_USERS/AUTH_ROLES equivalent at all (the role is DB-native from birth,
+# never lived in the env-var world), so it's seeded into `users` only, never
+# exported below.
+PUNTO_VENTA_USERNAME = "puntoventauser"
+PUNTO_VENTA_PASSWORD = "puntoventapass123"
+_PUNTO_VENTA_PASSWORD_HASH = generate_password_hash(PUNTO_VENTA_PASSWORD)
 
 os.environ["SECRET_KEY"] = "test-secret-key-do-not-use-in-production"
+# Still set for app.schema_migrate.backfill_users's own tests (see module
+# docstring above) -- NOT read by the live login flow anymore.
 os.environ["AUTH_USERS"] = (
-    f"{TEST_USERNAME}:{generate_password_hash(TEST_PASSWORD)},"
-    f"{CONSULTA_USERNAME}:{generate_password_hash(CONSULTA_PASSWORD)},"
-    f"{PRODUCCION_USERNAME}:{generate_password_hash(PRODUCCION_PASSWORD)}"
+    f"{TEST_USERNAME}:{_TEST_PASSWORD_HASH},"
+    f"{CONSULTA_USERNAME}:{_CONSULTA_PASSWORD_HASH},"
+    f"{PRODUCCION_USERNAME}:{_PRODUCCION_PASSWORD_HASH}"
 )
 os.environ["AUTH_ROLES"] = (
     f"{CONSULTA_USERNAME}:consulta,{PRODUCCION_USERNAME}:produccion"
@@ -106,6 +128,17 @@ TABLES = (
     "customers", "users", "plate_type_prices",
 )
 _SCHEMA_PATH = os.path.join(_REPO_ROOT, "init.sql")
+
+# Seeded into `users` by `clean_db` on every test (see its docstring) --
+# (username, password_hash, role). This is now the ONLY place these three
+# (four, with punto_venta) identities are made valid for an actual login;
+# AUTH_USERS/AUTH_ROLES above no longer feed the live login flow at all.
+_TEST_USERS: tuple[tuple[str, str, str], ...] = (
+    (TEST_USERNAME, _TEST_PASSWORD_HASH, "admin"),
+    (CONSULTA_USERNAME, _CONSULTA_PASSWORD_HASH, "consulta"),
+    (PRODUCCION_USERNAME, _PRODUCCION_PASSWORD_HASH, "produccion"),
+    (PUNTO_VENTA_USERNAME, _PUNTO_VENTA_PASSWORD_HASH, "punto_venta"),
+)
 
 
 def _create_database_if_missing() -> None:
@@ -201,6 +234,18 @@ def clean_db(_db_ready: bool):
     first). `plate_types` (the other Fase 1b reference table) is NOT in
     TABLES/truncated here on purpose -- it's static and never touched by
     tests, so it stays seeded from `_db_ready`'s one-time schema setup.
+
+    **Fase 2**: also reseeds `_TEST_USERS` into `users` right after
+    truncating it. This matters more than it looks: `users` IS in TABLES
+    (so every test starts with a clean one), but `_db_ready`'s one-time
+    `schema_migrate.main()` backfill of AUTH_USERS/AUTH_ROLES into `users`
+    only ever runs ONCE per physical `plates_test` database (tracked in
+    `schema_migrations`, which `clean_db` deliberately never truncates) --
+    so without this, every test AFTER the very first `clean_db` call in a
+    session would find `users` empty and login would fail for the rest of
+    the suite. Truncating/reseeding here, every test, is what makes the
+    three (four, with punto_venta) test identities reliably able to log in
+    regardless of run order.
     """
     if not _db_ready:
         pytest.skip("Postgres test database not reachable at 127.0.0.1:5433 (plates_test)")
@@ -209,6 +254,10 @@ def clean_db(_db_ready: bool):
         cur.executemany(
             "INSERT INTO inventory_categories (category) VALUES (%s)",
             [(category,) for category in INVENTORY_CATEGORIES],
+        )
+        cur.executemany(
+            "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)",
+            _TEST_USERS,
         )
     yield
 
@@ -221,20 +270,37 @@ def db_conn(clean_db: None):
 
 
 @pytest.fixture
-def test_credentials() -> tuple[str, str]:
-    """The (username, password) pair baked into AUTH_USERS for this test run."""
+def test_credentials(clean_db: None) -> tuple[str, str]:
+    """The (username, password) pair for the 'admin'-role test user.
+
+    Depends on `clean_db` (Fase 2): login now queries the `users` table, so
+    requesting this fixture is what guarantees that table has actually been
+    (re)seeded with this identity before a test tries to log in with it --
+    see clean_db's docstring. Any test that logs in via this fixture (or a
+    web-layer fixture built on top of it, like `authenticated_client`) gets
+    a real Postgres dependency now, same accepted tradeoff the plan calls
+    out ("el login pasa a depender de la BD").
+    """
     return TEST_USERNAME, TEST_PASSWORD
 
 
 @pytest.fixture
-def consulta_credentials() -> tuple[str, str]:
+def consulta_credentials(clean_db: None) -> tuple[str, str]:
     """The (username, password) pair for the read-only 'consulta'-role test
-    user, baked into AUTH_USERS/AUTH_ROLES for this test run."""
+    user. See test_credentials' docstring re: the `clean_db` dependency."""
     return CONSULTA_USERNAME, CONSULTA_PASSWORD
 
 
 @pytest.fixture
-def produccion_credentials() -> tuple[str, str]:
+def produccion_credentials(clean_db: None) -> tuple[str, str]:
     """The (username, password) pair for the read-only 'produccion'-role test
-    user, baked into AUTH_USERS/AUTH_ROLES for this test run."""
+    user. See test_credentials' docstring re: the `clean_db` dependency."""
     return PRODUCCION_USERNAME, PRODUCCION_PASSWORD
+
+
+@pytest.fixture
+def punto_venta_credentials(clean_db: None) -> tuple[str, str]:
+    """The (username, password) pair for the new (Fase 2) 'punto_venta'-role
+    test user. See test_credentials' docstring re: the `clean_db`
+    dependency."""
+    return PUNTO_VENTA_USERNAME, PUNTO_VENTA_PASSWORD
