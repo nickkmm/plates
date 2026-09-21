@@ -63,9 +63,25 @@ def get_customer_by_name(conn: psycopg.Connection[DictRow], name: str) -> Custom
         return cur.fetchone()
 
 
-def resolve_or_create_customer(conn: psycopg.Connection[DictRow], name: str) -> int:
+def list_customers(conn: psycopg.Connection[DictRow]) -> list[CustomerRecord]:
+    """Every customer, alphabetically -- embedded whole into /ingest (Fase 3)
+    so its JS can auto-fill the 'cliente' fieldset the instant a typed name
+    matches an existing customer, the same "embed the small lookup list"
+    pattern already used for distinct_requested_by/distinct_cities (this app
+    has no JSON/AJAX endpoints anywhere else)."""
+    with conn.cursor(row_factory=class_row(CustomerRecord)) as cur:
+        cur.execute(f"SELECT {_SELECT_COLUMNS} FROM customers ORDER BY name")
+        return cur.fetchall()
+
+
+def resolve_or_create_customer(
+    conn: psycopg.Connection[DictRow], name: str, *,
+    type: str | None = None, document_type: str | None = None, document_number: str | None = None,
+    document_relation: str | None = None, phone: str | None = None, email: str | None = None,
+    transit_license: str | None = None,
+) -> int:
     """Return the id of the customer canonically named `name`, creating a
-    bare row (every attribute NULL) if none exists yet.
+    row if none exists yet.
 
     Canonicalizes via normalize_requested_by BEFORE the lookup/insert -- the
     same key `customers.name`'s UNIQUE constraint and the Fase 1 backfill
@@ -77,20 +93,31 @@ def resolve_or_create_customer(conn: psycopg.Connection[DictRow], name: str) -> 
     RETURNING id" idiom, which is safe under concurrent inserts -- a plain
     SELECT-then-INSERT would race.
 
-    Only ever sets `name`: this does NOT accept/write customer attributes
-    (type/document/phone/email/transit_license) -- capturing those for a
-    brand-new customer is a later phase's concern (the /ingest "cliente"
-    fieldset), not this function's job.
+    The keyword attributes (Fase 3's /ingest "cliente" fieldset) are written
+    ONLY on the INSERT branch, i.e. only for a genuinely brand-new customer
+    -- the ON CONFLICT branch still only ever touches `name` (a no-op
+    "rewrite it to itself", purely so RETURNING id fires on the existing
+    row). This is deliberate, not an oversight: per the plan's B5, editing
+    an order may only change WHICH customer it points to, never rewrite an
+    existing customer's own stored attributes (that's out of scope, deferred
+    to a future dedicated customers screen) -- ingestion.py's calls (name
+    only, via process_rows/replace_order) and record_save's call (also name
+    only, per B5) both keep working unchanged against this same signature.
     """
     canonical = normalize_requested_by(name)
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO customers (name) VALUES (%s)
+            INSERT INTO customers (
+                name, type, document_type, document_number, document_relation,
+                phone, email, transit_license
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
             RETURNING id
             """,
-            (canonical,),
+            (canonical, type, document_type, document_number, document_relation,
+             phone, email, transit_license),
         )
         row = cur.fetchone()
         assert row is not None, "INSERT ... RETURNING id always yields a row"

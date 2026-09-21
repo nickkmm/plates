@@ -6,7 +6,7 @@
   <title>Plates — Registrar</title>
   <style>
     :root { --green:#1a9c5b; --blue:#0b6bcb; --red:#d33; --ink:#222; }
-    body { font-family: system-ui, sans-serif; max-width: 920px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
+    body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
     h1 { font-size: 1.4rem; }
     .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
     .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
@@ -18,6 +18,7 @@
     .header { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.8rem; }
     label { font-size:.8rem; color:#555; display:flex; flex-direction:column; gap:.25rem; }
     input, select { padding:.45rem; border:1px solid #ccc; border-radius:6px; font-size:.95rem; }
+    input:disabled, select:disabled { background:#f0f0f0; color:#999; }
     table { border-collapse:collapse; width:100%; font-size:.9rem; }
     th, td { border:1px solid #e3e3e3; padding:.35rem .4rem; }
     th { background:#f6f6f6; font-size:.78rem; }
@@ -64,7 +65,8 @@
       Si esto es la reposición de placas de esta MISMA orden (p. ej. subiste el PDF para recuperar
       las placas reales de una reposición vieja cargada antes), reemplazala: se borra{% if order_duplicates|length > 1 %}n{% endif %}
       la orden existente{% if order_duplicates|length > 1 %}s{% endif %} de arriba (y sus placas) y quedan
-      solamente las de este envío, bajo una única orden.
+      solamente las de este envío, bajo una única orden. Los precios de la orden reemplazada se
+      vuelven a tomar de la tarifa vigente hoy, no la de la fecha original.
     </p>
   </div>
   {% endif %}
@@ -102,6 +104,9 @@
       {% endif %}
     </ul>
     {% if summary.possible_duplicates %}<p class="muted">Revisá los duplicados en <a href="{{ url_for('review.review') }}">Revisión</a>.</p>{% endif %}
+    {% if summary.review_notes %}
+    <ul>{% for n in summary.review_notes %}<li class="muted">{{ n }}</li>{% endfor %}</ul>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -109,13 +114,68 @@
   <datalist id="requesters">{% for r in requesters %}<option value="{{ r }}">{% endfor %}</datalist>
   <datalist id="cities">{% for c in cities %}<option value="{{ c }}">{% endfor %}</datalist>
 
+  <!-- Datos embebidos para autocompletado JS (mismo patrón que los datalist de
+       arriba: esta app no tiene endpoints JSON/AJAX propios, así que se manda
+       la lista completa una vez con la página). -->
+  <script id="pricesData" type="application/json">{{ prices | tojson }}</script>
+  <script id="customersData" type="application/json">{{ customers | tojson }}</script>
+
   <form method="post" action="{{ url_for('ingest.ingest') }}">
     <fieldset>
       <legend>Datos de la orden</legend>
       <div class="header">
         <label>Fecha<input type="date" name="order_date" value="{{ header.order_date if header else today }}" max="{{ today }}" required></label>
         <label>N° de orden<input type="text" name="order_number" value="{{ header.order_number if header else '' }}" required placeholder="ej. 598"></label>
-        <label>Solicitado por<input type="text" name="requested_by" list="requesters" value="{{ header.requested_by if header else '' }}" required placeholder="elegí o escribí"></label>
+        <label>Cliente / Solicitado por<input type="text" name="requested_by" id="requestedBy" list="requesters" value="{{ header.requested_by if header else '' }}" required placeholder="elegí o escribí" oninput="autofillCustomer(this.value)"></label>
+        <label>Tipo de comprobante
+          <select name="receipt_type">
+            <option value="" {% if not (header and header.receipt_type) %}selected{% endif %}>— sin comprobante —</option>
+            {% for rt in receipt_types %}<option value="{{ rt }}" {% if header and header.receipt_type==rt %}selected{% endif %}>{{ rt }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>N° de comprobante<input type="text" name="receipt_number" value="{{ header.receipt_number if header else '' }}"></label>
+        <label>Forma de pago
+          <select name="payment_method" required>
+            {% if not (header and header.payment_method) %}<option value="" selected>— elegí —</option>{% endif %}
+            {% for pm in payment_methods %}<option value="{{ pm }}" {% if header and header.payment_method==pm %}selected{% endif %}>{{ pm }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Guía #<input type="text" name="tracking_number" value="{{ header.tracking_number if header else '' }}"></label>
+        <label>Pedido # (cliente)<input type="text" name="client_order_number" value="{{ header.client_order_number if header else '' }}"></label>
+        <label>Fecha de entrega<input type="date" name="delivery_date" value="{{ header.delivery_date if header else '' }}"></label>
+        <label>Fecha de transferencia/pago<input type="date" name="payment_date" value="{{ header.payment_date if header else '' }}"></label>
+        <label>Responsable despacho<input type="text" name="dispatched_by" value="{{ header.dispatched_by if header else '' }}"></label>
+        <label>Quien recibe el pedido<input type="text" name="received_by" value="{{ header.received_by if header else '' }}"></label>
+      </div>
+      <label>Observaciones<input type="text" name="notes" value="{{ header.notes if header else '' }}"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Cliente</legend>
+      <p class="muted">Si "Cliente / Solicitado por" coincide con un cliente ya guardado, estos datos se autocompletan. Si es nuevo, completalos a mano (todos opcionales).</p>
+      <div class="header">
+        <label>Tipo de cliente
+          <select name="customer_type" id="customerType" onchange="toggleTransitLicense()">
+            <option value="" {% if not (header and header.customer_type) %}selected{% endif %}>— sin definir —</option>
+            {% for ct in customer_types %}<option value="{{ ct }}" {% if header and header.customer_type==ct %}selected{% endif %}>{{ ct }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Tipo de documento
+          <select name="customer_document_type" id="documentType" onchange="toggleDocumentRelation()">
+            <option value="" {% if not (header and header.customer_document_type) %}selected{% endif %}>— sin definir —</option>
+            {% for dt in document_types %}<option value="{{ dt }}" {% if header and header.customer_document_type==dt %}selected{% endif %}>{{ dt }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>N° de documento<input type="text" name="customer_document_number" id="documentNumber" value="{{ header.customer_document_number if header else '' }}"></label>
+        <label>Relación con el documento
+          <select name="customer_document_relation" id="documentRelation" {% if not (header and header.customer_document_type=='CÉDULA') %}disabled{% endif %}>
+            <option value="" {% if not (header and header.customer_document_relation) %}selected{% endif %}>— sin definir —</option>
+            {% for dr in document_relations %}<option value="{{ dr }}" {% if header and header.customer_document_relation==dr %}selected{% endif %}>{{ dr }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Teléfono<input type="text" name="customer_phone" id="customerPhone" value="{{ header.customer_phone if header else '' }}"></label>
+        <label>Correo<input type="email" name="customer_email" id="customerEmail" value="{{ header.customer_email if header else '' }}"></label>
+        <label>Licencia de tránsito<input type="text" name="customer_transit_license" id="transitLicense" value="{{ header.customer_transit_license if header else '' }}" {% if not (header and header.customer_type=='PERSONA NATURAL') %}disabled{% endif %}></label>
       </div>
     </fieldset>
 
@@ -123,7 +183,12 @@
       <legend>Placas</legend>
       <table>
         <thead>
-          <tr><th style="width:18%">Tipo de registro</th><th style="width:20%">Tipo de placa</th><th>Placa / Desde</th><th>Hasta</th><th style="width:16%">Ciudad</th><th style="width:10%">Cantidad</th><th style="width:8%"></th></tr>
+          <tr>
+            <th style="width:13%">Tipo de registro</th><th style="width:15%">Tipo de placa</th>
+            <th>Placa / Desde</th><th>Hasta</th><th style="width:10%">Ciudad</th>
+            <th style="width:7%">Cantidad</th><th style="width:10%">Motivo</th>
+            <th style="width:10%">Marca vehículo</th><th style="width:10%">Valor</th><th style="width:6%"></th>
+          </tr>
         </thead>
         <tbody id="lines">
           {% set line_labels = {'placa':'Placa','rango':'Rango','reposicion':'Reposición','anulada_orden':'Orden anulada','placa_anulada':'Placa anulada','muestra':'Muestra'} %}
@@ -137,7 +202,7 @@
               </select>
             </td>
             <td>
-              <select name="plate_type" required onchange="updateHint(this)">
+              <select name="plate_type" required onchange="updateHint(this); prefillPrice(this);">
                 {# Sin tipo (el PDF no marcó ninguna casilla): opción vacía + `required`
                    obligan a elegirlo, en vez de dejar pasar el primero de la lista. #}
                 {% if not line.plate_type %}<option value="" selected>— elegí el tipo —</option>{% endif %}
@@ -148,6 +213,14 @@
             <td><input type="text" name="plate_to" class="plate-num" value="{{ line.plate_to or '' }}" {% if line.line_type!='rango' %}readonly style="background:#f0f0f0"{% endif %}></td>
             <td><input type="text" name="city" list="cities" value="{{ line.city or '' }}"></td>
             <td><input type="number" name="quantity" value="{{ line.quantity or 1 }}" min="0" required></td>
+            <td>
+              <select name="reason">
+                <option value="" {% if not line.reason %}selected{% endif %}>—</option>
+                {% for r in reasons %}<option value="{{ r }}" {% if line.reason==r %}selected{% endif %}>{{ r }}</option>{% endfor %}
+              </select>
+            </td>
+            <td><input type="text" name="vehicle_brand" value="{{ line.vehicle_brand or '' }}"></td>
+            <td><input type="number" name="unit_price" step="1" min="0" value="{{ line.unit_price or '' }}"></td>
             <td><button type="button" class="rm" onclick="rmLine(this)">Quitar</button></td>
           </tr>
           {% endfor %}
@@ -169,7 +242,7 @@
             </select>
           </td>
           <td>
-            <select name="plate_type" required onchange="updateHint(this)">
+            <select name="plate_type" required onchange="updateHint(this); prefillPrice(this);">
               {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
             </select>
           </td>
@@ -177,6 +250,14 @@
           <td><input type="text" name="plate_to" class="plate-num" readonly style="background:#f0f0f0"></td>
           <td><input type="text" name="city" list="cities"></td>
           <td><input type="number" name="quantity" value="1" min="0" required></td>
+          <td>
+            <select name="reason">
+              <option value="" selected>—</option>
+              {% for r in reasons %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+            </select>
+          </td>
+          <td><input type="text" name="vehicle_brand"></td>
+          <td><input type="number" name="unit_price" step="1" min="0"></td>
           <td><button type="button" class="rm" onclick="rmLine(this)">Quitar</button></td>
         </tr>
       </template>
@@ -189,11 +270,16 @@
     {% if order_duplicates %}
     <button type="submit" name="confirm_order_duplicate" value="1" class="submit">Guardar como orden nueva de todas formas</button>
     <button type="submit" name="replace_order" value="1" class="submit" style="background:var(--red)"
-            onclick="return confirm('Esto va a BORRAR PERMANENTEMENTE {{ order_duplicates|length }} orden(es) existente(s) con el N° {{ order_duplicates[0].order_number }} y sus {{ order_duplicates|sum(attribute='n_plates') }} placa(s) en total, y las va a reemplazar por una orden nueva con lo que acabás de escribir. Esta acción no se puede deshacer. ¿Confirmás?');">Reemplazar (fusionar en una sola)</button>
+            onclick="return confirm('Esto va a BORRAR PERMANENTEMENTE {{ order_duplicates|length }} orden(es) existente(s) con el N° {{ order_duplicates[0].order_number }} y sus {{ order_duplicates|sum(attribute='n_plates') }} placa(s) en total, y las va a reemplazar por una orden nueva con lo que acabás de escribir. Los precios se toman de la tarifa vigente hoy, no la de la fecha original. Esta acción no se puede deshacer. ¿Confirmás?');">Reemplazar (fusionar en una sola)</button>
     {% endif %}
   </form>
 
   <script>
+    // Tarifas sugeridas por tipo de placa ({tipo: "valor"}) y clientes ya
+    // conocidos ({nombre: {atributos...}}), embebidos por el servidor.
+    const PRICES = JSON.parse(document.getElementById('pricesData').textContent);
+    const CUSTOMERS = JSON.parse(document.getElementById('customersData').textContent);
+
     // Patrón del formato por tipo (placeholder): A=letra, 0=número.
     const HINTS = {
       'MOTO PARTICULAR': 'AAA00A',
@@ -209,6 +295,15 @@
       const h = HINTS[typeSel.value] || '';
       tr.querySelector('input[name="plate_number"]').placeholder = h;
       tr.querySelector('input[name="plate_to"]').placeholder = h;
+    }
+    // Pre-llena "Valor" con la tarifa vigente del tipo elegido -- sugerencia
+    // editable, no un valor bloqueado (el precio real varía por cliente/
+    // descuento negociado). Si el tipo no tiene tarifa configurada, no toca
+    // lo que la persona ya haya escrito.
+    function prefillPrice(typeSel) {
+      const price = PRICES[typeSel.value];
+      if (price === undefined) return;
+      typeSel.closest('tr').querySelector('input[name="unit_price"]').value = price;
     }
     // Habilita "Desde" (placa) y "Hasta" según el tipo. readonly (no disabled)
     // para que el campo igual se envíe y no desalinee las columnas.
@@ -232,9 +327,55 @@
       btn.closest('tr').remove();                    // siempre borra la fila
       if (!tbody.querySelector('.line')) addLine();  // pero deja al menos una
     }
+
+    // Campos condicionales del bloque Cliente: 'disabled' (no 'readonly' --
+    // no tiene efecto sobre <select>), así el navegador ni siquiera los manda
+    // en el POST cuando no aplican -- el servidor igual lo vuelve a forzar
+    // por su cuenta (nunca confía solo en esto).
+    function toggleDocumentRelation() {
+      const enabled = document.getElementById('documentType').value === 'CÉDULA';
+      const sel = document.getElementById('documentRelation');
+      sel.disabled = !enabled;
+      if (!enabled) sel.value = '';
+    }
+    function toggleTransitLicense() {
+      const enabled = document.getElementById('customerType').value === 'PERSONA NATURAL';
+      const inp = document.getElementById('transitLicense');
+      inp.disabled = !enabled;
+      if (!enabled) inp.value = '';
+    }
+
+    // Autocompletado de cliente: si el nombre tipeado/elegido coincide con un
+    // cliente ya guardado, reutiliza sus datos (comparación simple, sin
+    // acentos/mayúsculas -- la resolución real, con normalize_requested_by,
+    // pasa siempre por el servidor; esto es solo una comodidad visual).
+    function _foldName(s) {
+      return (s || '').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    }
+    function autofillCustomer(typed) {
+      const folded = _foldName(typed);
+      if (!folded) return;
+      let match = null;
+      for (const name in CUSTOMERS) {
+        if (_foldName(name) === folded) { match = CUSTOMERS[name]; break; }
+      }
+      if (!match) return;
+      document.getElementById('customerType').value = match.type || '';
+      document.getElementById('documentType').value = match.document_type || '';
+      document.getElementById('documentNumber').value = match.document_number || '';
+      document.getElementById('documentRelation').value = match.document_relation || '';
+      document.getElementById('customerPhone').value = match.phone || '';
+      document.getElementById('customerEmail').value = match.email || '';
+      document.getElementById('transitLicense').value = match.transit_license || '';
+      toggleDocumentRelation();
+      toggleTransitLicense();
+    }
+
     // Una fila en blanco al cargar, salvo que el servidor ya haya prellenado
     // líneas (reintento tras un aviso de duplicado — no perder lo tipeado).
     document.addEventListener('DOMContentLoaded', () => {
+      toggleDocumentRelation();
+      toggleTransitLicense();
       const existing = document.querySelectorAll('#lines .line');
       if (!existing.length) { addLine(); return; }
       existing.forEach(row => {

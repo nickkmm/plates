@@ -10,6 +10,7 @@ their routes instead of moving here -- see the Fase 1d plan.
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from app.core import db
@@ -49,3 +50,16 @@ def _validate_order_header(*, requested_by: str, order_date: str) -> None:
         raise ValueError("'Solicitado por' no debería contener números (parece una placa). Revisá ese campo.")
     if order_date and order_date > today_iso():
         raise ValueError(f"La fecha {order_date} es futura. Corregí la fecha.")
+
+
+def format_cop(value: Decimal | None) -> str:
+    """Colombian peso display formatting: thousands separated by '.', no
+    decimals (e.g. Decimal('1954000') -> '$1.954.000'). None -> '—', never a
+    silent '$0' -- callers (unit_price is genuinely nullable: an unpriced
+    plate_type) must be able to tell "no price" from "free" at a glance.
+    Display only: never used for the underlying Decimal math (unit_price *
+    quantity), which stays exact/unrounded wherever it's actually computed.
+    """
+    if value is None:
+        return "—"
+    return f"${value:,.0f}".replace(",", ".")
