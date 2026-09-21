@@ -106,31 +106,59 @@ _UNSET = _Unset()
 def update_order(
     conn: psycopg.Connection[DictRow], order_id: int, *, order_number: str, order_date: date | str,
     requested_by: str, customer_id: int | None | _Unset = _UNSET,
+    receipt_type: str | None = None, receipt_number: str | None = None,
+    payment_method: str | None = None, tracking_number: str | None = None,
+    client_order_number: str | None = None, delivery_date: date | str | None = None,
+    payment_date: date | str | None = None, dispatched_by: str | None = None,
+    received_by: str | None = None, notes: str | None = None,
 ) -> None:
-    """Edit an order's header fields (date/number/solicitado por), and
-    optionally re-point its customer_id.
+    """Edit an order's header fields (date/number/solicitado por + Fase 3's
+    POS fields), and optionally re-point its customer_id.
 
     customer_id defaults to a private "not provided" sentinel, deliberately
-    NOT None: app/web/blueprints/records.py's record_save (Fase 3's job) doesn't
-    resolve/pass a customer_id yet, and if the default silently meant "set
-    customer_id to NULL", every existing Registro-detail save would wipe the
-    order's customer link the moment this shipped. Pass customer_id
-    explicitly -- an int, or None to genuinely clear it (e.g. an order whose
-    requested_by no longer resolves to anything) -- to change it; omit it to
-    leave the column exactly as it was.
+    NOT None: before Fase 3, record_save didn't resolve/pass a customer_id at
+    all, and if the default silently meant "set customer_id to NULL", every
+    existing Registro-detail save would have wiped the order's customer link
+    the moment this shipped. Pass customer_id explicitly -- an int, or None
+    to genuinely clear it (e.g. an order whose requested_by no longer
+    resolves to anything) -- to change it; omit it to leave the column
+    exactly as it was.
+
+    The 10 POS fields below have no such sentinel: record_save (their only
+    real caller) always submits the record_detail.html form in full, so
+    "not provided" and "genuinely blank" are the same thing here -- default
+    None simply means "clear it", matching every column's own nullability.
     """
     with conn.cursor() as cur:
         if isinstance(customer_id, _Unset):
             cur.execute(
-                "UPDATE production_orders SET order_number = %s, order_date = %s, requested_by = %s "
-                "WHERE id = %s",
-                (order_number, order_date, requested_by, order_id),
+                """
+                UPDATE production_orders
+                SET order_number = %s, order_date = %s, requested_by = %s,
+                    receipt_type = %s, receipt_number = %s, payment_method = %s,
+                    tracking_number = %s, client_order_number = %s, delivery_date = %s,
+                    payment_date = %s, dispatched_by = %s, received_by = %s, notes = %s
+                WHERE id = %s
+                """,
+                (order_number, order_date, requested_by,
+                 receipt_type, receipt_number, payment_method, tracking_number,
+                 client_order_number, delivery_date, payment_date, dispatched_by,
+                 received_by, notes, order_id),
             )
         else:
             cur.execute(
-                "UPDATE production_orders SET order_number = %s, order_date = %s, requested_by = %s, "
-                "customer_id = %s WHERE id = %s",
-                (order_number, order_date, requested_by, customer_id, order_id),
+                """
+                UPDATE production_orders
+                SET order_number = %s, order_date = %s, requested_by = %s, customer_id = %s,
+                    receipt_type = %s, receipt_number = %s, payment_method = %s,
+                    tracking_number = %s, client_order_number = %s, delivery_date = %s,
+                    payment_date = %s, dispatched_by = %s, received_by = %s, notes = %s
+                WHERE id = %s
+                """,
+                (order_number, order_date, requested_by, customer_id,
+                 receipt_type, receipt_number, payment_method, tracking_number,
+                 client_order_number, delivery_date, payment_date, dispatched_by,
+                 received_by, notes, order_id),
             )
 
 
@@ -177,7 +205,8 @@ def order_detail(conn: psycopg.Connection[DictRow], order_id: int) -> tuple[dict
         cur.execute(
             """
             SELECT id, plate_type, plate_number, plate_to, quantity,
-                   is_batch_replacement, is_voided, is_plate_annulled, city
+                   is_batch_replacement, is_voided, is_plate_annulled, city,
+                   unit_price, reason, vehicle_brand
             FROM plates WHERE order_id = %s ORDER BY id
             """,
             (order_id,),

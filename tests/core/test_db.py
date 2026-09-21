@@ -238,6 +238,44 @@ class TestUpdateOrder:
             cur.execute("SELECT customer_id FROM production_orders WHERE id = %s", (order_id,))
             assert cur.fetchone() == (new_customer_id,)
 
+    def test_pos_fields_default_to_null_when_omitted(self, db_conn):
+        """Unlike customer_id, the 10 Fase 3 POS fields have no sentinel --
+        record_save (their only real caller) always submits the whole form,
+        so omitting one here really does mean 'clear it'."""
+        order_id = _insert_order(db_conn, order_number="2005", order_date=date(2026, 1, 1),
+                                  requested_by="PEDRO")
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "UPDATE production_orders SET payment_method = 'EFECTIVO', notes = 'algo' WHERE id = %s",
+                (order_id,),
+            )
+        db.update_order(db_conn, order_id, order_number="2005", order_date=date(2026, 1, 1),
+                        requested_by="PEDRO")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT payment_method, notes FROM production_orders WHERE id = %s", (order_id,))
+            assert cur.fetchone() == (None, None)
+
+    def test_pos_fields_are_written_when_given(self, db_conn):
+        order_id = _insert_order(db_conn, order_number="2006", order_date=date(2026, 1, 1),
+                                  requested_by="PEDRO")
+        db.update_order(
+            db_conn, order_id, order_number="2006", order_date=date(2026, 1, 1), requested_by="PEDRO",
+            receipt_type="FACTURA", receipt_number="F-1", payment_method="TRANSFERENCIA",
+            tracking_number="G-1", client_order_number="P-1", delivery_date=date(2026, 1, 5),
+            payment_date=date(2026, 1, 6), dispatched_by="ANA", received_by="LUIS", notes="ok",
+        )
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "SELECT receipt_type, receipt_number, payment_method, tracking_number, "
+                "client_order_number, delivery_date, payment_date, dispatched_by, received_by, notes "
+                "FROM production_orders WHERE id = %s",
+                (order_id,),
+            )
+            assert cur.fetchone() == (
+                "FACTURA", "F-1", "TRANSFERENCIA", "G-1", "P-1",
+                date(2026, 1, 5), date(2026, 1, 6), "ANA", "LUIS", "ok",
+            )
+
     def test_explicit_none_clears_customer_id(self, db_conn):
         customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
         order_id = db.insert_order(
@@ -763,6 +801,20 @@ class TestOrderDetail:
         _, plates = db.order_detail(db_conn, order_id)
         assert [p["plate_number"] for p in plates] == ["A1", "A2"]
 
+    def test_plates_include_the_fase_3_per_line_pos_fields(self, db_conn):
+        order_id = _insert_order(db_conn, order_number="903", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        db.insert_plate(
+            db_conn, order_id=order_id,
+            row=make_row(plate_number="POS111", reason="DETERIORO", vehicle_brand="RENAULT",
+                         unit_price=Decimal("150000")),
+            is_possible_duplicate=False,
+        )
+        _, plates = db.order_detail(db_conn, order_id)
+        assert plates[0]["reason"] == "DETERIORO"
+        assert plates[0]["vehicle_brand"] == "RENAULT"
+        assert plates[0]["unit_price"] == Decimal("150000")
+
     def test_joins_the_resolved_customers_attributes(self, db_conn):
         customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
         with db_conn.cursor() as cur:
@@ -1047,6 +1099,42 @@ class TestUpdatePlateFull:
             cur.execute("SELECT unit_price FROM plates WHERE id = %s", (plate_id,))
             assert cur.fetchone() == (None,)
 
+    def test_writes_reason_and_vehicle_brand(self, db_conn):
+        """Fase 3: reason/vehicle_brand are plain per-line attributes with no
+        re-snapshot rule of their own -- written verbatim."""
+        order_id = _insert_order(db_conn, order_number="1216", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        plate_id = _insert_plate_get_id(db_conn, order_id, plate_type="CARRO PARTICULAR")
+
+        db.update_plate_full(
+            db_conn, plate_id, plate_type="CARRO PARTICULAR", plate_number=None,
+            plate_to=None, city=None, quantity=1, is_voided=False,
+            is_plate_annulled=False, is_batch_replacement=False,
+            reason="DETERIORO", vehicle_brand="MAZDA",
+        )
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT reason, vehicle_brand FROM plates WHERE id = %s", (plate_id,))
+            assert cur.fetchone() == ("DETERIORO", "MAZDA")
+
+    def test_reason_and_vehicle_brand_default_to_null(self, db_conn):
+        """Omitting them (existing callers, e.g. /review's plainer edit path
+        via update_plate -- a different function -- or a caller that simply
+        doesn't have this data) must not raise or silently invent a value."""
+        order_id = _insert_order(db_conn, order_number="1217", order_date=date(2026, 1, 1),
+                                    requested_by="PEDRO")
+        plate_id = _insert_plate_get_id(db_conn, order_id, plate_type="CARRO PARTICULAR")
+
+        db.update_plate_full(
+            db_conn, plate_id, plate_type="CARRO PARTICULAR", plate_number=None,
+            plate_to=None, city=None, quantity=1, is_voided=False,
+            is_plate_annulled=False, is_batch_replacement=False,
+        )
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT reason, vehicle_brand FROM plates WHERE id = %s", (plate_id,))
+            assert cur.fetchone() == (None, None)
+
 
 class TestResolvePlate:
     def test_clears_flag_without_touching_other_fields(self, db_conn):
@@ -1202,6 +1290,52 @@ class TestResolveOrCreateCustomer:
         granada = db.resolve_or_create_customer(db_conn, "MUVA GRANADA")
         sergio = db.resolve_or_create_customer(db_conn, "MUVA SERGIO")
         assert granada != sergio
+
+    def test_new_customer_takes_the_given_attributes(self, db_conn):
+        """Fase 3: the /ingest 'cliente' fieldset writes attributes for a
+        genuinely brand-new customer through these keyword args."""
+        customer_id = db.resolve_or_create_customer(
+            db_conn, "CLIENTE NUEVO", type="PERSONA NATURAL", document_type="CÉDULA",
+            document_number="123456", document_relation="DUEÑO", phone="3001112233",
+            email="a@b.com", transit_license="LIC1",
+        )
+        customer = db.get_customer(db_conn, customer_id)
+        assert customer is not None
+        assert customer.type == "PERSONA NATURAL"
+        assert customer.document_type == "CÉDULA"
+        assert customer.document_number == "123456"
+        assert customer.document_relation == "DUEÑO"
+        assert customer.phone == "3001112233"
+        assert customer.email == "a@b.com"
+        assert customer.transit_license == "LIC1"
+
+    def test_existing_customer_attributes_are_never_overwritten(self, db_conn):
+        """Per the plan's B5: resolving an order to an EXISTING customer may
+        never rewrite that customer's own stored attributes, even if the
+        caller passes different ones -- editing a customer's own data is out
+        of scope (deferred to a future dedicated customers screen)."""
+        first_id = db.resolve_or_create_customer(
+            db_conn, "PTO.V", type="EMPRESA", phone="3009998877",
+        )
+        second_id = db.resolve_or_create_customer(
+            db_conn, "PTO.V", type="PERSONA NATURAL", phone="3000000000",
+        )
+        assert first_id == second_id
+        customer = db.get_customer(db_conn, first_id)
+        assert customer is not None
+        assert customer.type == "EMPRESA"
+        assert customer.phone == "3009998877"
+
+
+class TestListCustomers:
+    def test_returns_every_customer_alphabetically(self, db_conn):
+        db.resolve_or_create_customer(db_conn, "ZETA")
+        db.resolve_or_create_customer(db_conn, "ALFA")
+        names = [c.name for c in db.list_customers(db_conn)]
+        assert names == ["ALFA", "ZETA"]
+
+    def test_empty_when_no_customers(self, db_conn):
+        assert db.list_customers(db_conn) == []
 
 
 class TestGetCustomerByName:
