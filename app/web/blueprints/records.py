@@ -3,7 +3,7 @@ full detail, and a PDF-based consult-only duplicate check."""
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
 
 from app.core import db
 from app.core.ingestion import find_duplicate_plate_numbers
@@ -246,6 +246,10 @@ def record_save(order_id):
             conn.commit()
     except Exception as e:
         return _record_detail_error(order_id, f"Error: {e}")
+    current_app.logger.info(
+        "record saved: user=%s order_id=%d order_number=%s",
+        session.get("user"), order_id, order_number,
+    )
     return redirect(url_for("records.record_detail", order_id=order_id))
 
 

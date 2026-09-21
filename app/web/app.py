@@ -27,6 +27,7 @@ the read-only 'producción' role -- see app.web.auth.consulta_allowed.
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import timedelta
 
@@ -51,6 +52,16 @@ if _SENTRY_DSN:
     sentry_sdk.init(dsn=_SENTRY_DSN, integrations=[FlaskIntegration()])
 
 app = Flask(__name__)
+
+# Flask's own default log handler (added lazily the first time app.logger is
+# used) only emits WARNING and above -- INFO-level activity logging (login,
+# order creation, record save; see the blueprints that call
+# current_app.logger.info) would otherwise be silently dropped. This is the
+# ONLY thing that makes those visible in `docker logs`/Dozzle; gunicorn's own
+# error log (stderr, level INFO by default) is what actually carries them
+# through to the container's stdout/stderr, since Flask logs to
+# request.environ["wsgi.errors"] inside a request.
+app.logger.setLevel(logging.INFO)
 
 # Session signing key — required so cookies can't be forged. Generate one with:
 #   python -c "import secrets; print(secrets.token_hex(32))"

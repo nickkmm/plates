@@ -359,6 +359,10 @@ def ingest_post():
                 )
                 summary = replace_order(conn, rows[0].order_number, rows,
                                         created_by=session.get("user_id"))
+            current_app.logger.info(
+                "order replaced: user=%s order_number=%s plates=%d",
+                session.get("user"), rows[0].order_number, len(rows),
+            )
         else:
             # One connection for the whole route from here down: the
             # order-number collision check, the plate-number dup check, and
@@ -391,6 +395,10 @@ def ingest_post():
                             conn, rows[0].requested_by, **_customer_fields_from_form(request.form)
                         )
                         summary = process_rows(conn, rows, created_by=session.get("user_id"))
+                        current_app.logger.info(
+                            "order created: user=%s order_number=%s plates=%d",
+                            session.get("user"), rows[0].order_number, len(rows),
+                        )
     except Exception as e:  # surface validation/DB errors without crashing
         error = f"Error: {e}"
 

@@ -248,12 +248,20 @@ guardada (`db.resolve_or_create_customer`, vía
 `normalize.normalize_requested_by`) — si el nombre tipeado matchea uno
 existente, el JS del form auto-llena el resto de sus atributos desde la
 lista completa de clientes embebida en `ingest.html`; si no matchea, se
-crea un cliente nuevo con los atributos tipeados. **Regla B5, deliberada**:
-`resolve_or_create_customer` solo escribe atributos en la rama INSERT (un
-cliente genuinamente nuevo) — editar una orden ya guardada (`record_save`)
-puede volver a apuntar `customer_id` hacia otro cliente si se cambia el
-nombre, pero nunca reescribe los atributos de un cliente ya existente; eso
-queda para una futura pantalla de administración de clientes.
+crea un cliente nuevo con los atributos tipeados. Para un cliente que YA
+existe, cada atributo se llena con `COALESCE(existente, nuevo)` — nunca
+sobrescribe un valor que el cliente ya tiene (evita que una orden con un
+dato mal tipeado dañe uno correcto), pero sí completa cualquier atributo
+que siga en NULL la primera vez que alguien lo tipea (ver
+`app/core/db/customers.py::resolve_or_create_customer`, actualizado
+2026-09-21 justamente para que los 191 clientes del backfill histórico
+—todos con atributos NULL, la planilla vieja nunca los capturó— se vayan
+completando solos con el uso normal, en vez de quedar en blanco para
+siempre). Editar una orden ya guardada (`record_save`) puede volver a
+apuntar `customer_id` hacia otro cliente si se cambia el nombre, pero
+nunca envía atributos (ese form no los pide) — reescribir a mano el dato
+de un cliente ya completo sigue quedando para una futura pantalla de
+administración de clientes.
 
 ### `users`
 
