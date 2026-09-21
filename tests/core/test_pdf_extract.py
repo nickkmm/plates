@@ -112,6 +112,18 @@ class TestHeaderFields:
             build_pedido_pdf(order_number="", order_row_leaks_bare_pedido_label=True)
         )
         assert pedido.order_number == ""
+        # And the bare label doesn't get misread as the client_order_number
+        # either -- the fixture's own real 'PEDIDO #: 77' row (pedido_numero
+        # defaults to "77") is what must win here, never the bare decoy.
+        assert pedido.client_order_number == "77"
+
+    def test_pedido_hash_with_colon_populates_the_client_order_number(self):
+        """'PEDIDO #:' only ever appears in the new declarative table, never
+        in _LABELS_ORDEN -- it must land in client_order_number and nowhere
+        near order_number."""
+        pedido = parse_pedido_pdf(build_pedido_pdf(order_number="9001", pedido_numero="28"))
+        assert pedido.client_order_number == "28"
+        assert pedido.order_number == "9001"
 
     def test_reads_the_client_as_requested_by(self):
         assert parse_pedido_pdf(build_pedido_pdf(client="CLIENTE DEMO")).requested_by == "CLIENTE DEMO"
@@ -135,6 +147,91 @@ class TestHeaderFields:
         """One bad header field must never cost the person the plate lines."""
         pedido = parse_pedido_pdf(build_pedido_pdf(order_date="POR CONFIRMAR"))
         assert pedido.order_date is None
+        assert len(pedido.lines) == 4
+
+
+class TestFase4HeaderFields:
+    """NIT / CÉDULA, GUÍA #, PEDIDO #, FECHA ENTREGA, FECHA TRANSF./PAGO --
+    all live ABOVE the plate table, alongside CLIENTE/FECHA PEDIDO, so they're
+    scanned via the same header_rows slice."""
+
+    def test_reads_the_document_number(self):
+        pedido = parse_pedido_pdf(build_pedido_pdf(nit="1117521679"))
+        assert pedido.customer_document_number == "1117521679"
+
+    def test_missing_document_number_is_blank_not_guessed(self):
+        pedido = parse_pedido_pdf(build_pedido_pdf())
+        assert pedido.customer_document_number == ""
+
+    def test_nit_value_in_a_different_row_than_the_label_is_never_read(self):
+        """Real merged-cell artifact: the value cell renders on the row AFTER
+        the label instead of alongside it. The 'same row only' scan must
+        return "" here -- never the misplaced value, and never some other
+        field's value it happens to land next to."""
+        pedido = parse_pedido_pdf(build_pedido_pdf(nit_value_in_next_row=True, nit="999999999"))
+        assert pedido.customer_document_number == ""
+        # and everything else on the document still parses normally
+        assert len(pedido.lines) == 4
+
+    def test_reads_the_tracking_number(self):
+        pedido = parse_pedido_pdf(build_pedido_pdf(guia="G-500"))
+        assert pedido.tracking_number == "G-500"
+
+    def test_missing_tracking_number_is_blank(self):
+        assert parse_pedido_pdf(build_pedido_pdf()).tracking_number == ""
+
+    def test_reads_the_delivery_date(self):
+        pedido = parse_pedido_pdf(build_pedido_pdf(fecha_entrega="20/09/2026"))
+        assert pedido.delivery_date == date(2026, 9, 20)
+
+    def test_reads_the_payment_date(self):
+        pedido = parse_pedido_pdf(build_pedido_pdf(fecha_pago="21 DE SEPTIEMBRE DE 2026"))
+        assert pedido.payment_date == date(2026, 9, 21)
+
+    def test_missing_delivery_and_payment_dates_are_none_not_guessed(self):
+        pedido = parse_pedido_pdf(build_pedido_pdf())
+        assert pedido.delivery_date is None
+        assert pedido.payment_date is None
+
+
+class TestFase4FooterFields:
+    """RESPONSABLE DESPACHO/TELÉFONO/NOMBRE QUIEN RECIBE/FORMA DE PAGO/
+    OBSERVACIONES all live BELOW 'TOTAL PEDIDO:', physically invisible to
+    header_rows -- these are scanned via the new footer_rows slice."""
+
+    def test_reads_every_footer_field(self):
+        pedido = parse_pedido_pdf(build_pedido_pdf(
+            responsable="JUAN PEREZ", telefono="3001234567", recibe="MARIA GOMEZ",
+            forma_pago="EFECTIVO", observaciones="ENTREGAR EN LA TARDE",
+        ))
+        assert pedido.dispatched_by == "JUAN PEREZ"
+        assert pedido.customer_phone == "3001234567"
+        assert pedido.received_by == "MARIA GOMEZ"
+        assert pedido.payment_method == "EFECTIVO"
+        assert pedido.notes == "ENTREGAR EN LA TARDE"
+
+    def test_missing_footer_fields_are_blank_not_guessed(self):
+        pedido = parse_pedido_pdf(build_pedido_pdf())
+        assert pedido.dispatched_by == ""
+        assert pedido.customer_phone == ""
+        assert pedido.received_by == ""
+        assert pedido.payment_method == ""
+        assert pedido.notes == ""
+
+    def test_labels_must_match_the_full_printed_text_not_an_abbreviation(self):
+        """RESPONSABLE DESPACHO (INGSE SAS): and NOMBRE QUIEN RECIBE EL
+        PEDIDO: are the real printed labels -- exact text, never a shortened
+        stand-in, matching this module's substring-is-never-enough rule."""
+        pedido = parse_pedido_pdf(build_pedido_pdf(responsable="JUAN PEREZ", recibe="MARIA GOMEZ"))
+        assert pedido.dispatched_by == "JUAN PEREZ"
+        assert pedido.received_by == "MARIA GOMEZ"
+
+    def test_footer_values_do_not_leak_into_plate_lines(self):
+        """Guards the footer scan doesn't somehow grow into the line-parsing
+        loop, which already stops at TOTAL PEDIDO on its own."""
+        pedido = parse_pedido_pdf(build_pedido_pdf(
+            responsable="JUAN PEREZ", forma_pago="EFECTIVO", observaciones="NOTA",
+        ))
         assert len(pedido.lines) == 4
 
 
