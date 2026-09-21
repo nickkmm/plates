@@ -459,9 +459,19 @@ implemente Fase 3 en adelante no vuelva a tocar esto:
   el paquete nuevo `tests/core/db/` con `test_connection.py`/
   `test_orders.py`/`test_plates.py`/`test_inventory.py`/`test_customers.py`/
   `test_users.py`/`test_pricing.py`), cero cambio de comportamiento (789
-  tests, antes y después). La otra mitad de step 10 -- convertir `clean_db`
-  de `TRUNCATE` a una transacción con rollback por test -- sigue pendiente,
-  es trabajo aparte.
+  tests, antes y después). **Step 10 completo (2026-09-21)**: la otra
+  mitad -- convertir `clean_db` de `TRUNCATE` a una transacción con
+  rollback por test -- también está hecha (`tests/conftest.py::clean_db`),
+  vía `SAVEPOINT`/`RELEASE SAVEPOINT`/`ROLLBACK TO SAVEPOINT` a mano (no
+  `conn.transaction()` de psycopg -- ese prohíbe los `conn.commit()`/
+  `.rollback()` explícitos que el código real y ~100 tests ya hacían).
+  Investigado y descartado explícitamente: esto NO habilita correr pytest
+  en paralelo contra el mismo `plates_test` (dos workers competirían por
+  los mismos locks de Postgres igual que con `TRUNCATE`; paralelismo real
+  necesitaría esquema/base separada por worker, fuera de alcance) -- el
+  beneficio real es velocidad y que un test que falla a medias no deja
+  datos corruptos para el siguiente. Detalle completo en el docstring de
+  `clean_db`.
 - **Fase 1e** (PR #18 + PR #20, mergeados): rotación de logs de Docker
   (`json-file`, `max-size: 10m`, `max-file: 3`) en `db`/`web`; Sentry
   (`sentry-sdk[flask]`) inicializado en `app.py` solo si `SENTRY_DSN` está
@@ -916,13 +926,27 @@ viene incluido con `psycopg[binary]` — cambiar `requirements.txt` a
     `TestProduccionRole`/`TestPuntoVentaRole` cruzan varios blueprints a la
     vez, no encajan en un solo archivo por blueprint.
 
-    **Pendiente, aparte** (no incluido en la reorg de arriba): convertir
-    `clean_db` de
-    `TRUNCATE` a una transacción con rollback por test (lo habilita el paso
-    7: ahora que `ingestion.py` recibe `conn` en vez de abrir el suyo, un
-    test puede envolver todo en una sola transacción y revertirla al final)
-    — más rápido y permite correr `pytest` en paralelo, cosa que hoy
-    `docs/LOCAL_DEVELOPMENT.md` documenta como no soportado.
+    **También HECHO (2026-09-21)**: convertir `clean_db` de `TRUNCATE` a
+    una transacción con rollback por test (lo habilita el paso 7: ahora que
+    `ingestion.py` recibe `conn` en vez de abrir el suyo, un test puede
+    envolver todo en una sola transacción y revertirla al final) — real,
+    no trivial: `conn.commit()`/`.rollback()` se llaman explícitamente en
+    código real (`records.py`/`review.py`/`pricing.py`/`inventory.py`) y en
+    ~100 sitios de test, así que `psycopg`'s `conn.transaction()` (que
+    prohíbe llamarlos dentro de su propio context manager) no sirve — la
+    solución fue `SAVEPOINT`/`RELEASE SAVEPOINT`/`ROLLBACK TO SAVEPOINT` a
+    mano, reasignando `conn.commit`/`conn.rollback` para operar sobre ese
+    savepoint en vez de la base real, con cuidado especial de replicar el
+    "commit sobre una transacción abortada = rollback implícito, sin error"
+    que Postgres da gratis y que varios tests dependían de eso sin saberlo
+    (`tests/test_schema_migrate.py`, `TestCreateUser::
+    test_duplicate_username_raises`). Verificado con la suite completa
+    (789 tests) corrida 3 veces seguidas sin cambios de resultado. **No**
+    habilita correr `pytest` en paralelo contra el mismo `plates_test`
+    físico — se investigó y se descartó explícitamente esa parte de la
+    promesa original de este paso (ver el docstring de `clean_db` y
+    `docs/LOCAL_DEVELOPMENT.md` para el porqué): el beneficio real logrado
+    es velocidad, no paralelismo.
 11. **Reescribir la documentación** al final, una vez asentado el código:
     `docs/ARCHITECTURE.md` (el diagrama nombra `app/core/process.py` y
     `app/core/db.py` explícitamente), `docs/CORE.md` (secciones `## process.py`

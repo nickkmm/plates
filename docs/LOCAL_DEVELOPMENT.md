@@ -62,22 +62,30 @@ mano igual que el bloque de `cargador.ingse.co`). En local, directo en
   tres son filas reales en la tabla `users` de la base de test desde que
   el login pasó a ser DB-backed, no solo entradas de `AUTH_USERS`/
   `AUTH_ROLES`.
-- El fixture `clean_db` hace **`TRUNCATE ... RESTART IDENTITY CASCADE`**
-  de 7 tablas (`plates`, `production_orders`, `blank_preparations`,
-  `inventory_categories`, `customers`, `users`, `plate_type_prices` — no
-  toca `plate_types`, tabla de referencia estática) y vuelve a sembrar
-  las 3 identidades de test en `users` antes de cada test que depende de
-  él — **no** hay rollback transaccional por test
-  todavía. Desde Fase 1d, `db.get_conn()` reusa conexiones de un pool
-  (`psycopg_pool.ConnectionPool`) en vez de abrir un socket nuevo por
-  llamada, y `app/core/ingestion.py` recibe la conexión como parámetro
-  explícito en vez de abrir la suya propia — eso habilita en principio un
-  fixture de rollback por test (envolver todo en una transacción y
-  revertirla al final), pero todavía no se adoptó (ver el fast-follow del
-  paso 10 del plan de Fase 1d); truncar sigue siendo lo que da a cada test
-  el mismo estado inicial sin importar qué haya commiteado el anterior.
-  Correr pytest en paralelo contra el mismo contenedor de Postgres puede
-  generar carreras.
+- El fixture `clean_db` (Fase 1d, paso 10) hace un **rollback transaccional
+  por test**, no `TRUNCATE`: hace `TRUNCATE ... RESTART IDENTITY CASCADE` +
+  siembra de las 3 identidades de test una sola vez al principio, dentro de
+  un `SAVEPOINT` que nunca se libera de verdad hasta el final del test — ahí
+  se hace `ROLLBACK` real, así que ningún test deja rastro en el `plates_test`
+  físico sin importar si pasó o falló. `app.core.db.get_conn` queda
+  parcheado (vía `monkeypatch`) para devolver siempre esa MISMA conexión en
+  vez de sacar una nueva del pool — así cualquier request HTTP que el test
+  dispare (`authenticated_client`, etc.) opera sobre la misma sesión/
+  transacción, sin necesitar commits reales para ver sus propios cambios.
+  `conn.commit()`/`conn.rollback()` (llamados tanto por el código real de
+  `records.py`/`review.py`/`pricing.py`/`inventory.py` como por ~100 sitios
+  de test) se reasignan para hacer `RELEASE SAVEPOINT` + `SAVEPOINT` /
+  `ROLLBACK TO SAVEPOINT` sobre ESE savepoint en vez de tocar la base real —
+  ver el docstring de `clean_db` en `tests/conftest.py` para el detalle
+  completo (por qué no se usó `conn.transaction()` de psycopg, cómo se
+  recupera una transacción abortada por un error esperado, etc.).
+  **Esto NO habilita correr pytest en paralelo contra el mismo
+  `plates_test`** — se investigó y descartó explícitamente: dos workers
+  compitiendo por las mismas filas/tablas se serializan por los locks de
+  Postgres igual que con `TRUNCATE`, paralelismo real necesitaría un
+  esquema o base separada por worker (fuera de alcance). El beneficio real
+  logrado es velocidad (sin trabajo de disco/WAL por test) y que un test que
+  falla a medias nunca deja datos corruptos para el siguiente.
 - **Gotcha silencioso**: si Postgres no está corriendo o no es alcanzable
   en `127.0.0.1:5433`, los tests dependientes de BD se **saltan**
   (`pytest.skip`), no fallan. Una corrida "en verde" con muchos `skipped`
