@@ -7,8 +7,8 @@ POSTed price and calls db.price_list/db.set_price, never touching SQL or
 normalize.PLATE_TYPES directly.
 
 @login_required (admin-only), NOT @pos_allowed -- the plan is explicit that
-'punto_venta' edits orders/payments, not tariffs, so it must 403 here same as
-'produccion'.
+'point_of_sale' edits orders/payments, not tariffs, so it must 403 here same
+as 'production'.
 """
 
 from __future__ import annotations

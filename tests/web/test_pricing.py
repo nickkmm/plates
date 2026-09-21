@@ -1,7 +1,7 @@
 """Integration tests for GET/POST /precios (Fase 5a).
 
 The contract under test:
-- Admin-only via @login_required (NOT @pos_allowed) -- 'punto_venta' must 403
+- Admin-only via @login_required (NOT @pos_allowed) -- 'point_of_sale' must 403
   here even though it can reach /ingest, since the plan is explicit tariffs
   are an admin-only concern, distinct from POS order capture.
 - One row per normalize.PLATE_TYPES entry, always -- a type with no row yet
@@ -109,23 +109,23 @@ class TestPreciosValidation:
 
 
 class TestPreciosForbidden:
-    """@login_required (admin-only), NOT @pos_allowed -- 'punto_venta' edits
-    orders/payments, never tariffs, so it 403s here same as produccion."""
+    """@login_required (admin-only), NOT @pos_allowed -- 'point_of_sale' edits
+    orders/payments, never tariffs, so it 403s here same as production."""
 
-    def test_get_is_forbidden_for_produccion(self, produccion_client):
+    def test_get_is_forbidden_for_production(self, produccion_client):
         assert produccion_client.get(PRECIOS_URL).status_code == 403
 
-    def test_post_is_forbidden_for_produccion(self, produccion_client):
+    def test_post_is_forbidden_for_production(self, produccion_client):
         resp = produccion_client.post(_price_update_url("CARRO PARTICULAR"), data={"unit_price": "1000"})
         assert resp.status_code == 403
 
-    def test_get_is_forbidden_for_punto_venta(self, punto_venta_client):
+    def test_get_is_forbidden_for_point_of_sale(self, punto_venta_client):
         """The plan is explicit: /precios is admin-only, unlike /ingest or
-        /cuadre which punto_venta CAN reach -- this is the one regression
+        /cuadre which point_of_sale CAN reach -- this is the one regression
         guard most likely to be broken by a copy-paste of @pos_allowed."""
         assert punto_venta_client.get(PRECIOS_URL).status_code == 403
 
-    def test_post_is_forbidden_for_punto_venta(self, punto_venta_client, db_conn):
+    def test_post_is_forbidden_for_point_of_sale(self, punto_venta_client, db_conn):
         resp = punto_venta_client.post(_price_update_url("CARRO PARTICULAR"), data={"unit_price": "1000"})
         assert resp.status_code == 403
         assert "CARRO PARTICULAR" not in db.current_prices(db_conn)

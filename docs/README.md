@@ -5,8 +5,8 @@ Plates es la app de producción y venta de placas vehiculares de INGSE
 POS (Fases 1-5b, ver `PLAN_ARQUITECTURA_Y_POS.md` en la raíz del repo)
 también captura la orden de venta completa (cliente, forma de pago,
 precio) y genera el cuadre de caja diario. Tres roles: `admin` (acceso
-completo), `punto_venta` (captura ventas en `/ingest` y consulta
-`/cuadre`), y `producción` (solo lectura) sobre un registro
+completo), `point_of_sale` (captura ventas en `/ingest` y consulta
+`/cuadre`), y `production` (solo lectura) sobre un registro
 único de órdenes de producción y las placas que contienen.
 
 Esta carpeta es documentación **técnica de referencia** — para entender
@@ -30,8 +30,8 @@ no se repite.
 flowchart LR
     subgraph Usuarios["Usuarios (por rol)"]
         A[admin]
-        PV[punto_venta]
-        P[producción]
+        PV[point_of_sale]
+        P[production]
     end
     subgraph VPS["VPS — Docker Compose"]
         WEB["plates-web<br/>Flask + gunicorn"]

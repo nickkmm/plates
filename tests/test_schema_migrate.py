@@ -160,6 +160,14 @@ class TestApplySqlMigrations:
             cur.execute(sql)
             cur.execute(sql)
 
+    def test_0004_translate_role_values_sql_is_safe_to_apply_twice_directly(self, db_conn):
+        """Same idempotency guarantee as 0001/0002/0003 -- a plain UPDATE ...
+        WHERE naturally matches zero rows on the second run."""
+        sql = (_MIGRATIONS_DIR / "0004_translate_role_values_to_english.sql").read_text(encoding="utf-8")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(sql)
+            cur.execute(sql)
+
 
 # --------------------------------------------------------------------------
 # backfill_customers
@@ -268,7 +276,7 @@ class TestBackfillCustomers:
 class TestBackfillUsers:
     def test_creates_one_user_per_auth_user_with_matching_role(self, db_conn, monkeypatch):
         monkeypatch.setenv("AUTH_USERS", "alice:pbkdf2:sha256:abc$def,bob:pbkdf2:sha256:xyz")
-        monkeypatch.setenv("AUTH_ROLES", "bob:produccion")
+        monkeypatch.setenv("AUTH_ROLES", "bob:production")
 
         schema_migrate.backfill_users(db_conn)
 
@@ -277,7 +285,7 @@ class TestBackfillUsers:
             rows = {username: (pw_hash, role) for username, pw_hash, role in cur.fetchall()}
         # alice has no AUTH_ROLES entry -> defaults to admin, same as auth.role_for().
         assert rows["alice"] == ("pbkdf2:sha256:abc$def", "admin")
-        assert rows["bob"] == ("pbkdf2:sha256:xyz", "produccion")
+        assert rows["bob"] == ("pbkdf2:sha256:xyz", "production")
 
     def test_rerun_creates_no_duplicate_users(self, db_conn, monkeypatch):
         """Counts only 'alice' specifically (not `SELECT count(*) FROM
@@ -738,6 +746,61 @@ class TestRenameToEnglish:
 
         assert customers_before == customers_after == [("MUVA GRANADA",), ("PTO.V",)]
         assert order_before == order_after == (1, "EFECTIVO", 1)
+
+
+# --------------------------------------------------------------------------
+# Role-value translation to English (0004)
+# --------------------------------------------------------------------------
+
+
+class TestTranslateRoleValuesToEnglish:
+    """app/migrations/0004_translate_role_values_to_english.sql, exercised
+    against real `users` rows with the OLD Spanish role values."""
+
+    _0004_SQL = (_MIGRATIONS_DIR / "0004_translate_role_values_to_english.sql").read_text(encoding="utf-8")
+
+    def test_translates_produccion_and_punto_venta_leaves_admin_alone(self, db_conn):
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "INSERT INTO users (username, password_hash, role) VALUES "
+                "('old_prod', 'h1', 'produccion'), "
+                "('old_pos', 'h2', 'punto_venta'), "
+                "('old_admin', 'h3', 'admin')"
+            )
+        db_conn.commit()
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(self._0004_SQL)
+        db_conn.commit()
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "SELECT username, role FROM users WHERE username IN (%s, %s, %s)",
+                ("old_prod", "old_pos", "old_admin"),
+            )
+            rows = dict(cur.fetchall())
+        assert rows == {
+            "old_prod": "production",
+            "old_pos": "point_of_sale",
+            "old_admin": "admin",
+        }
+
+    def test_rerun_is_a_no_op(self, db_conn):
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "INSERT INTO users (username, password_hash, role) VALUES "
+                "('old_prod2', 'h1', 'produccion')"
+            )
+        db_conn.commit()
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(self._0004_SQL)
+            cur.execute(self._0004_SQL)
+        db_conn.commit()
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT role FROM users WHERE username = 'old_prod2'")
+            assert cur.fetchone()[0] == "production"
 
 
 # --------------------------------------------------------------------------

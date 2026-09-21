@@ -89,7 +89,7 @@ def _inject_full_access_roles() -> dict:
     full_access_roles: admin-only actions (Revisión/Inventario links, the
     Registros 'Eliminar' button) must stay gated on full_access_roles, while
     /ingest and /records/<id>/save's edit form are now POS_ROLES (admin +
-    punto_venta) -- see _nav.html and record_detail.html."""
+    point_of_sale) -- see _nav.html and record_detail.html."""
     return {"full_access_roles": auth.FULL_ACCESS_ROLES, "pos_roles": auth.POS_ROLES}
 
 

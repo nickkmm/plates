@@ -57,8 +57,8 @@ mano igual que el bloque de `cargador.ingse.co`). En local, directo en
   las credenciales reales del `.env` y los logins de test fallarían en
   silencio.
 - Tres identidades de test ya definidas: `testuser`/`testpass123`
-  (admin), `produccionuser`/`produccionpass123` (producción),
-  `puntoventauser`/`puntoventapass123` (`punto_venta`, Fase 2) — las
+  (admin), `produccionuser`/`produccionpass123` (`production`),
+  `puntoventauser`/`puntoventapass123` (`point_of_sale`, Fase 2) — las
   tres son filas reales en la tabla `users` de la base de test desde que
   el login pasó a ser DB-backed, no solo entradas de `AUTH_USERS`/
   `AUTH_ROLES`.

@@ -1,7 +1,7 @@
 """Integration tests for GET /cuadre and GET /cuadre/pdf (Fase 5b).
 
 The contract under test:
-- @pos_allowed on BOTH routes -- admin and punto_venta get 200, produccion
+- @pos_allowed on BOTH routes -- admin and point_of_sale get 200, production
   403 (the plan is explicit both the HTML view and the PDF export need
   this, unlike /precios which is admin-only).
 - Both params default to today when omitted.
@@ -52,22 +52,22 @@ def _insert_plate(conn, order_id: int, **overrides: object) -> None:
 
 
 class TestCuadreForbidden:
-    def test_get_is_forbidden_for_produccion(self, produccion_client):
+    def test_get_is_forbidden_for_production(self, produccion_client):
         assert produccion_client.get(CUADRE_URL).status_code == 403
 
     def test_get_is_allowed_for_admin(self, authenticated_client):
         assert authenticated_client.get(CUADRE_URL).status_code == 200
 
-    def test_get_is_allowed_for_punto_venta(self, punto_venta_client):
+    def test_get_is_allowed_for_point_of_sale(self, punto_venta_client):
         assert punto_venta_client.get(CUADRE_URL).status_code == 200
 
-    def test_pdf_is_forbidden_for_produccion(self, produccion_client):
+    def test_pdf_is_forbidden_for_production(self, produccion_client):
         assert produccion_client.get(CUADRE_PDF_URL).status_code == 403
 
     def test_pdf_is_allowed_for_admin(self, authenticated_client):
         assert authenticated_client.get(CUADRE_PDF_URL).status_code == 200
 
-    def test_pdf_is_allowed_for_punto_venta(self, punto_venta_client):
+    def test_pdf_is_allowed_for_point_of_sale(self, punto_venta_client):
         assert punto_venta_client.get(CUADRE_PDF_URL).status_code == 200
 
 
@@ -216,10 +216,10 @@ class TestCuadreNavLink:
         html = authenticated_client.get("/records").data.decode()
         assert "Cuadre" in html
 
-    def test_cuadre_link_visible_for_punto_venta(self, punto_venta_client):
+    def test_cuadre_link_visible_for_point_of_sale(self, punto_venta_client):
         html = punto_venta_client.get("/records").data.decode()
         assert "Cuadre" in html
 
-    def test_cuadre_link_hidden_for_produccion(self, produccion_client):
+    def test_cuadre_link_hidden_for_production(self, produccion_client):
         html = produccion_client.get("/records").data.decode()
         assert "Cuadre" not in html
