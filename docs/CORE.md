@@ -281,6 +281,7 @@ de un único archivo de 556 líneas:
 | `db/plates.py` | CRUD de `plates`, incluida `distinct_cities` (agrupada acá por simetría con `distinct_requested_by` de `orders.py`, aunque ambas leen `plates`). |
 | `db/inventory.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
 | `db/customers.py` (Fase 2) | CRUD de `customers` — ver detalle abajo. |
+| `db/ownership_cards.py` (Fase 2 declaraciones) | CRUD de `ownership_cards` (tarjeta de propiedad) y `find_card_conflicts` — ver detalle abajo. |
 | `db/users.py` (Fase 2) | CRUD/lookup de `users` — backend real del login (`app/web/auth.py`), ver detalle abajo. |
 | `db/pricing.py` (Fase 2) | CRUD de `plate_type_prices` — ver detalle abajo. |
 
@@ -357,6 +358,23 @@ si el `plate_type` **no cambia**, el `unit_price` viejo se conserva tal cual (si
 | `get_customer(conn, customer_id)` / `get_customer_by_name(conn, name)` | Lookups puntuales. |
 | `list_customers(conn)` | Todos los clientes, alfabético — embebido entero como JSON en `ingest.html` (Fase 3) para que el JS auto-llene el fieldset de cliente al matchear un nombre tipeado, mismo patrón que `distinct_requested_by`/`distinct_cities` (esta app no tiene endpoints AJAX); también usado por la lista de `/customers` (Fase 6). |
 | `update_customer(conn, customer_id, *, name, type, document_type, ...)` | Sobreescritura REAL, sin `COALESCE` — a diferencia de `resolve_or_create_customer`, esta sí reemplaza (o borra, si se pasa `None`) un atributo que el cliente ya tenía. Es la única función que puede hacerlo (incluidos `address`/`neighborhood`/`municipality`; `transit_license` ya no existe en `customers`); la usa exclusivamente `/customers` (Fase 6), la pantalla de admin para corregir a mano un dato mal tipeado o completar uno de los 191 clientes del backfill histórico. Sin pre-chequeo de unicidad de `name` — un rename que choca con otro cliente existente levanta `psycopg.errors.UniqueViolation`, que la ruta web atrapa para mostrar un error en español en vez de un 500. |
+
+### `db/ownership_cards.py` (Fase 2 declaraciones)
+
+Normaliza las entradas dentro de la capa: licencia con `strip` + mayúsculas,
+placa con `normalize.clean_plate`, textos libres con `strip` (vacío →
+`None`). No pre-chequea unicidad: `UniqueViolation`/`ForeignKeyViolation`
+suben tal cual (la BD es la fuente de verdad). Ver
+[`DATABASE.md`](DATABASE.md) para las columnas y los estados de conflicto.
+
+| Función | Qué hace |
+|---|---|
+| `create_ownership_card(conn, customer_id, *, transit_license, plate_number, engine_number=None, chassis_number=None, vehicle_type=None, registered_in=None, vehicle_brand=None)` | Inserta una tarjeta y devuelve su `id`. |
+| `get_ownership_card(conn, card_id)` | `OwnershipCardRecord` o `None`. |
+| `get_ownership_card_by_transit_license(conn, transit_license)` / `get_ownership_card_by_plate_number(conn, plate_number)` | Lookup exacto por la forma normalizada; `OwnershipCardRecord` o `None`. |
+| `list_ownership_cards_for_customer(conn, customer_id)` | Las tarjetas de un cliente, ordenadas por `id`. |
+| `reassign_ownership_card(conn, card_id, new_customer_id)` | Cambia el dueño de la tarjeta (`UPDATE` simple; acción de admin del flujo de revisión). |
+| `find_card_conflicts(conn, *, customer_id, transit_license, plate_number)` | Solo lectura. Devuelve `CardLookup(by_transit_license, by_plate_number, status)` con `status` en `new` / `same_card` / `other_owner` / `data_mismatch` (constantes `CARD_STATUS_*`). La decisión pura está en `classify_card_lookup`. |
 
 ### `db/users.py` (Fase 2)
 

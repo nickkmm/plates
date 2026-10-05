@@ -1337,3 +1337,10 @@ a ser un dato de la tarjeta de propiedad, no del cliente). Migración
 `app/migrations/0005_customer_types_and_person_fields.sql`. Las menciones
 anteriores de `PERSONA NATURAL`, `OTROS` como tipo de cliente y
 `transit_license` en este documento describen el diseño original.
+
+## Nota: capa de datos de tarjetas de propiedad (Fase 2 del plan de declaraciones)
+
+Existe la tabla `ownership_cards` (migración `0006`) y su capa de datos
+`app/core/db/ownership_cards.py`, incluido `find_card_conflicts`. Todavía no
+hay UI ni flujo de declaraciones que la use; ver `docs/DATABASE.md` y
+`docs/CORE.md`.

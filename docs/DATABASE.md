@@ -338,6 +338,47 @@ las lecturas nunca deben usar `COALESCE(unit_price, 0)`.
 | `version` | TEXT | PK | Nombre del archivo aplicado (ej. `0001_pos_fields.sql`) o, para los pasos de backfill en Python (no son archivos `.sql`), un nombre sintético (`0002_backfill_clientes`, `0003_backfill_usuarios`). **Estos dos strings son literales fijos para siempre** — la Fase 1d renombró las funciones/constantes de Python que los escriben (`backfill_clientes`→`backfill_customers`, `BACKFILL_CLIENTES_VERSION`→`BACKFILL_CUSTOMERS_VERSION`, etc.), pero nunca los *valores* ya grabados en producción: cambiarlos haría que el runner crea que el backfill nunca corrió y lo repita contra datos reales. |
 | `applied_at` | TIMESTAMP | DEFAULT now() | |
 
+### `ownership_cards`
+
+*Agregada en la Fase 2 del plan de declaraciones (migración
+`app/migrations/0006_ownership_cards.sql`).* Es la **tarjeta de propiedad**
+colombiana; su identificador es la **licencia de tránsito**. Un cliente puede
+tener varias tarjetas; cada tarjeta pertenece a exactamente un cliente.
+
+| Columna | Tipo | Constraint/Default | Nota |
+|---|---|---|---|
+| `id` | SERIAL | PK | |
+| `customer_id` | INTEGER | NOT NULL, FK → `customers(id)` | El dueño de la tarjeta. Sin `ON DELETE`. Con índice (`ownership_cards_customer_id_idx`). |
+| `transit_license` | TEXT | NOT NULL UNIQUE | Identificador de la tarjeta. La capa de datos la guarda con `strip` + mayúsculas. |
+| `plate_number` | TEXT | NOT NULL UNIQUE | Guardada con `normalize.clean_plate` (mayúsculas, sin espacios). |
+| `engine_number` | TEXT | nullable | Número de motor. |
+| `chassis_number` | TEXT | nullable | Número de chasis. |
+| `vehicle_type` | TEXT | nullable | Valor esperado: `normalize.PLATE_TYPES`; validado por quien llama, **sin** `CHECK` ni FK en la BD. |
+| `registered_in` | TEXT | nullable | "Matriculado en". |
+| `vehicle_brand` | TEXT | nullable | Marca del vehículo. |
+| `created_at` | TIMESTAMP | DEFAULT now() | |
+
+Son **tres restricciones independientes**, sin clave compuesta: la FK a
+`customers`, `UNIQUE(transit_license)` y `UNIQUE(plate_number)`. Violarlas
+levanta `psycopg.errors.UniqueViolation` / `ForeignKeyViolation`; la capa de
+datos no pre-chequea (la restricción de la BD es la fuente de verdad).
+
+Para saber de antemano qué choca con una declaración,
+`db.find_card_conflicts(conn, customer_id=..., transit_license=..., plate_number=...)`
+(solo lectura) clasifica la terna (cliente, licencia, placa) en uno de estos
+estados, con esta precedencia:
+
+| Estado | Cuándo |
+|---|---|
+| `new` | No existe ninguna tarjeta con esa licencia ni con esa placa. |
+| `data_mismatch` | La licencia y la placa apuntan a tarjetas **distintas**, o solo una de las dos existe (la licencia existe con otra placa, o la placa con otra licencia). Gana sobre `other_owner`. |
+| `other_owner` | Licencia y placa son la **misma** tarjeta, pero su dueño no es `customer_id` (o `customer_id` es `None`). |
+| `same_card` | Misma tarjeta y el dueño es `customer_id`. |
+
+`db.reassign_ownership_card(conn, card_id, new_customer_id)` es el cambio de
+dueño deliberado (acción de administración del flujo de revisión de
+declaraciones): un `UPDATE` simple.
+
 ### `blank_preparations`
 
 | Columna | Tipo | Constraint/Default | Nota |
