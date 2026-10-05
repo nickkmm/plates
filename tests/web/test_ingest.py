@@ -15,6 +15,7 @@ import logging
 from datetime import date
 from decimal import Decimal
 
+import pytest
 from psycopg.rows import tuple_row
 
 from app.core import db
@@ -581,33 +582,60 @@ class TestIngestCustomerCapture:
         authenticated_client.post("/ingest", data={
             "payment_method": "EFECTIVO",
             "order_number": "6600", "order_date": "2026-01-01", "requested_by": "CLIENTE UNO",
-            "customer_type": "PERSONA NATURAL", "customer_document_type": "CÉDULA",
+            "customer_type": "CLIENTE", "customer_document_type": "CÉDULA",
             "customer_document_number": "999", "customer_document_relation": "DUEÑO",
             "customer_phone": "3001112222", "customer_email": "uno@x.com",
-            "customer_transit_license": "LICX",
+            "customer_address": "CALLE 10 # 20-30", "customer_neighborhood": "CENTRO",
+            "customer_municipality": "CALI",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["CUS100"], "plate_to": [""], "quantity": ["1"], "city": [""],
         })
         with db.get_conn() as conn:
             customer = db.get_customer_by_name(conn, "CLIENTE UNO")
         assert customer is not None
-        assert customer.type == "PERSONA NATURAL"
+        assert customer.type == "CLIENTE"
         assert customer.document_type == "CÉDULA"
         assert customer.document_number == "999"
         assert customer.document_relation == "DUEÑO"
         assert customer.phone == "3001112222"
         assert customer.email == "uno@x.com"
-        assert customer.transit_license == "LICX"
+        assert customer.address == "CALLE 10 # 20-30"
+        assert customer.neighborhood == "CENTRO"
+        assert customer.municipality == "CALI"
 
-    def test_document_relation_is_forced_null_unless_cedula(self, authenticated_client, clean_db):
+    def test_gestor_is_saved_with_person_fields_but_no_document_relation(
+        self, authenticated_client, clean_db
+    ):
+        authenticated_client.post("/ingest", data={
+            "payment_method": "EFECTIVO",
+            "order_number": "6604", "order_date": "2026-01-01", "requested_by": "GESTOR UNO",
+            "customer_type": "GESTOR", "customer_document_type": "CÉDULA DE EXTRANJERÍA",
+            "customer_document_number": "E123", "customer_document_relation": "DUEÑO",
+            "customer_address": "AV 3", "customer_neighborhood": "NORTE",
+            "customer_municipality": "PALMIRA",
+            "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": ["CUS104"], "plate_to": [""], "quantity": ["1"], "city": [""],
+        })
+        with db.get_conn() as conn:
+            customer = db.get_customer_by_name(conn, "GESTOR UNO")
+        assert customer is not None
+        assert customer.type == "GESTOR"
+        assert customer.document_type == "CÉDULA DE EXTRANJERÍA"
+        assert customer.document_relation is None
+        assert (customer.address, customer.neighborhood, customer.municipality) == (
+            "AV 3", "NORTE", "PALMIRA",
+        )
+
+    def test_document_relation_is_forced_null_unless_cliente(self, authenticated_client, clean_db):
         """Server-side enforcement: even if a raw POST carries a
-        document_relation, it must never be stored unless document_type is
-        genuinely CÉDULA -- the HTML disables the field for anything else,
-        but the server never trusts that alone."""
+        document_relation, it must never be stored unless the customer type
+        is genuinely CLIENTE -- the HTML disables the field for anything
+        else, but the server never trusts that alone."""
         authenticated_client.post("/ingest", data={
             "payment_method": "EFECTIVO",
             "order_number": "6601", "order_date": "2026-01-01", "requested_by": "CLIENTE DOS",
-            "customer_document_type": "NIT", "customer_document_relation": "DUEÑO",
+            "customer_type": "EMPRESA", "customer_document_type": "NIT",
+            "customer_document_relation": "DUEÑO",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["CUS101"], "plate_to": [""], "quantity": ["1"], "city": [""],
         })
@@ -617,19 +645,28 @@ class TestIngestCustomerCapture:
         assert customer.document_type == "NIT"
         assert customer.document_relation is None
 
-    def test_transit_license_is_forced_null_unless_persona_natural(self, authenticated_client, clean_db):
+    @pytest.mark.parametrize("customer_type", ["EMPRESA", "TRÁNSITO"])
+    def test_person_fields_are_forced_null_for_empresa_and_transito(
+        self, authenticated_client, clean_db, customer_type
+    ):
         authenticated_client.post("/ingest", data={
             "payment_method": "EFECTIVO",
             "order_number": "6602", "order_date": "2026-01-01", "requested_by": "CLIENTE TRES",
-            "customer_type": "EMPRESA", "customer_transit_license": "LICY",
+            "customer_type": customer_type, "customer_phone": "300",
+            "customer_document_relation": "POSEEDOR", "customer_address": "CALLE VIEJA",
+            "customer_neighborhood": "BARRIO VIEJO", "customer_municipality": "CALI",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["CUS102"], "plate_to": [""], "quantity": ["1"], "city": [""],
         })
         with db.get_conn() as conn:
             customer = db.get_customer_by_name(conn, "CLIENTE TRES")
         assert customer is not None
-        assert customer.type == "EMPRESA"
-        assert customer.transit_license is None
+        assert customer.type == customer_type
+        assert customer.phone == "300"  # still kept
+        assert customer.document_relation is None
+        assert customer.address is None
+        assert customer.neighborhood is None
+        assert customer.municipality is None
 
     def test_existing_customer_matched_by_requested_by_is_not_overwritten(
         self, authenticated_client, clean_db
@@ -640,7 +677,7 @@ class TestIngestCustomerCapture:
         authenticated_client.post("/ingest", data={
             "payment_method": "EFECTIVO",
             "order_number": "6603", "order_date": "2026-01-01", "requested_by": "CLIENTE CUATRO",
-            "customer_type": "PERSONA NATURAL", "customer_phone": "999",
+            "customer_type": "CLIENTE", "customer_phone": "999",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["CUS103"], "plate_to": [""], "quantity": ["1"], "city": [""],
         })
@@ -650,6 +687,31 @@ class TestIngestCustomerCapture:
         assert customer.type == "EMPRESA"
         assert customer.phone == "111"
 
+
+
+class TestIngestCustomerFieldset:
+    def test_form_has_person_fields_and_no_transit_license(self, authenticated_client, clean_db):
+        html = authenticated_client.get("/ingest").data.decode()
+        for name in ("customer_address", "customer_neighborhood", "customer_municipality"):
+            assert f'name="{name}"' in html
+        assert "customer_transit_license" not in html
+        assert "Licencia de tránsito" not in html
+        for ct in ("TRÁNSITO", "EMPRESA", "GESTOR", "CLIENTE"):
+            assert f'<option value="{ct}"' in html
+        assert 'value="PERSONA NATURAL"' not in html
+
+    def test_embedded_customer_lookup_carries_person_fields(self, authenticated_client, clean_db):
+        with db.get_conn() as conn:
+            db.resolve_or_create_customer(
+                conn, "LOOKUP UNO", type="CLIENTE", address="CALLE 1", neighborhood="CENTRO",
+                municipality="CALI",
+            )
+            conn.commit()
+        html = authenticated_client.get("/ingest").data.decode()
+        assert '"address": "CALLE 1"' in html
+        assert '"neighborhood": "CENTRO"' in html
+        assert '"municipality": "CALI"' in html
+        assert "transit_license" not in html
 
 
 class TestIngestPlateLineFieldsPersist:
@@ -679,10 +741,11 @@ class TestIngestStickyRoundTrip:
             "order_number": "6800", "order_date": "2026-01-01",
             "requested_by": "CLIENTE ABC",
             "receipt_type": "FACTURA", "receipt_number": "FAC-1",
-            "customer_type": "PERSONA NATURAL", "customer_document_type": "CÉDULA",
+            "customer_type": "CLIENTE", "customer_document_type": "CÉDULA",
             "customer_document_number": "111", "customer_document_relation": "DUEÑO",
             "customer_phone": "3000000000", "customer_email": "abc@x.com",
-            "customer_transit_license": "LIC-9",
+            "customer_address": "CALLE 8 # 9-10", "customer_neighborhood": "LA FLORA",
+            "customer_municipality": "YUMBO",
             "payment_method": "TRANSFERENCIA",
             "tracking_number": "GUIA-1", "client_order_number": "PED-1",
             "delivery_date": "2026-01-10", "payment_date": "2026-01-02",
@@ -703,7 +766,7 @@ class TestIngestStickyRoundTrip:
         for expected in [
             'value="6800"', 'value="CLIENTE ABC"', 'value="FAC-1"',
             'value="111"', 'value="3000000000"', 'value="abc@x.com"',
-            'value="LIC-9"', 'value="GUIA-1"', 'value="PED-1"',
+            'value="CALLE 8 # 9-10"', 'value="LA FLORA"', 'value="YUMBO"', 'value="GUIA-1"', 'value="PED-1"',
             'value="2026-01-10"', 'value="2026-01-02"', 'value="ANA"', 'value="LUIS"',
             'value="obs"', 'value="AAA900"', 'value="CALI"', 'value="MAZDA"', 'value="150000"',
         ]:
@@ -711,7 +774,7 @@ class TestIngestStickyRoundTrip:
 
         assert '<option value="FACTURA" selected>' in html
         assert '<option value="TRANSFERENCIA" selected>' in html
-        assert '<option value="PERSONA NATURAL" selected>' in html
+        assert '<option value="CLIENTE" selected>' in html
         assert '<option value="CÉDULA" selected>' in html
         assert '<option value="DUEÑO" selected>' in html
         assert '<option value="DETERIORO" selected>' in html

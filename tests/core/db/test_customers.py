@@ -29,7 +29,9 @@ class TestResolveOrCreateCustomer:
         assert customer.document_relation is None
         assert customer.phone is None
         assert customer.email is None
-        assert customer.transit_license is None
+        assert customer.address is None
+        assert customer.neighborhood is None
+        assert customer.municipality is None
 
     def test_second_call_with_same_name_returns_same_id(self, db_conn):
         first = db.resolve_or_create_customer(db_conn, "MUVA")
@@ -63,19 +65,44 @@ class TestResolveOrCreateCustomer:
         """Fase 3: the /ingest 'cliente' fieldset writes attributes for a
         genuinely brand-new customer through these keyword args."""
         customer_id = db.resolve_or_create_customer(
-            db_conn, "CLIENTE NUEVO", type="PERSONA NATURAL", document_type="CÉDULA",
+            db_conn, "CLIENTE NUEVO", type="CLIENTE", document_type="CÉDULA",
             document_number="123456", document_relation="DUEÑO", phone="3001112233",
-            email="a@b.com", transit_license="LIC1",
+            email="a@b.com", address="CRA 1 # 2-3", neighborhood="CENTRO",
+            municipality="CALI",
         )
         customer = db.get_customer(db_conn, customer_id)
         assert customer is not None
-        assert customer.type == "PERSONA NATURAL"
+        assert customer.type == "CLIENTE"
         assert customer.document_type == "CÉDULA"
         assert customer.document_number == "123456"
         assert customer.document_relation == "DUEÑO"
         assert customer.phone == "3001112233"
         assert customer.email == "a@b.com"
-        assert customer.transit_license == "LIC1"
+        assert customer.address == "CRA 1 # 2-3"
+        assert customer.neighborhood == "CENTRO"
+        assert customer.municipality == "CALI"
+
+    def test_existing_person_fields_are_never_overwritten_but_null_ones_are_filled(self, db_conn):
+        first_id = db.resolve_or_create_customer(
+            db_conn, "PERSONA X", type="CLIENTE", address="CALLE 1", municipality="CALI",
+        )
+        second_id = db.resolve_or_create_customer(
+            db_conn, "PERSONA X", address="CALLE 99", neighborhood="EL BOSQUE",
+            municipality="BOGOTÁ",
+        )
+        assert first_id == second_id
+        customer = db.get_customer(db_conn, first_id)
+        assert customer is not None
+        assert customer.address == "CALLE 1"  # already set -- untouched
+        assert customer.municipality == "CALI"  # already set -- untouched
+        assert customer.neighborhood == "EL BOSQUE"  # was NULL -- filled in
+
+    def test_a_null_person_field_never_blanks_out_an_existing_value(self, db_conn):
+        first_id = db.resolve_or_create_customer(db_conn, "PERSONA Y", address="CALLE 1")
+        db.resolve_or_create_customer(db_conn, "PERSONA Y")
+        customer = db.get_customer(db_conn, first_id)
+        assert customer is not None
+        assert customer.address == "CALLE 1"
 
     def test_existing_customer_attributes_are_never_overwritten(self, db_conn):
         """An attribute the customer ALREADY has a value for must never be
@@ -86,7 +113,7 @@ class TestResolveOrCreateCustomer:
             db_conn, "PTO.V", type="EMPRESA", phone="3009998877",
         )
         second_id = db.resolve_or_create_customer(
-            db_conn, "PTO.V", type="PERSONA NATURAL", phone="3000000000",
+            db_conn, "PTO.V", type="CLIENTE", phone="3000000000",
         )
         assert first_id == second_id
         customer = db.get_customer(db_conn, first_id)
@@ -102,7 +129,7 @@ class TestResolveOrCreateCustomer:
         attribute the customer already has a value for."""
         first_id = db.resolve_or_create_customer(db_conn, "PTO.V", type="EMPRESA")
         second_id = db.resolve_or_create_customer(
-            db_conn, "PTO.V", type="PERSONA NATURAL", phone="3001234567",
+            db_conn, "PTO.V", type="CLIENTE", phone="3001234567",
         )
         assert first_id == second_id
         customer = db.get_customer(db_conn, first_id)
@@ -168,40 +195,47 @@ class TestUpdateCustomer:
             db_conn, "PTO.V", type="EMPRESA", phone="3001112233",
         )
         db.update_customer(
-            db_conn, customer_id, name="PTO.V", type="PERSONA NATURAL",
+            db_conn, customer_id, name="PTO.V", type="CLIENTE",
             document_type="CÉDULA", document_number="999", document_relation="DUEÑO",
-            phone="3009998877", email="nuevo@correo.com", transit_license="LIC9",
+            phone="3009998877", email="nuevo@correo.com", address="CALLE 9", neighborhood="NORTE",
+            municipality="PALMIRA",
         )
         customer = db.get_customer(db_conn, customer_id)
         assert customer is not None
-        assert customer.type == "PERSONA NATURAL"
+        assert customer.type == "CLIENTE"
         assert customer.document_type == "CÉDULA"
         assert customer.document_number == "999"
         assert customer.document_relation == "DUEÑO"
         assert customer.phone == "3009998877"
         assert customer.email == "nuevo@correo.com"
-        assert customer.transit_license == "LIC9"
+        assert customer.address == "CALLE 9"
+        assert customer.neighborhood == "NORTE"
+        assert customer.municipality == "PALMIRA"
 
     def test_can_blank_out_a_previously_set_attribute(self, db_conn):
         """A real overwrite, not a COALESCE -- passing None for an attribute
         that already had a value must actually clear it, unlike
         resolve_or_create_customer."""
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V", phone="3001112233")
+        customer_id = db.resolve_or_create_customer(
+            db_conn, "PTO.V", phone="3001112233", address="CALLE 1", municipality="CALI",
+        )
         db.update_customer(
             db_conn, customer_id, name="PTO.V", type=None, document_type=None,
             document_number=None, document_relation=None, phone=None, email=None,
-            transit_license=None,
+            address=None, neighborhood=None, municipality=None,
         )
         customer = db.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.phone is None
+        assert customer.address is None
+        assert customer.municipality is None
 
     def test_can_rename_the_customer(self, db_conn):
         customer_id = db.resolve_or_create_customer(db_conn, "PTO.V VIEJO")
         db.update_customer(
             db_conn, customer_id, name="PTO.V NUEVO", type=None, document_type=None,
             document_number=None, document_relation=None, phone=None, email=None,
-            transit_license=None,
+            address=None, neighborhood=None, municipality=None,
         )
         customer = db.get_customer(db_conn, customer_id)
         assert customer is not None
@@ -215,7 +249,7 @@ class TestUpdateCustomer:
             db.update_customer(
                 db_conn, other_id, name="MUVA GRANADA", type=None, document_type=None,
                 document_number=None, document_relation=None, phone=None, email=None,
-                transit_license=None,
+                address=None, neighborhood=None, municipality=None,
             )
         db_conn.rollback()
 

@@ -25,7 +25,7 @@
 > `usuarios`, y cada columna Spanish-named de `production_orders`/`plates`
 > (mapeo completo más abajo, sección de `production_orders`/`plates`) —
 > tanto en producción como en `init.sql` para instalaciones nuevas. Los
-> *valores* guardados (nombres de clientes, `PERSONA NATURAL`/`CÉDULA`/
+> *valores* guardados (nombres de clientes, `CLIENTE`/`CÉDULA`/
 > `DUEÑO`, `EFECTIVO`, etc.) no cambiaron — son datos de negocio en
 > español, no identificadores. **Excepción posterior**: `users.role` sí
 > tuvo sus valores traducidos a inglés después (`app/migrations/
@@ -92,13 +92,15 @@ erDiagram
     customers {
         int id PK
         text name "NOT NULL UNIQUE — canónico, ver rarezas"
-        text type "nullable"
+        text type "nullable — TRÁNSITO/EMPRESA/GESTOR/CLIENTE"
         text document_type "nullable"
         text document_number "nullable"
-        text document_relation "nullable — solo si document_type=CÉDULA"
+        text document_relation "nullable — solo si type=CLIENTE"
         text phone "nullable"
         text email "nullable"
-        text transit_license "nullable — solo si type=PERSONA NATURAL"
+        text address "nullable — solo si type=GESTOR o CLIENTE"
+        text neighborhood "nullable — solo si type=GESTOR o CLIENTE"
+        text municipality "nullable — solo si type=GESTOR o CLIENTE"
         timestamp created_at
     }
     users {
@@ -226,14 +228,30 @@ ahora con atributos propios.
 |---|---|---|---|
 | `id` | SERIAL | PK | |
 | `name` | TEXT | NOT NULL UNIQUE | Forma **canónica**: `normalize.normalize_requested_by(valor)`. Ver rarezas — es la primera `UNIQUE` del esquema aparte de las PK. Antes de la Fase 1c, esta columna se llamaba `nombre`. |
-| `type` | TEXT | nullable | Valor esperado: `normalize.CUSTOMER_TYPES` (`PERSONA NATURAL`/`TRÁNSITO`/`EMPRESA`/`OTROS`). No confundir con los *valores* de `plates.reason` ni con `document_type`. |
-| `document_type` | TEXT | nullable | Valor esperado: `normalize.DOCUMENT_TYPES` (`NIT`/`CÉDULA`/`OTROS`). |
+| `type` | TEXT | nullable | Valor esperado: `normalize.CUSTOMER_TYPES` (`TRÁNSITO`/`EMPRESA`/`GESTOR`/`CLIENTE`). `CLIENTE` es el antiguo `PERSONA NATURAL` (renombrado por la migración `0005`); `OTROS` ya no existe (esas filas pasaron a `NULL`). No confundir con los *valores* de `plates.reason` ni con `document_type`. |
+| `document_type` | TEXT | nullable | Valor esperado: `normalize.DOCUMENT_TYPES` (`NIT`/`CÉDULA`/`CÉDULA DE EXTRANJERÍA`/`OTROS`). |
 | `document_number` | TEXT | nullable | `TEXT` siempre, aunque a veces sea numérico — un NIT trae dígito de verificación/guiones. |
-| `document_relation` | TEXT | nullable | Solo tiene sentido si `document_type = 'CÉDULA'`; debe quedar `NULL` en cualquier otro caso (se refuerza en servidor, no solo en el HTML). |
+| `document_relation` | TEXT | nullable | Propietario/Poseedor (`DUEÑO`/`POSEEDOR`/`OTROS`). Solo tiene sentido si `type = 'CLIENTE'`; debe quedar `NULL` en cualquier otro caso (se refuerza en servidor, no solo en el HTML). |
 | `phone` | TEXT | nullable | |
 | `email` | TEXT | nullable | |
-| `transit_license` | TEXT | nullable | Solo tiene sentido si `type = 'PERSONA NATURAL'`; debe quedar `NULL` en cualquier otro caso, mismo refuerzo en servidor. |
+| `address` | TEXT | nullable | Dirección. Solo tiene sentido si `type` es `GESTOR` o `CLIENTE`; `NULL` para `TRÁNSITO`/`EMPRESA`, mismo refuerzo en servidor (`customer_fields_from_form`). Agregada por la migración `0005`. |
+| `neighborhood` | TEXT | nullable | Barrio. Misma regla que `address`. |
+| `municipality` | TEXT | nullable | Municipio. Misma regla que `address`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
+
+**Migración `0005` (`app/migrations/0005_customer_types_and_person_fields.sql`)**:
+agrega `address`/`neighborhood`/`municipality`, renombra `PERSONA NATURAL` →
+`CLIENTE` (10 filas en producción), pasa `OTROS` → `NULL` y elimina la columna
+`transit_license` (en producción 0 de 205 clientes tenían valor, no se pierde
+nada: el número de licencia pasa a identificar la tarjeta de propiedad del
+vehículo, no al cliente). Idempotente (`ADD COLUMN IF NOT EXISTS`, `UPDATE ...
+WHERE`, `DROP COLUMN IF EXISTS`).
+
+**Qué campos aplican según `type`**: `TRÁNSITO` y `EMPRESA` guardan solo nombre,
+documento (tipo/número), teléfono y correo. `GESTOR` agrega dirección, barrio y
+municipio. `CLIENTE` agrega además Propietario/Poseedor (`document_relation`).
+El HTML deshabilita los campos que no aplican y el servidor los fuerza a `NULL`
+de nuevo aunque un POST crudo los traiga.
 
 Todos los clientes backfillados desde `production_orders` histórico
 quedaron con todos estos atributos en `NULL` salvo `name` — son

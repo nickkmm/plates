@@ -211,8 +211,9 @@ def normalize_plate_type(value: str | None) -> str | None:
 # form (Fase 3), never free text, so normalize_choice below only ever needs
 # to reconcile case/accent variance, never invent a value it wasn't given.
 RECEIPT_TYPES = ("FACTURA", "RECIBO", "OTROS")
-CUSTOMER_TYPES = ("PERSONA NATURAL", "TRÁNSITO", "EMPRESA", "OTROS")
-DOCUMENT_TYPES = ("NIT", "CÉDULA", "OTROS")
+# CLIENTE is the old PERSONA NATURAL (renamed by migration 0005); OTROS is gone.
+CUSTOMER_TYPES = ("TRÁNSITO", "EMPRESA", "GESTOR", "CLIENTE")
+DOCUMENT_TYPES = ("NIT", "CÉDULA", "CÉDULA DE EXTRANJERÍA", "OTROS")
 # The plan's draft data had "POSEDOR" -- a typo; the real word is POSEEDOR.
 DOCUMENT_RELATIONS = ("DUEÑO", "POSEEDOR", "OTROS")
 PAYMENT_METHODS = ("EFECTIVO", "TRANSFERENCIA", "CRÉDITO", "OTROS")

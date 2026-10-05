@@ -192,7 +192,9 @@ def order_detail(conn: psycopg.Connection[DictRow], order_id: int) -> tuple[dict
                    c.document_number AS customer_document_number,
                    c.document_relation AS customer_document_relation,
                    c.phone AS customer_phone, c.email AS customer_email,
-                   c.transit_license AS customer_transit_license
+                   c.address AS customer_address,
+                   c.neighborhood AS customer_neighborhood,
+                   c.municipality AS customer_municipality
             FROM production_orders o
             LEFT JOIN customers c ON c.id = o.customer_id
             WHERE o.id = %s

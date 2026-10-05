@@ -31,7 +31,7 @@
   {% include "_nav.html" %}
   <h1>Clientes</h1>
   <p class="muted">
-    Datos de contacto de cada cliente (tipo, documento, teléfono, correo). Se completan solos
+    Datos de cada cliente (tipo, documento, teléfono, correo y, para gestores y clientes, dirección, barrio y municipio). Se completan solos
     la primera vez que alguien los tipea en una orden nueva — acá se pueden corregir a mano
     en cualquier momento.
   </p>
@@ -49,7 +49,7 @@
     </thead>
     <tbody>
       {% for c in rows %}
-      {% set has_data = c.type or c.document_number or c.phone or c.email %}
+      {% set has_data = c.type or c.document_number or c.phone or c.email or c.address or c.neighborhood or c.municipality %}
       <tr>
         <td>{{ c.name }}</td>
         <td>{{ c.type or '—' }}</td>

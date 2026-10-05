@@ -42,27 +42,30 @@
       <div class="header">
         <label>Nombre<input type="text" name="name" value="{{ customer.name }}" required></label>
         <label>Tipo de cliente
-          <select name="customer_type" id="customerType" onchange="toggleTransitLicense()">
+          <select name="customer_type" id="customerType" onchange="toggleCustomerFields()">
             <option value="" {% if not customer.type %}selected{% endif %}>— sin definir —</option>
             {% for ct in customer_types %}<option value="{{ ct }}" {% if customer.type==ct %}selected{% endif %}>{{ ct }}</option>{% endfor %}
           </select>
         </label>
         <label>Tipo de documento
-          <select name="customer_document_type" id="documentType" onchange="toggleDocumentRelation()">
+          <select name="customer_document_type" id="documentType">
             <option value="" {% if not customer.document_type %}selected{% endif %}>— sin definir —</option>
             {% for dt in document_types %}<option value="{{ dt }}" {% if customer.document_type==dt %}selected{% endif %}>{{ dt }}</option>{% endfor %}
           </select>
         </label>
         <label>N° de documento<input type="text" name="customer_document_number" id="documentNumber" value="{{ customer.document_number or '' }}"></label>
-        <label>Relación con el documento
-          <select name="customer_document_relation" id="documentRelation" {% if customer.document_type!='CÉDULA' %}disabled{% endif %}>
+        <label>Propietario/Poseedor
+          <select name="customer_document_relation" id="documentRelation" {% if customer.type!='CLIENTE' %}disabled{% endif %}>
             <option value="" {% if not customer.document_relation %}selected{% endif %}>— sin definir —</option>
             {% for dr in document_relations %}<option value="{{ dr }}" {% if customer.document_relation==dr %}selected{% endif %}>{{ dr }}</option>{% endfor %}
           </select>
         </label>
         <label>Teléfono<input type="text" name="customer_phone" value="{{ customer.phone or '' }}"></label>
         <label>Correo<input type="email" name="customer_email" value="{{ customer.email or '' }}"></label>
-        <label>Licencia de tránsito<input type="text" name="customer_transit_license" id="transitLicense" value="{{ customer.transit_license or '' }}" {% if customer.type!='PERSONA NATURAL' %}disabled{% endif %}></label>
+        {% set person_enabled = customer.type in ('GESTOR', 'CLIENTE') %}
+        <label>Dirección<input type="text" name="customer_address" id="customerAddress" value="{{ customer.address or '' }}" {% if not person_enabled %}disabled{% endif %}></label>
+        <label>Barrio<input type="text" name="customer_neighborhood" id="customerNeighborhood" value="{{ customer.neighborhood or '' }}" {% if not person_enabled %}disabled{% endif %}></label>
+        <label>Municipio<input type="text" name="customer_municipality" id="customerMunicipality" value="{{ customer.municipality or '' }}" {% if not person_enabled %}disabled{% endif %}></label>
       </div>
     </fieldset>
 
@@ -73,17 +76,20 @@
   </form>
 
   <script>
-    function toggleDocumentRelation() {
-      const enabled = document.getElementById('documentType').value === 'CÉDULA';
+    // Propietario/Poseedor solo para CLIENTE; Dirección/Barrio/Municipio
+    // solo para GESTOR o CLIENTE (el servidor lo vuelve a forzar).
+    function toggleCustomerFields() {
+      const type = document.getElementById('customerType').value;
+      const relationOn = type === 'CLIENTE';
+      const personOn = type === 'GESTOR' || type === 'CLIENTE';
       const sel = document.getElementById('documentRelation');
-      sel.disabled = !enabled;
-      if (!enabled) sel.value = '';
-    }
-    function toggleTransitLicense() {
-      const enabled = document.getElementById('customerType').value === 'PERSONA NATURAL';
-      const inp = document.getElementById('transitLicense');
-      inp.disabled = !enabled;
-      if (!enabled) inp.value = '';
+      sel.disabled = !relationOn;
+      if (!relationOn) sel.value = '';
+      ['customerAddress', 'customerNeighborhood', 'customerMunicipality'].forEach(id => {
+        const inp = document.getElementById(id);
+        inp.disabled = !personOn;
+        if (!personOn) inp.value = '';
+      });
     }
   </script>
 </body>

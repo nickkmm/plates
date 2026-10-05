@@ -1323,6 +1323,21 @@ default.
   cargar otra con el mismo nombre de cliente y confirmar que autocompleta,
   revisar `/cuadre` de ese día.
 
+---
+
+## Actualización: tipos de cliente y datos de persona
+
+`customers.type` ahora tiene 4 valores (`normalize.CUSTOMER_TYPES`):
+`TRÁNSITO`, `EMPRESA`, `GESTOR` y `CLIENTE` (el antiguo `PERSONA NATURAL`
+renombrado; `OTROS` desapareció). `DOCUMENT_TYPES` suma `CÉDULA DE EXTRANJERÍA`.
+Se agregaron las columnas `address`, `neighborhood` y `municipality` (solo para
+`GESTOR` y `CLIENTE`), Propietario/Poseedor (`document_relation`) aplica solo a
+`CLIENTE`, y se eliminó `customers.transit_license` (el número de licencia pasa
+a ser un dato de la tarjeta de propiedad, no del cliente). Migración
+`app/migrations/0005_customer_types_and_person_fields.sql`. Las menciones
+anteriores de `PERSONA NATURAL`, `OTROS` como tipo de cliente y
+`transit_license` en este documento describen el diseño original.
+
 ## Nota: capa de datos de tarjetas de propiedad (Fase 2 del plan de declaraciones)
 
 Existe la tabla `ownership_cards` (migración `0006`) y su capa de datos

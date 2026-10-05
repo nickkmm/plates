@@ -604,10 +604,12 @@ class TestPosVocabularies:
         assert RECEIPT_TYPES == ("FACTURA", "RECIBO", "OTROS")
 
     def test_customer_types(self):
-        assert CUSTOMER_TYPES == ("PERSONA NATURAL", "TRÁNSITO", "EMPRESA", "OTROS")
+        assert CUSTOMER_TYPES == ("TRÁNSITO", "EMPRESA", "GESTOR", "CLIENTE")
+        assert "OTROS" not in CUSTOMER_TYPES
+        assert "PERSONA NATURAL" not in CUSTOMER_TYPES
 
     def test_document_types(self):
-        assert DOCUMENT_TYPES == ("NIT", "CÉDULA", "OTROS")
+        assert DOCUMENT_TYPES == ("NIT", "CÉDULA", "CÉDULA DE EXTRANJERÍA", "OTROS")
 
     def test_document_relations_fixes_the_draft_typo(self):
         """The plan's draft data had 'POSEDOR' -- confirmed as a typo for
@@ -663,6 +665,10 @@ class TestNormalizeChoice:
         vocabularies."""
         assert normalize_choice("nit", DOCUMENT_TYPES) == "NIT"
         assert normalize_choice("empresa", CUSTOMER_TYPES) == "EMPRESA"
+        assert normalize_choice("gestor", CUSTOMER_TYPES) == "GESTOR"
+        assert normalize_choice("cliente", CUSTOMER_TYPES) == "CLIENTE"
+        assert normalize_choice("persona natural", CUSTOMER_TYPES) is None
+        assert normalize_choice("cedula de extranjeria", DOCUMENT_TYPES) == "CÉDULA DE EXTRANJERÍA"
         assert normalize_choice("dueno", DOCUMENT_RELATIONS) == "DUEÑO"
         assert normalize_choice("perdida", REASONS) == "PÉRDIDA"
         assert normalize_choice("recibo", RECEIPT_TYPES) == "RECIBO"

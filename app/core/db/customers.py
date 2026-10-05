@@ -36,12 +36,14 @@ class CustomerRecord:
     document_relation: str | None
     phone: str | None
     email: str | None
-    transit_license: str | None
+    address: str | None
+    neighborhood: str | None
+    municipality: str | None
 
 
 _SELECT_COLUMNS = (
     "id, name, type, document_type, document_number, document_relation, "
-    "phone, email, transit_license"
+    "phone, email, address, neighborhood, municipality"
 )
 
 
@@ -78,7 +80,8 @@ def resolve_or_create_customer(
     conn: psycopg.Connection[DictRow], name: str, *,
     type: str | None = None, document_type: str | None = None, document_number: str | None = None,
     document_relation: str | None = None, phone: str | None = None, email: str | None = None,
-    transit_license: str | None = None,
+    address: str | None = None, neighborhood: str | None = None,
+    municipality: str | None = None,
 ) -> int:
     """Return the id of the customer canonically named `name`, creating a
     row if none exists yet.
@@ -117,9 +120,9 @@ def resolve_or_create_customer(
             """
             INSERT INTO customers (
                 name, type, document_type, document_number, document_relation,
-                phone, email, transit_license
+                phone, email, address, neighborhood, municipality
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (name) DO UPDATE SET
                 name = EXCLUDED.name,
                 type = COALESCE(customers.type, EXCLUDED.type),
@@ -128,11 +131,13 @@ def resolve_or_create_customer(
                 document_relation = COALESCE(customers.document_relation, EXCLUDED.document_relation),
                 phone = COALESCE(customers.phone, EXCLUDED.phone),
                 email = COALESCE(customers.email, EXCLUDED.email),
-                transit_license = COALESCE(customers.transit_license, EXCLUDED.transit_license)
+                address = COALESCE(customers.address, EXCLUDED.address),
+                neighborhood = COALESCE(customers.neighborhood, EXCLUDED.neighborhood),
+                municipality = COALESCE(customers.municipality, EXCLUDED.municipality)
             RETURNING id
             """,
             (canonical, type, document_type, document_number, document_relation,
-             phone, email, transit_license),
+             phone, email, address, neighborhood, municipality),
         )
         row = cur.fetchone()
         assert row is not None, "INSERT ... RETURNING id always yields a row"
@@ -143,7 +148,7 @@ def update_customer(
     conn: psycopg.Connection[DictRow], customer_id: int, *, name: str,
     type: str | None, document_type: str | None, document_number: str | None,
     document_relation: str | None, phone: str | None, email: str | None,
-    transit_license: str | None,
+    address: str | None, neighborhood: str | None, municipality: str | None,
 ) -> None:
     """Overwrite every attribute of an existing customer -- the deliberate
     admin-edit counterpart to resolve_or_create_customer's passive,
@@ -152,7 +157,10 @@ def update_customer(
     (fixing a typo, correcting a wrong phone, filling in one of the 191
     pre-POS historical rows by hand) -- everywhere else (ingestion.py,
     record_save) only ever resolves/creates by name, never rewrites
-    attributes. Used by the /customers admin screen (Fase 6).
+    attributes (including the person fields address/neighborhood/
+    municipality, which only apply to GESTOR/CLIENTE -- the caller, see
+    app.web.helpers.customer_fields_from_form, already passes None for the
+    other types). Used by the /customers admin screen (Fase 6).
 
     `name` is expected already-canonical (normalize_requested_by applied by
     the caller, same as resolve_or_create_customer) -- passed through
@@ -170,9 +178,10 @@ def update_customer(
             """
             UPDATE customers SET
                 name = %s, type = %s, document_type = %s, document_number = %s,
-                document_relation = %s, phone = %s, email = %s, transit_license = %s
+                document_relation = %s, phone = %s, email = %s,
+                address = %s, neighborhood = %s, municipality = %s
             WHERE id = %s
             """,
             (name, type, document_type, document_number, document_relation,
-             phone, email, transit_license, customer_id),
+             phone, email, address, neighborhood, municipality, customer_id),
         )
