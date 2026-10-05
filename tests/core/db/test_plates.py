@@ -583,3 +583,42 @@ class TestDeletePlate:
     def test_nonexistent_plate_id_is_a_silent_noop(self, db_conn):
         db.delete_plate(db_conn, 999999)  # must not raise
 
+
+
+class TestLastFabricationDate:
+    def _plate(self, db_conn, order_number: str, order_date: date, plate_number: str = "ABC123",
+               **overrides: object) -> None:
+        order_id = _insert_order(db_conn, order_number=order_number, order_date=order_date,
+                                 requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                        row=make_row(plate_number=plate_number, **overrides),
+                        is_possible_duplicate=False)
+
+    def test_none_when_plate_never_made(self, db_conn):
+        assert db.last_fabrication_date(db_conn, "ABC123") is None
+
+    def test_returns_latest_order_date(self, db_conn):
+        self._plate(db_conn, "1", date(2026, 1, 10))
+        self._plate(db_conn, "2", date(2026, 3, 5))
+        self._plate(db_conn, "3", date(2026, 2, 1))
+        assert db.last_fabrication_date(db_conn, "ABC123") == date(2026, 3, 5)
+
+    def test_exact_plate_number_only_and_input_is_cleaned(self, db_conn):
+        self._plate(db_conn, "1", date(2026, 1, 10), plate_number="ABC124")
+        assert db.last_fabrication_date(db_conn, "ABC123") is None
+        assert db.last_fabrication_date(db_conn, " abc 124 ") == date(2026, 1, 10)
+
+    def test_ignores_voided_plates(self, db_conn):
+        self._plate(db_conn, "1", date(2026, 1, 10))
+        self._plate(db_conn, "2", date(2026, 6, 1), is_voided=True)
+        assert db.last_fabrication_date(db_conn, "ABC123") == date(2026, 1, 10)
+
+    def test_ignores_annulled_plates(self, db_conn):
+        self._plate(db_conn, "1", date(2026, 1, 10))
+        self._plate(db_conn, "2", date(2026, 6, 1), is_plate_annulled=True)
+        assert db.last_fabrication_date(db_conn, "ABC123") == date(2026, 1, 10)
+
+    def test_none_when_only_voided_or_annulled(self, db_conn):
+        self._plate(db_conn, "1", date(2026, 1, 10), is_voided=True)
+        self._plate(db_conn, "2", date(2026, 2, 10), is_plate_annulled=True)
+        assert db.last_fabrication_date(db_conn, "ABC123") is None

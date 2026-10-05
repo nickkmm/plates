@@ -50,6 +50,8 @@ This package replaces what used to be a single flat db.py, split by table:
     customers.py  -- customers reads/writes (Fase 2).
     ownership_cards.py -- ownership_cards ("tarjeta de propiedad") reads/writes
                      and the find_card_conflicts classifier.
+    declarations.py -- declarations (sworn declarations of the public form)
+                     reads/writes; the decision rules live in app/core/declarations.py.
     users.py      -- users reads/writes (Fase 2; backs app/web/auth.py).
     pricing.py    -- plate_type_prices reads/writes (Fase 2).
 Every public function each submodule exposes is re-exported below,
@@ -74,6 +76,14 @@ from app.core.db.customers import (
     list_customers,
     resolve_or_create_customer,
     update_customer,
+)
+from app.core.db.declarations import (
+    DeclarationRecord,
+    count_recent_by_ip,
+    get_declaration,
+    insert_declaration,
+    list_declarations,
+    set_declaration_review,
 )
 from app.core.db.inventory import (
     insert_blank_preparation,
@@ -114,6 +124,7 @@ from app.core.db.plates import (
     existing_plate_numbers,
     find_orders_for_plate,
     insert_plate,
+    last_fabrication_date,
     resolve_plate,
     review_rows,
     search_plates_by_number,
@@ -130,11 +141,13 @@ __all__ = [
     "CARD_STATUS_SAME_CARD",
     "CardLookup",
     "CustomerRecord",
+    "DeclarationRecord",
     "OrderSummary",
     "OwnershipCardRecord",
     "PriceRow",
     "UserRecord",
     "classify_card_lookup",
+    "count_recent_by_ip",
     "create_ownership_card",
     "create_user",
     "current_prices",
@@ -149,16 +162,20 @@ __all__ = [
     "get_conn",
     "get_customer",
     "get_customer_by_name",
+    "get_declaration",
     "get_ownership_card",
     "get_ownership_card_by_plate_number",
     "get_ownership_card_by_transit_license",
     "get_user_by_id",
     "get_user_by_username",
     "insert_blank_preparation",
+    "insert_declaration",
     "insert_order",
     "insert_plate",
     "inventory_view",
+    "last_fabrication_date",
     "list_customers",
+    "list_declarations",
     "list_ownership_cards_for_customer",
     "list_users",
     "order_detail",
@@ -172,6 +189,7 @@ __all__ = [
     "review_rows",
     "search_orders_by_number",
     "search_plates_by_number",
+    "set_declaration_review",
     "set_price",
     "update_customer",
     "update_order",
