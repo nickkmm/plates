@@ -1322,3 +1322,10 @@ default.
 - Verificación manual en Docker: cargar una orden nueva con cliente nuevo,
   cargar otra con el mismo nombre de cliente y confirmar que autocompleta,
   revisar `/cuadre` de ese día.
+
+## Nota: capa de datos de tarjetas de propiedad (Fase 2 del plan de declaraciones)
+
+Existe la tabla `ownership_cards` (migración `0006`) y su capa de datos
+`app/core/db/ownership_cards.py`, incluido `find_card_conflicts`. Todavía no
+hay UI ni flujo de declaraciones que la use; ver `docs/DATABASE.md` y
+`docs/CORE.md`.

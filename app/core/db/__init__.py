@@ -48,6 +48,8 @@ This package replaces what used to be a single flat db.py, split by table:
                      with orders.distinct_requested_by).
     inventory.py  -- blank_preparations / inventory_categories reads/writes.
     customers.py  -- customers reads/writes (Fase 2).
+    ownership_cards.py -- ownership_cards ("tarjeta de propiedad") reads/writes
+                     and the find_card_conflicts classifier.
     users.py      -- users reads/writes (Fase 2; backs app/web/auth.py).
     pricing.py    -- plate_type_prices reads/writes (Fase 2).
 Every public function each submodule exposes is re-exported below,
@@ -90,6 +92,22 @@ from app.core.db.orders import (
     search_orders_by_number,
     update_order,
 )
+from app.core.db.ownership_cards import (
+    CARD_STATUS_DATA_MISMATCH,
+    CARD_STATUS_NEW,
+    CARD_STATUS_OTHER_OWNER,
+    CARD_STATUS_SAME_CARD,
+    CardLookup,
+    OwnershipCardRecord,
+    classify_card_lookup,
+    create_ownership_card,
+    find_card_conflicts,
+    get_ownership_card,
+    get_ownership_card_by_plate_number,
+    get_ownership_card_by_transit_license,
+    list_ownership_cards_for_customer,
+    reassign_ownership_card,
+)
 from app.core.db.plates import (
     delete_plate,
     distinct_cities,
@@ -106,10 +124,18 @@ from app.core.db.pricing import PriceRow, current_prices, price_list, set_price
 from app.core.db.users import UserRecord, create_user, get_user_by_id, get_user_by_username, list_users
 
 __all__ = [
+    "CARD_STATUS_DATA_MISMATCH",
+    "CARD_STATUS_NEW",
+    "CARD_STATUS_OTHER_OWNER",
+    "CARD_STATUS_SAME_CARD",
+    "CardLookup",
     "CustomerRecord",
     "OrderSummary",
+    "OwnershipCardRecord",
     "PriceRow",
     "UserRecord",
+    "classify_card_lookup",
+    "create_ownership_card",
     "create_user",
     "current_prices",
     "delete_order",
@@ -117,11 +143,15 @@ __all__ = [
     "distinct_cities",
     "distinct_requested_by",
     "existing_plate_numbers",
+    "find_card_conflicts",
     "find_orders_by_number",
     "find_orders_for_plate",
     "get_conn",
     "get_customer",
     "get_customer_by_name",
+    "get_ownership_card",
+    "get_ownership_card_by_plate_number",
+    "get_ownership_card_by_transit_license",
     "get_user_by_id",
     "get_user_by_username",
     "insert_blank_preparation",
@@ -129,10 +159,12 @@ __all__ = [
     "insert_plate",
     "inventory_view",
     "list_customers",
+    "list_ownership_cards_for_customer",
     "list_users",
     "order_detail",
     "ornamental_count",
     "price_list",
+    "reassign_ownership_card",
     "recalc_inventory",
     "recent_orders",
     "resolve_or_create_customer",

@@ -113,6 +113,24 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT now()
 );
 
+-- Colombian "tarjeta de propiedad", identified by its "licencia de tránsito"
+-- (see app/migrations/0006_ownership_cards.sql and docs/DATABASE.md). Three
+-- independent constraints, no composite key: the FK (one customer may own
+-- several cards), UNIQUE(transit_license) and UNIQUE(plate_number).
+CREATE TABLE ownership_cards (
+    id SERIAL PRIMARY KEY,
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    transit_license TEXT NOT NULL UNIQUE,   -- identifier: stripped + uppercased
+    plate_number TEXT NOT NULL UNIQUE,      -- normalize.clean_plate form
+    engine_number TEXT,
+    chassis_number TEXT,
+    vehicle_type TEXT,                      -- one of normalize.PLATE_TYPES (validated in code)
+    registered_in TEXT,                     -- "matriculado en"
+    vehicle_brand TEXT,
+    created_at TIMESTAMP DEFAULT now()
+);
+CREATE INDEX ownership_cards_customer_id_idx ON ownership_cards (customer_id);
+
 -- Suggested/default unit price per plate TYPE (the 7 normalize.PLATE_TYPES
 -- values, NEVER the 3 inventory_categories materials -- see docs/DATABASE.md).
 -- Starts empty on purpose: /precios shows one row per PLATE_TYPES entry
