@@ -282,6 +282,7 @@ de un único archivo de 556 líneas:
 | `db/inventory.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
 | `db/customers.py` (Fase 2) | CRUD de `customers` — ver detalle abajo. |
 | `db/ownership_cards.py` (Fase 2 declaraciones) | CRUD de `ownership_cards` (tarjeta de propiedad) y `find_card_conflicts` — ver detalle abajo. |
+| `db/declarations.py` (Fase 3 declaraciones) | Lectura/escritura de `declarations` — ver detalle abajo. |
 | `db/users.py` (Fase 2) | CRUD/lookup de `users` — backend real del login (`app/web/auth.py`), ver detalle abajo. |
 | `db/pricing.py` (Fase 2) | CRUD de `plate_type_prices` — ver detalle abajo. |
 
@@ -375,6 +376,51 @@ suben tal cual (la BD es la fuente de verdad). Ver
 | `list_ownership_cards_for_customer(conn, customer_id)` | Las tarjetas de un cliente, ordenadas por `id`. |
 | `reassign_ownership_card(conn, card_id, new_customer_id)` | Cambia el dueño de la tarjeta (`UPDATE` simple; acción de admin del flujo de revisión). |
 | `find_card_conflicts(conn, *, customer_id, transit_license, plate_number)` | Solo lectura. Devuelve `CardLookup(by_transit_license, by_plate_number, status)` con `status` en `new` / `same_card` / `other_owner` / `data_mismatch` (constantes `CARD_STATUS_*`). La decisión pura está en `classify_card_lookup`. |
+
+### `db/declarations.py` (Fase 3 declaraciones)
+
+Solo la capa de datos; las reglas de decisión están en `app/core/declarations.py`
+(más abajo). Columnas, estados y alertas: [`DATABASE.md`](DATABASE.md). Constantes:
+`STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` y
+`FLAG_PLATE_MADE_RECENTLY` / `FLAG_CARD_OTHER_OWNER` / `FLAG_CARD_DATA_MISMATCH` /
+`FLAG_CUSTOMER_TYPE_MISMATCH`.
+
+| Función | Qué hace |
+|---|---|
+| `insert_declaration(conn, *, reason, plate_quantity, acting_as, status, submitted_data, review_flags=None, customer_id=None, ownership_card_id=None, gestor_id=None, owner_signature_path=None, ..., accepted_terms_at=None)` | Inserta y devuelve el `id`. |
+| `get_declaration(conn, declaration_id)` | `DeclarationRecord` o `None`. |
+| `list_declarations(conn, *, status=None, query=None)` | `pending_review` primero, luego las más nuevas. `query` busca (sin mayúsculas) en nombre, documento, placa y licencia de `submitted_data` y de las filas enlazadas. |
+| `count_recent_by_ip(conn, ip, *, since)` | Declaraciones de esa IP con `created_at >= since` (límite por IP del formulario). |
+| `set_declaration_review(conn, declaration_id, *, status, reviewed_by, note=None, customer_id=None, ownership_card_id=None, gestor_id=None)` | Graba la decisión (`reviewed_at = now()`). No valida el estado previo. |
+
+`db/plates.py` suma `last_fabrication_date(conn, plate_number)`: solo lectura,
+la `order_date` más reciente de una placa con ese número exacto, **ignorando**
+placas `is_voided` o `is_plate_annulled`; `None` si nunca se fabricó.
+
+### `declarations.py` (Fase 3 declaraciones)
+
+Lógica de negocio sin Flask; recibe `conn` y nunca hace commit/rollback.
+
+| Función | Qué hace |
+|---|---|
+| `validate_declaration(inp)` | Lista de errores en español (vacía = válida): obligatorios, vocabulario con `normalize_choice`, placa con `validate_plate`, pérdida exige PDF notariado, gestor exige su bloque y su firma, firma del dueño y términos siempre, cantidad >= 1. |
+| `submit_declaration(conn, inp, *, today=None)` | Aplica las reglas de abajo y devuelve `SubmitResult(declaration_id, status, flags)`. `today` por defecto es la fecha de Bogotá. |
+| `approve_declaration(conn, id, reviewer_user_id, *, reassign_card=False, note=None)` | Solo desde `pending_review`. Crea/enlaza dueño, gestor y tarjeta desde `submitted_data`. Un cliente existente con tipo `NULL` pasa al tipo esperado; con otro tipo, `ValueError`. Tarjeta de otro dueño: `ValueError` salvo `reassign_card=True`; licencia/placa que no cuadran: siempre `ValueError`. |
+| `reject_declaration(conn, id, reviewer_user_id, note)` | Marca `rejected` (nota obligatoria); no crea nada. |
+
+Reglas de `submit_declaration`:
+
+| Situación | Resultado |
+|---|---|
+| Cualquier alerta (`plate_made_recently`, `card_other_owner`, `card_data_mismatch`, `customer_type_mismatch`) | `pending_review`; **no se crea nada** (ni cliente, ni gestor, ni tarjeta); las tres FK quedan `NULL`. |
+| Cliente nuevo + tarjeta nueva | `approved`; se crea el CLIENTE (y el GESTOR si hay) y la tarjeta. |
+| Cliente existente (tipo `CLIENTE`) con otro carro | `approved`; se enlaza el cliente sin modificarlo y se crea la tarjeta nueva. |
+| Mismo cliente, misma licencia y placa, pasados 6 meses | `approved`; se enlaza la tarjeta existente **sin modificarla** (los datos secundarios distintos solo quedan en `submitted_data`). |
+| Cliente/gestor existentes | Solo se enlazan, nunca se modifican. |
+
+**Privacidad:** `SubmitResult.flags` es solo para el personal y los logs. La capa
+web **nunca** debe mostrarlas al anónimo que envía (ni nada del dueño anterior o
+de la fecha de fabricación); solo "Recibimos tu declaración".
 
 ### `db/users.py` (Fase 2)
 
