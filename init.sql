@@ -90,13 +90,15 @@ CREATE TABLE blank_preparations (
 CREATE TABLE customers (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,     -- canonical form: normalize.normalize_requested_by(valor)
-    type TEXT,                     -- one of normalize.CUSTOMER_TYPES
+    type TEXT,                     -- one of normalize.CUSTOMER_TYPES (TRÁNSITO/EMPRESA/GESTOR/CLIENTE)
     document_type TEXT,            -- one of normalize.DOCUMENT_TYPES
     document_number TEXT,          -- TEXT always: NIT carries check digits/dashes
-    document_relation TEXT,        -- only meaningful when document_type = CÉDULA
+    document_relation TEXT,        -- only meaningful when type = CLIENTE
     phone TEXT,
     email TEXT,
-    transit_license TEXT,          -- only meaningful when type = PERSONA NATURAL
+    address TEXT,                  -- only meaningful when type = GESTOR or CLIENTE
+    neighborhood TEXT,             -- only meaningful when type = GESTOR or CLIENTE
+    municipality TEXT,             -- only meaningful when type = GESTOR or CLIENTE
     created_at TIMESTAMP DEFAULT now()
 );
 
