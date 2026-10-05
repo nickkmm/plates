@@ -67,22 +67,27 @@ def customer_fields_from_form(form) -> dict[str, str | None]:
     moved here rather than living in either blueprint once a second one
     needed it.
 
-    document_relation/transit_license are forced back to None here whenever
-    their governing field doesn't allow them (document_relation only makes
-    sense for CÉDULA; transit_license only for PERSONA NATURAL) -- the HTML
-    already disables those inputs client-side so a browser never sends them,
-    but a raw POST (curl, a modified request) could still carry a stale
-    value, so this is enforced again here rather than trusted from the
-    client alone.
+    Per-type applicability: TRÁNSITO and EMPRESA keep only name, document
+    type/number, phone and email. document_relation (Propietario/Poseedor)
+    is kept only for CLIENTE; address/neighborhood/municipality only for
+    GESTOR or CLIENTE. Everything else is forced back to None here -- the
+    HTML already disables those inputs client-side so a browser never sends
+    them, but a raw POST (curl, a modified request) could still carry a
+    stale value, so this is enforced again here rather than trusted from
+    the client alone.
     """
     customer_type = normalize_choice(form.get("customer_type"), CUSTOMER_TYPES)
     document_type = normalize_choice(form.get("customer_document_type"), DOCUMENT_TYPES)
     document_relation = normalize_choice(form.get("customer_document_relation"), DOCUMENT_RELATIONS)
-    if document_type != "CÉDULA":
+    if customer_type != "CLIENTE":
         document_relation = None
-    transit_license = (form.get("customer_transit_license") or "").strip() or None
-    if customer_type != "PERSONA NATURAL":
-        transit_license = None
+    has_person_fields = customer_type in ("GESTOR", "CLIENTE")
+
+    def _person_field(key: str) -> str | None:
+        if not has_person_fields:
+            return None
+        return (form.get(key) or "").strip() or None
+
     return {
         "type": customer_type,
         "document_type": document_type,
@@ -90,7 +95,9 @@ def customer_fields_from_form(form) -> dict[str, str | None]:
         "document_relation": document_relation,
         "phone": (form.get("customer_phone") or "").strip() or None,
         "email": (form.get("customer_email") or "").strip() or None,
-        "transit_license": transit_license,
+        "address": _person_field("customer_address"),
+        "neighborhood": _person_field("customer_neighborhood"),
+        "municipality": _person_field("customer_municipality"),
     }
 
 

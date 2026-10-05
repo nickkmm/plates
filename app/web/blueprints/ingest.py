@@ -44,7 +44,7 @@ _STICKY_HEADER_FIELDS: tuple[str, ...] = (
     "receipt_type", "receipt_number",
     "customer_type", "customer_document_type", "customer_document_number",
     "customer_document_relation", "customer_phone", "customer_email",
-    "customer_transit_license",
+    "customer_address", "customer_neighborhood", "customer_municipality",
     "payment_method", "tracking_number", "client_order_number",
     "delivery_date", "payment_date", "dispatched_by", "received_by", "notes",
 )
@@ -193,7 +193,8 @@ def _form_from_pedido(pedido: ParsedPedido) -> tuple[dict, list[dict], list[str]
     client_order_number/delivery_date/payment_date/dispatched_by/
     customer_phone/received_by/payment_method/notes); the remaining keys
     (receipt_type/receipt_number/customer_type/customer_document_type/
-    customer_document_relation/customer_email/customer_transit_license) have
+    customer_document_relation/customer_email/customer_address/
+    customer_neighborhood/customer_municipality) have
     no printed field anywhere on the document and stay blank, left for the
     person to fill by hand, same as an unrecognized plate_type already is.
 
@@ -284,7 +285,9 @@ def _customers_context(conn) -> dict[str, dict]:
         c.name: {
             "type": c.type or "", "document_type": c.document_type or "",
             "document_number": c.document_number or "", "document_relation": c.document_relation or "",
-            "phone": c.phone or "", "email": c.email or "", "transit_license": c.transit_license or "",
+            "phone": c.phone or "", "email": c.email or "",
+            "address": c.address or "", "neighborhood": c.neighborhood or "",
+            "municipality": c.municipality or "",
         }
         for c in db.list_customers(conn)
     }

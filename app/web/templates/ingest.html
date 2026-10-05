@@ -163,29 +163,32 @@
       </p>
       <div class="header">
         <label>Tipo de cliente
-          <select name="customer_type" id="customerType" onchange="toggleTransitLicense()">
+          <select name="customer_type" id="customerType" onchange="toggleCustomerFields()">
             <option value="" {% if not (header and header.customer_type) %}selected{% endif %}>— sin definir —</option>
             {% for ct in customer_types %}<option value="{{ ct }}" {% if header and header.customer_type==ct %}selected{% endif %}>{{ ct }}</option>{% endfor %}
           </select>
           <input type="hidden" name="customer_type" id="customerTypeLocked" disabled>
         </label>
         <label>Tipo de documento
-          <select name="customer_document_type" id="documentType" onchange="toggleDocumentRelation()">
+          <select name="customer_document_type" id="documentType">
             <option value="" {% if not (header and header.customer_document_type) %}selected{% endif %}>— sin definir —</option>
             {% for dt in document_types %}<option value="{{ dt }}" {% if header and header.customer_document_type==dt %}selected{% endif %}>{{ dt }}</option>{% endfor %}
           </select>
           <input type="hidden" name="customer_document_type" id="documentTypeLocked" disabled>
         </label>
         <label>N° de documento<input type="text" name="customer_document_number" id="documentNumber" value="{{ header.customer_document_number if header else '' }}"></label>
-        <label>Relación con el documento
-          <select name="customer_document_relation" id="documentRelation" {% if not (header and header.customer_document_type=='CÉDULA') %}disabled{% endif %}>
+        <label>Propietario/Poseedor
+          <select name="customer_document_relation" id="documentRelation" {% if not (header and header.customer_type=='CLIENTE') %}disabled{% endif %}>
             <option value="" {% if not (header and header.customer_document_relation) %}selected{% endif %}>— sin definir —</option>
             {% for dr in document_relations %}<option value="{{ dr }}" {% if header and header.customer_document_relation==dr %}selected{% endif %}>{{ dr }}</option>{% endfor %}
           </select>
         </label>
         <label>Teléfono<input type="text" name="customer_phone" id="customerPhone" value="{{ header.customer_phone if header else '' }}"></label>
         <label>Correo<input type="email" name="customer_email" id="customerEmail" value="{{ header.customer_email if header else '' }}"></label>
-        <label>Licencia de tránsito<input type="text" name="customer_transit_license" id="transitLicense" value="{{ header.customer_transit_license if header else '' }}" {% if not (header and header.customer_type=='PERSONA NATURAL') %}disabled{% endif %}></label>
+        {% set person_enabled = header and header.customer_type in ('GESTOR', 'CLIENTE') %}
+        <label>Dirección<input type="text" name="customer_address" id="customerAddress" value="{{ header.customer_address if header else '' }}" {% if not person_enabled %}disabled{% endif %}></label>
+        <label>Barrio<input type="text" name="customer_neighborhood" id="customerNeighborhood" value="{{ header.customer_neighborhood if header else '' }}" {% if not person_enabled %}disabled{% endif %}></label>
+        <label>Municipio<input type="text" name="customer_municipality" id="customerMunicipality" value="{{ header.customer_municipality if header else '' }}" {% if not person_enabled %}disabled{% endif %}></label>
       </div>
     </fieldset>
 
@@ -342,17 +345,21 @@
     // no tiene efecto sobre <select>), así el navegador ni siquiera los manda
     // en el POST cuando no aplican -- el servidor igual lo vuelve a forzar
     // por su cuenta (nunca confía solo en esto).
-    function toggleDocumentRelation() {
-      const enabled = document.getElementById('documentType').value === 'CÉDULA';
+    // Reglas por tipo de cliente: Propietario/Poseedor solo para CLIENTE;
+    // Dirección/Barrio/Municipio solo para GESTOR o CLIENTE. TRÁNSITO y
+    // EMPRESA conservan solo nombre, documento, teléfono y correo.
+    function toggleCustomerFields() {
+      const type = document.getElementById('customerType').value;
+      const relationOn = type === 'CLIENTE';
+      const personOn = type === 'GESTOR' || type === 'CLIENTE';
       const sel = document.getElementById('documentRelation');
-      sel.disabled = !enabled;
-      if (!enabled) sel.value = '';
-    }
-    function toggleTransitLicense() {
-      const enabled = document.getElementById('customerType').value === 'PERSONA NATURAL';
-      const inp = document.getElementById('transitLicense');
-      inp.disabled = !enabled;
-      if (!enabled) inp.value = '';
+      sel.disabled = !relationOn;
+      if (!relationOn) sel.value = '';
+      ['customerAddress', 'customerNeighborhood', 'customerMunicipality'].forEach(id => {
+        const inp = document.getElementById(id);
+        inp.disabled = !personOn;
+        if (!personOn) inp.value = '';
+      });
     }
 
     // Autocompletado de cliente: si el nombre tipeado/elegido coincide con un
@@ -366,7 +373,8 @@
     // 'readonly', which <select> doesn't support) -- for customerType/
     // documentType that's a problem, since the SERVER-side forcing logic
     // (customer_fields_from_form) needs to see their submitted value to
-    // decide document_relation/transit_license, not just the DB's existing
+    // decide document_relation/address/neighborhood/municipality, not
+    // just the DB's existing
     // value. So locking those two disables the visible <select> (for
     // interaction) but submits its value through a same-named hidden
     // mirror input instead -- only one of the pair is ever enabled at a
@@ -383,10 +391,9 @@
     function _lockPlainField(id, value) {
       document.getElementById(id).disabled = !!value;
     }
-    // Only ADDS a lock -- never force-enables a field toggleDocumentRelation/
-    // toggleTransitLicense already disabled because it's inapplicable given
-    // another field's current value (e.g. document_relation when
-    // document_type isn't CÉDULA).
+    // Only ADDS a lock -- never force-enables a field toggleCustomerFields
+    // already disabled because it's inapplicable given another field's
+    // current value (e.g. document_relation when type isn't CLIENTE).
     function _addLock(id, value) {
       if (value) document.getElementById(id).disabled = true;
     }
@@ -394,14 +401,17 @@
     function autofillCustomer(typed) {
       const folded = _foldName(typed);
 
-      // Always start unlocked -- toggleDocumentRelation()/toggleTransitLicense()
-      // below recompute the APPLICABILITY-based disabling on their own; this
+      // Always start unlocked -- toggleCustomerFields()
+      // below recomputes the APPLICABILITY-based disabling on their own; this
       // only resets the separate VALUE-based lock from a previous match.
       _lockSelectWithMirror('customerType', 'customerTypeLocked', '');
       _lockSelectWithMirror('documentType', 'documentTypeLocked', '');
       _lockPlainField('documentNumber', '');
       _lockPlainField('customerPhone', '');
       _lockPlainField('customerEmail', '');
+      _lockPlainField('customerAddress', '');
+      _lockPlainField('customerNeighborhood', '');
+      _lockPlainField('customerMunicipality', '');
 
       let match = null;
       if (folded) {
@@ -417,10 +427,11 @@
         document.getElementById('documentRelation').value = match.document_relation || '';
         document.getElementById('customerPhone').value = match.phone || '';
         document.getElementById('customerEmail').value = match.email || '';
-        document.getElementById('transitLicense').value = match.transit_license || '';
+        document.getElementById('customerAddress').value = match.address || '';
+        document.getElementById('customerNeighborhood').value = match.neighborhood || '';
+        document.getElementById('customerMunicipality').value = match.municipality || '';
       }
-      toggleDocumentRelation();
-      toggleTransitLicense();
+      toggleCustomerFields();
       if (!match) return;
 
       // A field the customer ALREADY has a value for gets locked here --
@@ -434,14 +445,15 @@
       _lockPlainField('customerPhone', match.phone);
       _lockPlainField('customerEmail', match.email);
       _addLock('documentRelation', match.document_relation);
-      _addLock('transitLicense', match.transit_license);
+      _addLock('customerAddress', match.address);
+      _addLock('customerNeighborhood', match.neighborhood);
+      _addLock('customerMunicipality', match.municipality);
     }
 
     // Una fila en blanco al cargar, salvo que el servidor ya haya prellenado
     // líneas (reintento tras un aviso de duplicado — no perder lo tipeado).
     document.addEventListener('DOMContentLoaded', () => {
-      toggleDocumentRelation();
-      toggleTransitLicense();
+      toggleCustomerFields();
       const existing = document.querySelectorAll('#lines .line');
       if (!existing.length) { addLine(); return; }
       existing.forEach(row => {
