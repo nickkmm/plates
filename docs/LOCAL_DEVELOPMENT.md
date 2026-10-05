@@ -108,3 +108,7 @@ mano igual que el bloque de `cargador.ingse.co`). En local, directo en
 | `AUTH_ROLES` | `app/schema_migrate.py` (backfill único) | `usuario:rol` separados por coma, mismo backfill único que `AUTH_USERS`. **No está en `.env.example` hoy** — cualquier usuario sin entrada acá queda `admin` por defecto. |
 | `COOKIE_SECURE` | `app/web/app.py` | `1` en producción (HTTPS) para marcar la cookie `Secure`; apagada en dev local sobre HTTP plano. |
 | `SENTRY_DSN` | `app/web/app.py` | Opcional — si no está seteada, Sentry ni se inicializa (dev local y tests nunca mandan nada). |
+| `UPLOADS_DIR` | `app/web/uploads.py` | Carpeta donde se guardan los PDF autenticados y las firmas del formulario público. Default `/srv/uploads`; en Compose es el volumen `plates_uploads`. **El volumen NO queda cubierto por los respaldos con `pg_dump`**: hay que respaldarlo aparte. Los tests usan una carpeta temporal. |
+| `TURNSTILE_SITE_KEY` | formulario público | Llave pública de Cloudflare Turnstile (se muestra en el widget). En desarrollo local sirven las llaves de prueba que publica Cloudflare. |
+| `TURNSTILE_SECRET_KEY` | `app/web/antispam.py` | Llave secreta para verificar el token en el servidor. Si falta (y no hay bypass), la verificación **falla cerrada**: el envío se rechaza. En producción debe agregarse al secret `ENV_FILE_B64`. |
+| `TURNSTILE_BYPASS` | `app/web/antispam.py` | `1`/`true` omite la verificación de Turnstile sin llamar a la red. Solo para desarrollo y tests; dejar vacía en producción. |
