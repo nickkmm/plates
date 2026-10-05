@@ -53,6 +53,10 @@ module = "app.core.*"
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
+module = "dateutil.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "pandas.*"
 ignore_missing_imports = true
 
