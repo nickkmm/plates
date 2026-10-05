@@ -168,6 +168,28 @@ class TestApplySqlMigrations:
             cur.execute(sql)
             cur.execute(sql)
 
+    def test_0005_customer_types_renames_clears_and_is_safe_to_apply_twice(self, db_conn):
+        """PERSONA NATURAL -> CLIENTE, OTROS -> NULL, other types untouched;
+        the new person columns exist and transit_license is gone (it already
+        is on the fresh test schema, so DROP COLUMN IF EXISTS is a no-op)."""
+        sql = (_MIGRATIONS_DIR / "0005_customer_types_and_person_fields.sql").read_text(encoding="utf-8")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "INSERT INTO customers (name, type) VALUES "
+                "('A', 'PERSONA NATURAL'), ('B', 'OTROS'), ('C', 'EMPRESA'), ('D', NULL)"
+            )
+            cur.execute(sql)
+            cur.execute(sql)
+            cur.execute("SELECT name, type FROM customers ORDER BY name")
+            assert cur.fetchall() == [("A", "CLIENTE"), ("B", None), ("C", "EMPRESA"), ("D", None)]
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'customers' AND table_schema = current_schema()"
+            )
+            columns = {row[0] for row in cur.fetchall()}
+        assert {"address", "neighborhood", "municipality"} <= columns
+        assert "transit_license" not in columns
+
 
 # --------------------------------------------------------------------------
 # backfill_customers

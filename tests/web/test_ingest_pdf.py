@@ -254,7 +254,8 @@ class TestFase4FooterPrefill:
 
     def test_always_manual_fields_stay_blank(self, authenticated_client, clean_db):
         """receipt_type/receipt_number/customer_type/customer_document_type/
-        customer_document_relation/customer_email/customer_transit_license
+        customer_document_relation/customer_email/customer_address/
+        customer_neighborhood/customer_municipality
         have no printed field anywhere on the document."""
         resp = upload(authenticated_client, build_pedido_pdf(
             nit="1117521679", forma_pago="EFECTIVO", responsable="JUAN PEREZ",
