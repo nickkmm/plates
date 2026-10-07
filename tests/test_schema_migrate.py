@@ -190,6 +190,71 @@ class TestApplySqlMigrations:
         assert {"address", "neighborhood", "municipality"} <= columns
         assert "transit_license" not in columns
 
+    def test_0008_plates_ownership_card_id_backfills_eligible_plates_and_is_idempotent(self, db_conn):
+        """Column + index exist; the backfill links an eligible plate (CLIENTE,
+        GESTOR, NULL-type customer or no customer) and skips ranges, voided,
+        annulled, replacement plates and EMPRESA/TRÁNSITO orders; a second
+        apply changes nothing."""
+        sql = (_MIGRATIONS_DIR / "0008_plates_ownership_card_id.sql").read_text(encoding="utf-8")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("INSERT INTO customers (name, type) VALUES ('TIT', 'CLIENTE') RETURNING id")
+            owner = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO ownership_cards (customer_id, transit_license, plate_number) "
+                "VALUES (%s, 'L1', 'AAA111') RETURNING id", (owner,),
+            )
+            card_id = cur.fetchone()[0]
+            order_ids = {}
+            for i, ctype in enumerate(("CLIENTE", "GESTOR", None, "EMPRESA", "TRÁNSITO")):
+                cur.execute(
+                    "INSERT INTO customers (name, type) VALUES (%s, %s) RETURNING id", (f"C{i}", ctype),
+                )
+                customer_id = cur.fetchone()[0]
+                cur.execute(
+                    "INSERT INTO production_orders (order_number, order_date, requested_by, customer_id) "
+                    "VALUES (%s, '2026-01-01', %s, %s) RETURNING id", (str(i), f"C{i}", customer_id),
+                )
+                order_ids[ctype] = cur.fetchone()[0]
+            no_customer = _insert_order(db_conn, "SINCLIENTE", "99")
+
+            def add(order_id, tag, **cols):
+                columns = {"plate_number": "AAA111", **cols}
+                names = ", ".join(["order_id", "plate_type", *columns])
+                marks = ", ".join(["%s"] * (len(columns) + 2))
+                cur.execute(
+                    f"INSERT INTO plates ({names}) VALUES ({marks}) RETURNING id",
+                    (order_id, "CARRO PARTICULAR", *columns.values()),
+                )
+                return tag, cur.fetchone()[0]
+
+            plates = dict([
+                add(order_ids["CLIENTE"], "cliente"),
+                add(order_ids["GESTOR"], "gestor"),
+                add(order_ids[None], "null_type"),
+                add(no_customer, "no_customer"),
+                add(order_ids["EMPRESA"], "empresa"),
+                add(order_ids["TRÁNSITO"], "transito"),
+                add(order_ids["CLIENTE"], "range", plate_to="AAA120"),
+                add(order_ids["CLIENTE"], "voided", is_voided=True),
+                add(order_ids["CLIENTE"], "annulled", is_plate_annulled=True),
+                add(order_ids["CLIENTE"], "replacement", is_batch_replacement=True),
+                add(order_ids["CLIENTE"], "other_number", plate_number="ZZZ999"),
+            ])
+            cur.execute(sql)
+            cur.execute(sql)
+            cur.execute("SELECT id, ownership_card_id FROM plates")
+            linked = dict(cur.fetchall())
+            cur.execute(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE tablename = 'plates' AND schemaname = current_schema()"
+            )
+            indexes = {row[0] for row in cur.fetchall()}
+        for tag in ("cliente", "gestor", "null_type", "no_customer"):
+            assert linked[plates[tag]] == card_id, tag
+        for tag in ("empresa", "transito", "range", "voided", "annulled", "replacement", "other_number"):
+            assert linked[plates[tag]] is None, tag
+        assert "plates_ownership_card_id_idx" in indexes
+
 
 # --------------------------------------------------------------------------
 # backfill_customers

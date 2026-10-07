@@ -13,6 +13,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import DictRow, class_row
 
+from app.core.db.plates import relink_plates
 from app.core.models import ExtractedRow
 
 
@@ -160,6 +161,10 @@ def update_order(
                  client_order_number, delivery_date, payment_date, dispatched_by,
                  received_by, notes, order_id),
             )
+    if not isinstance(customer_id, _Unset):
+        # The order may now belong to a customer of another type: recompute
+        # which of its plates may carry an ownership_card_id.
+        relink_plates(conn, order_id=order_id)
 
 
 def delete_order(conn: psycopg.Connection[DictRow], order_id: int) -> None:
@@ -206,10 +211,13 @@ def order_detail(conn: psycopg.Connection[DictRow], order_id: int) -> tuple[dict
             return None, []
         cur.execute(
             """
-            SELECT id, plate_type, plate_number, plate_to, quantity,
-                   is_batch_replacement, is_voided, is_plate_annulled, city,
-                   unit_price, reason, vehicle_brand
-            FROM plates WHERE order_id = %s ORDER BY id
+            SELECT p.id, p.plate_type, p.plate_number, p.plate_to, p.quantity,
+                   p.is_batch_replacement, p.is_voided, p.is_plate_annulled, p.city,
+                   p.unit_price, p.reason, p.vehicle_brand,
+                   p.ownership_card_id, oc.transit_license AS card_transit_license
+            FROM plates p
+            LEFT JOIN ownership_cards oc ON oc.id = p.ownership_card_id
+            WHERE p.order_id = %s ORDER BY p.id
             """,
             (order_id,),
         )

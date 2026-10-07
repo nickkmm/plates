@@ -27,7 +27,14 @@ from dataclasses import dataclass
 import psycopg
 from psycopg.rows import DictRow, class_row
 
-from app.core.normalize import clean_plate
+from app.core.normalize import clean_plate, is_real_plate
+
+# Customer types whose plates NEVER get an ownership_card_id: EMPRESA and
+# TRÁNSITO have no "tarjeta de propiedad" (their plates hang off the company
+# only). CLIENTE, GESTOR (a gestor sends plates of its clients' cards) and
+# NULL (185 historical customers not classified yet -- the lookup only matches
+# a card with that exact plate, so trying is harmless) are eligible.
+CARD_LINK_EXCLUDED_CUSTOMER_TYPES = ("EMPRESA", "TRÁNSITO")
 
 
 @dataclass
@@ -214,3 +221,29 @@ def find_card_conflicts(
         by_plate_number=by_plate,
         status=classify_card_lookup(customer_id, by_license, by_plate),
     )
+
+
+def resolve_card_id_for_plate(
+    conn: psycopg.Connection[DictRow], plate_number: str | None, customer_type: str | None,
+    *, plate_to: str | None = None, is_voided: bool = False,
+    is_plate_annulled: bool = False, is_batch_replacement: bool = False,
+) -> int | None:
+    """The `ownership_cards.id` a fabricated plate should be linked to via
+    `plates.ownership_card_id`, or None. Read-only.
+
+    None (never linked) when ANY of: the order's customer is EMPRESA or
+    TRÁNSITO (see CARD_LINK_EXCLUDED_CUSTOMER_TYPES -- no lookup is even
+    attempted); the plate is a range (`plate_to`), a batch replacement,
+    voided or annulled; `plate_number` is not a real plate number
+    (normalize.is_real_plate); or no card has that plate. Otherwise the card
+    whose `plate_number` equals clean_plate(plate_number) (UNIQUE, so no
+    ambiguity), regardless of whose customer the card belongs to.
+    """
+    if customer_type in CARD_LINK_EXCLUDED_CUSTOMER_TYPES:
+        return None
+    if plate_to or is_voided or is_plate_annulled or is_batch_replacement:
+        return None
+    if not is_real_plate(plate_number):
+        return None
+    card = get_ownership_card_by_plate_number(conn, plate_number)
+    return card.id if card else None
