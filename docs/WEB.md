@@ -18,6 +18,7 @@ blueprints (`today_iso`, `_options`, `_padded`, `_validate_order_header`,
 | GET | `/healthz` | `app.py` | Liveness probe | — | — | abierta |
 | GET/POST | `/login` | `auth_routes.py` | Login (consulta `users`, Fase 2) | `auth.authenticate` | `login.html` | abierta |
 | GET/POST | `/logout` | `auth_routes.py` | Cierra sesión | — | (redirect) | abierta |
+| GET/POST | `/declaracion` | `public_declaration.py` | Formulario público de declaración juramentada (QR en el mostrador). POST: honeypot, token firmado, Turnstile, límite por IP (5/hora), guarda firmas/PDF en `UPLOADS_DIR`, valida y guarda. Responde **503** (`declaration_unavailable.html`) mientras no estén `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (o `TURNSTILE_BYPASS`). La página de éxito es idéntica para declaraciones aprobadas y retenidas: nunca revela estado, alertas ni al dueño anterior | `declarations.validate_declaration`, `submit_declaration`, `db.count_recent_by_ip` | `declaration.html`, `declaration_received.html`, `declaration_unavailable.html` | **sin login** (única ruta pública que escribe) |
 | GET | `/ingest` | `ingest.py` | Form "Registrar" — captura completa de orden POS (Fase 3) | `db.distinct_requested_by/cities`, `db.current_prices`, `db.list_customers` | `ingest.html` | `@pos_allowed` |
 | POST | `/ingest` | `ingest.py` | Guarda orden+placas (resuelve/crea cliente, snapshotea precios); gestiona los avisos de orden/placa duplicada y el "Reemplazar" opt-in | `ingestion.process_rows`, `ingestion.replace_order`, `ingestion.find_duplicate_plate_numbers`, `db.resolve_or_create_customer`, `db.find_orders_by_number` | `ingest.html` | `@pos_allowed` |
 | GET | `/ingest/pdf` | `ingest.py` | Form de upload de PDF | — | `ingest_pdf.html` | `@pos_allowed` |
@@ -83,6 +84,19 @@ documentado explícitamente como solo-lectura/preview en sus docstrings.
   Registros (`producción` no puede llegar a `/ingest` de ningún modo, así
   que mandarla ahí solo rebotaría en un 403).
 
+## Rutas públicas
+
+Solo estas rutas responden sin sesión: `/login`, `/logout`, `/healthz` y
+`/declaracion` (más `/static`). `tests/web/test_public_routes.py` recorre
+`app.url_map` y falla si cualquier otra ruta contesta 200 a una petición
+anónima; agregar una ruta pública exige editar su lista a propósito.
+
+`/declaracion` se apaga sola: sin llaves de Turnstile (ni `TURNSTILE_BYPASS`)
+responde 503, así que producción no expone nada hasta que el dueño configure
+Cloudflare. `app.py` fija `MAX_CONTENT_LENGTH` en 12 MB (PDF autenticado de
+hasta 10 MB más dos firmas PNG en base64, unos 270 KB cada una); un cuerpo más
+grande recibe un 413 amigable en esa ruta.
+
 ## Templates
 
 No hay `base.html` compartido — cada página es un documento HTML
@@ -93,6 +107,9 @@ independiente que incluye `_nav.html` y duplica su propio `<style>`.
 | `_nav.html` | Nav compartido; "Registrar"/"Cuadre" solo si el rol está en `pos_roles`, "Revisión"/"Inventario"/"Precios" solo si está en `full_access_roles`. |
 | `_orders_table.html` | Tabla de órdenes reusada por la vista "recientes" y por los resultados de búsqueda por orden. |
 | `login.html` | Card de login (sin nav). |
+| `declaration.html` | Formulario público de declaración (sin nav, sin login). Los nombres de los campos son el contrato con `public_declaration.py`. |
+| `declaration_received.html` | Confirmación genérica "Recibimos tu declaración" (igual para aprobada y retenida). |
+| `declaration_unavailable.html` | Página 503 cuando el formulario público está apagado (faltan las llaves de Turnstile). |
 | `ingest.html` | Form de captura POS completa (Fase 3): fieldset de orden (comprobante/cliente/forma de pago obligatoria/guía#/pedido#/fechas/responsable/observaciones) + tabla de líneas con `reason`/`vehicle_brand`/`unit_price` por placa. `unit_price` se pre-llena por JS desde una tarifa embebida como JSON (`prices`); el fieldset de cliente se auto-completa por JS al matchear un nombre contra la lista de clientes embebida (`customers`). Por tipo de cliente (`toggleCustomerFields`): Propietario/Poseedor solo para `CLIENTE`; Dirección/Barrio/Municipio solo para `GESTOR` o `CLIENTE`; `TRÁNSITO` y `EMPRESA` conservan solo nombre, documento, teléfono y correo (el servidor lo vuelve a forzar en `customer_fields_from_form`). Un dato que el cliente ya tiene guardado queda bloqueado (los selects con un input oculto espejo); el bloqueo solo se agrega, nunca habilita un campo que la regla del tipo deshabilitó. Los 3 posibles avisos pre-guardado (`notices` del PDF, `order_duplicates`, `duplicates` de placa) + panel de resumen post-guardado. Mantiene TODOS los campos tipeados (orden + cliente + por línea) al ida-y-vuelta de un aviso, vía el único dict "sticky" (`_sticky_header_from_form`/`_sticky_lines_from_form` en `ingest.py`). |
 | `ingest_pdf.html` | Upload de PDF vía XHR con barra de progreso; reemplaza el documento con la respuesta (`ingest.html` pre-llenado, incluidos los campos de pie de página desde la Fase 4). |
 | `records.html` | Búsqueda por texto (placa u orden) + búsqueda por PDF (nunca guarda). |

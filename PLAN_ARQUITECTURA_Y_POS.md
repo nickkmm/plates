@@ -1352,3 +1352,12 @@ Existe la tabla `declarations` (migración `0007`), su capa de datos
 (validar, enviar, aprobar, rechazar), más `db.last_fabrication_date` para la
 regla de 6 meses. Todavía no hay formulario público ni pantalla interna que la
 usen; ver `docs/DATABASE.md` y `docs/CORE.md`.
+
+## Nota: ruta pública `/declaracion` (Fase 4 del plan de declaraciones)
+
+Existe `app/web/blueprints/public_declaration.py`: la primera ruta pública que
+escribe (`GET/POST /declaracion`, sin login). Combina honeypot, token firmado,
+Turnstile y límite por IP contra `declarations`, guarda firmas y PDF en
+`UPLOADS_DIR` y llama a `submit_declaration`. Queda apagada (503) hasta que se
+configuren las llaves de Turnstile. `tests/web/test_public_routes.py` fija la
+lista de rutas públicas; ver `docs/WEB.md`.
