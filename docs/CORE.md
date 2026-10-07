@@ -383,7 +383,7 @@ Solo la capa de datos; las reglas de decisión están en `app/core/declarations.
 (más abajo). Columnas, estados y alertas: [`DATABASE.md`](DATABASE.md). Constantes:
 `STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` y
 `FLAG_PLATE_MADE_RECENTLY` / `FLAG_CARD_OTHER_OWNER` / `FLAG_CARD_DATA_MISMATCH` /
-`FLAG_CUSTOMER_TYPE_MISMATCH`.
+`FLAG_CUSTOMER_TYPE_MISMATCH`, `FLAG_CUSTOMER_DOCUMENT_MISMATCH`.
 
 | Función | Qué hace |
 |---|---|
@@ -412,7 +412,7 @@ Reglas de `submit_declaration`:
 
 | Situación | Resultado |
 |---|---|
-| Cualquier alerta (`plate_made_recently`, `card_other_owner`, `card_data_mismatch`, `customer_type_mismatch`) | `pending_review`; **no se crea nada** (ni cliente, ni gestor, ni tarjeta); las tres FK quedan `NULL`. |
+| Cualquier alerta (`plate_made_recently`, `card_other_owner`, `card_data_mismatch`, `customer_type_mismatch`, `customer_document_mismatch`) | `pending_review`; **no se crea nada** (ni cliente, ni gestor, ni tarjeta); las tres FK quedan `NULL`. |
 | Cliente nuevo + tarjeta nueva | `approved`; se crea el CLIENTE (y el GESTOR si hay) y la tarjeta. |
 | Cliente existente (tipo `CLIENTE`) con otro carro | `approved`; se enlaza el cliente sin modificarlo y se crea la tarjeta nueva. |
 | Mismo cliente, misma licencia y placa, pasados 6 meses | `approved`; se enlaza la tarjeta existente **sin modificarla** (los datos secundarios distintos solo quedan en `submitted_data`). |

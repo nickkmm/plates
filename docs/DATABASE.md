@@ -421,6 +421,7 @@ created_at)` (el límite por IP).
 | `card_other_owner` | La licencia y la placa son una tarjeta existente de **otro** cliente (o el declarante aún no existe). |
 | `card_data_mismatch` | La licencia existe con otra placa, o la placa con otra licencia. |
 | `customer_type_mismatch` | Un cliente/gestor que ya existe con ese nombre no tiene el tipo esperado (`CLIENTE` para el dueño, `GESTOR` para el gestor); `NULL` cuenta como diferente. |
+| `customer_document_mismatch` | Un cliente/gestor que ya existe con ese nombre ya tiene número de documento y es **distinto** del declarado (un homónimo, no la misma persona). Se compara solo letras y dígitos (`1.234.567-8` = `12345678`); un documento vacío en cualquiera de los dos lados no cuenta. |
 
 ### `blank_preparations`
 

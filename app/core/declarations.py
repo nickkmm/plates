@@ -17,7 +17,9 @@ project, see the declarations plan):
 Flags: PLATE_MADE_RECENTLY (made < 6 calendar months ago), CARD_OTHER_OWNER,
 CARD_DATA_MISMATCH (licence/plate that do not match each other) and
 CUSTOMER_TYPE_MISMATCH (an existing customer found by name is not of the
-expected type; NULL counts as a mismatch).
+expected type; NULL counts as a mismatch) and CUSTOMER_DOCUMENT_MISMATCH (an
+existing customer found by name already has a document number and it differs
+from the declared one -- a homonym, not the same person).
 
 **Privacy**: `SubmitResult.flags` is for staff/logging ONLY. The web layer
 must never show the flags (or anything about the previous owner / fabrication
@@ -26,6 +28,7 @@ date) to the anonymous submitter -- only "Recibimos tu declaración".
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from typing import Any
@@ -39,6 +42,7 @@ from app.core import db
 from app.core.db.declarations import (
     FLAG_CARD_DATA_MISMATCH,
     FLAG_CARD_OTHER_OWNER,
+    FLAG_CUSTOMER_DOCUMENT_MISMATCH,
     FLAG_CUSTOMER_TYPE_MISMATCH,
     FLAG_PLATE_MADE_RECENTLY,
     STATUS_APPROVED,
@@ -61,6 +65,7 @@ PLATE_MADE_RECENTLY = FLAG_PLATE_MADE_RECENTLY
 CARD_OTHER_OWNER = FLAG_CARD_OTHER_OWNER
 CARD_DATA_MISMATCH = FLAG_CARD_DATA_MISMATCH
 CUSTOMER_TYPE_MISMATCH = FLAG_CUSTOMER_TYPE_MISMATCH
+CUSTOMER_DOCUMENT_MISMATCH = FLAG_CUSTOMER_DOCUMENT_MISMATCH
 
 OWNER_TYPE = "CLIENTE"
 GESTOR_TYPE = "GESTOR"
@@ -261,6 +266,24 @@ def _type_mismatch(customer: db.CustomerRecord | None, expected: str) -> bool:
     return customer is not None and customer.type != expected
 
 
+def _document_key(value: str | None) -> str:
+    """Comparison key for document numbers: only letters/digits, uppercase
+    ('1.234.567-8' and '12345678' compare equal)."""
+    return re.sub(r"[^0-9A-Z]", "", (value or "").upper())
+
+
+def _document_mismatch(customer: db.CustomerRecord | None, declared: PersonInput | None) -> bool:
+    """True when an existing customer already has a document number and the
+    declared one is a DIFFERENT number. Names are the customer identity in this
+    app, so two different people with the same name must not be merged
+    silently. A blank on either side is not a mismatch."""
+    if customer is None or declared is None:
+        return False
+    existing_key = _document_key(customer.document_number)
+    declared_key = _document_key(declared.document_number)
+    return bool(existing_key and declared_key and existing_key != declared_key)
+
+
 def _compute_flags(
     conn: psycopg.Connection[DictRow], *, owner: PersonInput, gestor: PersonInput | None,
     vehicle: VehicleInput, today: date,
@@ -284,6 +307,8 @@ def _compute_flags(
 
     if _type_mismatch(existing_owner, OWNER_TYPE) or _type_mismatch(existing_gestor, GESTOR_TYPE):
         flags.append(CUSTOMER_TYPE_MISMATCH)
+    if _document_mismatch(existing_owner, owner) or _document_mismatch(existing_gestor, gestor):
+        flags.append(CUSTOMER_DOCUMENT_MISMATCH)
     return flags, existing_owner, existing_gestor, lookup
 
 

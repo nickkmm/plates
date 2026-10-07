@@ -33,6 +33,7 @@ FLAG_PLATE_MADE_RECENTLY = "plate_made_recently"
 FLAG_CARD_OTHER_OWNER = "card_other_owner"
 FLAG_CARD_DATA_MISMATCH = "card_data_mismatch"
 FLAG_CUSTOMER_TYPE_MISMATCH = "customer_type_mismatch"
+FLAG_CUSTOMER_DOCUMENT_MISMATCH = "customer_document_mismatch"
 
 
 @dataclass
@@ -121,7 +122,8 @@ def list_declarations(
     match against the owner / gestor name, document number, plate and transit
     licence declared inside `submitted_data`, plus the linked customer, gestor
     and ownership card rows (so a declaration is still found by the canonical
-    customer name after approval).
+    customer name after approval). The user's own `%`, `_` and `\\` are escaped,
+    so they match literally instead of acting as LIKE wildcards.
     """
     where: list[str] = []
     params: list[Any] = []
@@ -129,7 +131,8 @@ def list_declarations(
         where.append("d.status = %s")
         params.append(status)
     if query and query.strip():
-        pattern = f"%{query.strip()}%"
+        escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
         where.append(
             """(
                 d.submitted_data #>> '{owner,name}' ILIKE %s

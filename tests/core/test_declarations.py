@@ -355,6 +355,31 @@ class TestSubmitPending:
         result = decl.submit_declaration(db_conn, _gestor_input(), today=TODAY)
         self._assert_nothing_created(db_conn, result, [decl.CUSTOMER_TYPE_MISMATCH])
 
+    def test_existing_owner_with_a_different_document_number(self, db_conn):
+        """Names are the customer identity: a homonym with another document
+        must not be merged silently into the existing customer."""
+        db.resolve_or_create_customer(db_conn, "MARIA LOPEZ", type="CLIENTE", document_number="999")
+        result = decl.submit_declaration(db_conn, _input(), today=TODAY)
+        self._assert_nothing_created(db_conn, result, [decl.CUSTOMER_DOCUMENT_MISMATCH])
+        assert _count(db_conn, "ownership_cards") == 0
+
+    def test_same_document_number_with_other_punctuation_is_not_a_mismatch(self, db_conn):
+        db.resolve_or_create_customer(
+            db_conn, "MARIA LOPEZ", type="CLIENTE", document_number="1.020.304.050",
+        )
+        result = decl.submit_declaration(db_conn, _input(), today=TODAY)
+        assert (result.status, result.flags) == ("approved", [])
+
+    def test_existing_owner_without_a_document_number_is_not_a_mismatch(self, db_conn):
+        _existing_client(db_conn)
+        result = decl.submit_declaration(db_conn, _input(), today=TODAY)
+        assert (result.status, result.flags) == ("approved", [])
+
+    def test_existing_gestor_with_a_different_document_number(self, db_conn):
+        db.resolve_or_create_customer(db_conn, "GESTORIA SUR", type="GESTOR", document_number="111")
+        result = decl.submit_declaration(db_conn, _gestor_input(), today=TODAY)
+        self._assert_nothing_created(db_conn, result, [decl.CUSTOMER_DOCUMENT_MISMATCH])
+
     def test_multiple_flags_accumulate(self, db_conn):
         _existing_client(db_conn, type_=None)
         _fabricate(db_conn, "ABC123", date(2026, 9, 1))

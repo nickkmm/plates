@@ -103,6 +103,16 @@ class TestListDeclarations:
         for term in ("juan perez", "4242", "lnk123", "lnk-1"):
             assert [d.id for d in db.list_declarations(db_conn, query=term)] == [linked], term
 
+    def test_like_wildcards_typed_by_the_user_match_literally(self, db_conn):
+        plain = _insert(db_conn)
+        weird = _insert(db_conn, submitted_data={"owner": {"name": "100% A_B", "document_number": "1"},
+                                                  "vehicle": {"plate_number": "ZZZ999", "transit_license": "L"}})
+        assert [d.id for d in db.list_declarations(db_conn, query="%")] == [weird]
+        assert [d.id for d in db.list_declarations(db_conn, query="_")] == [weird]
+        assert [d.id for d in db.list_declarations(db_conn, query="a_b")] == [weird]
+        assert [d.id for d in db.list_declarations(db_conn, query="\\")] == []
+        assert plain not in [d.id for d in db.list_declarations(db_conn, query="%")]
+
     def test_query_and_status_combine_and_blank_query_ignored(self, db_conn):
         a = _insert(db_conn, status="approved")
         b = _insert(db_conn, status="pending_review")
