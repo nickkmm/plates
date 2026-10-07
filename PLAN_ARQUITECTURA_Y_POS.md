@@ -1341,17 +1341,18 @@ anteriores de `PERSONA NATURAL`, `OTROS` como tipo de cliente y
 ## Nota: capa de datos de tarjetas de propiedad (Fase 2 del plan de declaraciones)
 
 Existe la tabla `ownership_cards` (migración `0006`) y su capa de datos
-`app/core/db/ownership_cards.py`, incluido `find_card_conflicts`. Todavía no
-hay UI ni flujo de declaraciones que la use; ver `docs/DATABASE.md` y
-`docs/CORE.md`.
+`app/core/db/ownership_cards.py`, incluido `find_card_conflicts`. La usan el
+flujo de declaraciones (`/declaracion`, `/declaraciones`) y el enlace con las
+placas fabricadas (notas siguientes); ver `docs/DATABASE.md` y `docs/CORE.md`.
 
 ## Nota: declaraciones, lógica de negocio (Fase 3 del plan de declaraciones)
 
 Existe la tabla `declarations` (migración `0007`), su capa de datos
 `app/core/db/declarations.py` y la lógica `app/core/declarations.py`
 (validar, enviar, aprobar, rechazar), más `db.last_fabrication_date` para la
-regla de 6 meses. Todavía no hay formulario público ni pantalla interna que la
-usen; ver `docs/DATABASE.md` y `docs/CORE.md`.
+regla de 6 meses. La usan el formulario público `/declaracion` y la pantalla
+interna `/declaraciones` (notas siguientes); ver `docs/DATABASE.md` y
+`docs/CORE.md`.
 
 ## Nota: enlace formal placa fabricada -> tarjeta (última fase del plan de declaraciones)
 
