@@ -48,10 +48,11 @@ def customers():
 def customer_detail(customer_id: int):
     with db.get_conn() as conn:
         customer = db.get_customer(conn, customer_id)
+        cards = db.list_ownership_cards_for_customer(conn, customer_id) if customer else []
     if customer is None:
         return redirect(url_for("customers.customers"))
     return render_template(
-        "customer_detail.html", customer=customer,
+        "customer_detail.html", customer=customer, cards=cards,
         customer_types=CUSTOMER_TYPES, document_types=DOCUMENT_TYPES,
         document_relations=DOCUMENT_RELATIONS,
     )
@@ -63,8 +64,9 @@ def customer_save(customer_id: int):
     def _rerender(error: str):
         with db.get_conn() as conn:
             customer = db.get_customer(conn, customer_id)
+            cards = db.list_ownership_cards_for_customer(conn, customer_id)
         return render_template(
-            "customer_detail.html", customer=customer, error=error,
+            "customer_detail.html", customer=customer, cards=cards, error=error,
             customer_types=CUSTOMER_TYPES, document_types=DOCUMENT_TYPES,
             document_relations=DOCUMENT_RELATIONS,
         ), 400

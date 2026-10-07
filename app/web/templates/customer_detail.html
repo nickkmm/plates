@@ -19,6 +19,9 @@
     input, select { padding:.3rem; border:1px solid #ccc; border-radius:5px; font-size:.9rem; box-sizing:border-box; width:100%; }
     input:disabled, select:disabled { background:#f0f0f0; color:#999; }
     .muted { color:#777; font-size:.9rem; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { border:1px solid #e3e3e3; padding:.4rem .55rem; text-align:left; vertical-align:top; }
+    th { background:#f6f6f6; }
     .save-row { display:flex; justify-content:flex-end; align-items:center; gap:.7rem; margin-top:.8rem; }
     button, .btn-link { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
     .submit { background:#1a9c5b; color:#fff; font-size:1.05rem; padding:.65rem 1.4rem; }
@@ -74,6 +77,27 @@
       <button type="submit" class="submit">Guardar cambios</button>
     </div>
   </form>
+
+  {% if customer.type == 'CLIENTE' %}
+  <fieldset>
+    <legend>Tarjetas de propiedad</legend>
+    {% if cards %}
+    <table>
+      <thead><tr><th>Licencia</th><th>Placa</th><th>Tipo de vehículo</th><th>Matriculado en</th><th>Marca</th></tr></thead>
+      <tbody>
+        {% for c in cards %}
+        <tr>
+          <td>{{ c.transit_license }}</td><td>{{ c.plate_number }}</td><td>{{ c.vehicle_type or '—' }}</td>
+          <td>{{ c.registered_in or '—' }}</td><td>{{ c.vehicle_brand or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Este cliente todavía no tiene tarjetas de propiedad registradas.</p>
+    {% endif %}
+  </fieldset>
+  {% endif %}
 
   <script>
     // Propietario/Poseedor solo para CLIENTE; Dirección/Barrio/Municipio

@@ -223,3 +223,27 @@ class TestCustomersForbidden:
         customer = db.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.name == "PTO.V"  # untouched
+
+
+class TestOwnershipCardsTable:
+    def test_cliente_with_cards_lists_them(self, authenticated_client, db_conn):
+        customer_id = db.resolve_or_create_customer(db_conn, "DUENO", type="CLIENTE")
+        db.create_ownership_card(
+            db_conn, customer_id, transit_license="LIC-77", plate_number="ABC123",
+            engine_number=None, chassis_number=None, vehicle_type="CARRO PARTICULAR",
+            registered_in="MEDELLÍN", vehicle_brand="MAZDA",
+        )
+        html = authenticated_client.get(_detail_url(customer_id)).data.decode()
+        assert "Tarjetas de propiedad" in html
+        for text in ("LIC-77", "ABC123", "CARRO PARTICULAR", "MEDELLÍN", "MAZDA"):
+            assert text in html
+
+    def test_cliente_without_cards_shows_empty_state(self, authenticated_client, db_conn):
+        customer_id = db.resolve_or_create_customer(db_conn, "SIN TARJETA", type="CLIENTE")
+        html = authenticated_client.get(_detail_url(customer_id)).data.decode()
+        assert "todavía no tiene tarjetas de propiedad" in html
+
+    def test_non_cliente_has_no_cards_section(self, authenticated_client, db_conn):
+        customer_id = db.resolve_or_create_customer(db_conn, "UNA EMPRESA", type="EMPRESA")
+        html = authenticated_client.get(_detail_url(customer_id)).data.decode()
+        assert "Tarjetas de propiedad" not in html
