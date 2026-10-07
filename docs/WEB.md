@@ -32,6 +32,11 @@ blueprints (`today_iso`, `_options`, `_padded`, `_validate_order_header`,
 | GET | `/customers` | `customers.py` | Lista de clientes, con filtro `?q=` por nombre (Fase 6) | `db.list_customers` | `customers.html` | `@login_required` (admin-only, mismo nivel que `/precios`) |
 | GET | `/customers/<id>` | `customers.py` | Form de edición de un cliente | `db.get_customer` | `customer_detail.html` | `@login_required` |
 | POST | `/customers/<id>` | `customers.py` | Sobreescribe los atributos del cliente (nombre incluido, y dirección/barrio/municipio según el tipo) — a diferencia de `db.resolve_or_create_customer`, esto SÍ reemplaza un valor ya guardado | `db.update_customer` | (redirect) | `@login_required` |
+| GET | `/declaraciones` | `declarations.py` | Lista de declaraciones juramentadas del formulario público: pestañas `?status=` (Pendientes por defecto, Aprobadas, Rechazadas, Todas), búsqueda `?q=` (nombre, documento, placa, licencia), pendientes primero y contador de pendientes | `db.list_declarations` | `declarations.html` | `@pos_allowed` (el rol `production` recibe 403: maneja datos de identidad) |
+| GET | `/declaraciones/<id>` | `declarations.py` | Detalle: lo declarado, archivos, cliente/gestor/tarjeta enlazados y, si está pendiente, la explicación de cada alerta con su contexto real (fecha de la última fabricación y desde cuándo se puede repetir, tarjetas existentes y sus dueños, tipo/documento del cliente existente). Solo personal autenticado. Id desconocido redirige a la lista | `db.get_declaration`, `db.last_fabrication_date`, `db.find_orders_for_plate`, `db.get_ownership_card_by_*`, `db.get_customer*` | `declaration_detail.html` | `@pos_allowed` |
+| GET | `/declaraciones/<id>/file/<kind>` | `declarations.py` | Descarga autenticada (`kind` = `owner_signature`, `gestor_signature` o `notarized_pdf`) vía `resolve_upload_path`; `inline`, `nosniff`, `no-store`; 404 si el tipo, la ruta o el archivo no existen. Nunca se acepta un nombre de archivo en la URL | `db.get_declaration` | (archivo) | `@pos_allowed` |
+| POST | `/declaraciones/<id>/approve` | `declarations.py` | Aprueba (campos `reassign_card` y `note`); un `ValueError` re-renderiza el detalle con el mensaje (400) sin cambiar nada | `declarations.approve_declaration` | (redirect) | `@login_required` (solo admin; `point_of_sale` recibe 403) |
+| POST | `/declaraciones/<id>/reject` | `declarations.py` | Rechaza; la nota (`note`) es obligatoria | `declarations.reject_declaration` | (redirect) | `@login_required` |
 | GET | `/cuadre` | `cash_summary.py` | Cuadre de caja: totales por fecha/forma de pago en `[desde, hasta]` (default hoy, Fase 5b) | `cash_summary.build_cash_summary` | `cash_summary.html` | `@pos_allowed` |
 | GET | `/cuadre/pdf` | `cash_summary.py` | Mismo reporte, exportado a PDF | `cash_summary.build_cash_summary`, `render_cash_summary_pdf` | (descarga PDF) | `@pos_allowed` |
 | GET | `/records` | `records.py` | Registros: recientes, o búsqueda por placa/orden | `db.recent_orders`, `search_plates_by_number`, `search_orders_by_number` | `records.html` | `@consulta_allowed` |
@@ -104,7 +109,10 @@ independiente que incluye `_nav.html` y duplica su propio `<style>`.
 
 | Template | Qué renderiza |
 |---|---|
-| `_nav.html` | Nav compartido; "Registrar"/"Cuadre" solo si el rol está en `pos_roles`, "Revisión"/"Inventario"/"Precios" solo si está en `full_access_roles`. |
+| `_nav.html` | Nav compartido; "Registrar"/"Cuadre"/"Declaraciones" solo si el rol está en `pos_roles`, "Revisión"/"Inventario"/"Precios" solo si está en `full_access_roles`. |
+| `declarations.html` | Lista de declaraciones: pestañas de estado con contador de pendientes, búsqueda, insignias de estado y de alertas (`Placa reciente`, `Tarjeta de otro dueño`, `Datos no cuadran`, `Tipo de cliente`, `Documento distinto`). |
+| `declaration_detail.html` | Detalle de una declaración: alertas con contexto (solo si está pendiente), datos declarados, firmas y PDF (enlaces a la ruta de descarga), resultado de la revisión y, solo para admin, los formularios de aprobar (con reasignar tarjeta y nota) y rechazar (nota obligatoria). |
+| `customer_detail.html` | Edición de un cliente (`/customers/<id>`); para clientes `CLIENTE` añade la tabla de solo lectura "Tarjetas de propiedad" (licencia, placa, tipo de vehículo, matriculado en, marca; con texto si no tiene ninguna) desde `db.list_ownership_cards_for_customer`. |
 | `_orders_table.html` | Tabla de órdenes reusada por la vista "recientes" y por los resultados de búsqueda por orden. |
 | `login.html` | Card de login (sin nav). |
 | `declaration.html` | Formulario público de declaración (sin nav, sin login). Los nombres de los campos son el contrato con `public_declaration.py`. |

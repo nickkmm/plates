@@ -1353,6 +1353,15 @@ Existe la tabla `declarations` (migración `0007`), su capa de datos
 regla de 6 meses. Todavía no hay formulario público ni pantalla interna que la
 usen; ver `docs/DATABASE.md` y `docs/CORE.md`.
 
+## Nota: pantalla interna `/declaraciones`
+
+Existe la pantalla de revisión `/declaraciones` (blueprint `declarations.py`):
+lista con filtro de estado y búsqueda, detalle con la explicación de cada
+alerta y su contexto real, descarga autenticada de firmas y PDF, y aprobar o
+rechazar (solo admin). Listar, ver y descargar es `@pos_allowed`; el rol
+`production` recibe 403 en todo. `/customers/<id>` muestra además las tarjetas
+de propiedad del cliente. Ver `docs/WEB.md`.
+
 ## Nota: ruta pública `/declaracion` (Fase 4 del plan de declaraciones)
 
 Existe `app/web/blueprints/public_declaration.py`: la primera ruta pública que

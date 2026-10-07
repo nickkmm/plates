@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Declaración {{ d.id }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.3rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .error { background:#fdecec; border:1px solid #d33; border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
+    .alert { background:#fff8e6; border:1px solid #e0b040; border-radius:8px; padding:.8rem 1rem; margin-bottom:.8rem; }
+    .alert h3 { margin:0 0 .4rem; font-size:1rem; color:#8a5a00; }
+    .alert ul { margin:0; padding-left:1.2rem; font-size:.9rem; }
+    fieldset { border:1px solid #ddd; border-radius:10px; margin-bottom:1.2rem; padding:1rem; }
+    legend { font-weight:600; padding:0 .4rem; }
+    dl { display:grid; grid-template-columns:max-content 1fr; gap:.3rem 1rem; margin:0; font-size:.9rem; }
+    dt { color:#555; }
+    dd { margin:0; }
+    .muted { color:#777; font-size:.9rem; }
+    .badge { display:inline-block; border-radius:5px; padding:.15rem .5rem; font-size:.78rem; margin-right:.2rem; }
+    .badge.pending_review { background:#fff3d6; color:#8a5a00; }
+    .badge.approved { background:#e8f6ee; color:#1a7a45; }
+    .badge.rejected { background:#fdecec; color:#900; }
+    .badge.flag { background:#fdecec; color:#900; }
+    .sig { max-width:320px; border:1px solid #ddd; background:#fff; display:block; }
+    label { font-size:.85rem; color:#555; display:block; margin-bottom:.5rem; }
+    textarea { width:100%; box-sizing:border-box; padding:.4rem; border:1px solid #ccc; border-radius:5px; font:inherit; }
+    button, a.back { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
+    .approve { background:#1a9c5b; color:#fff; }
+    .reject { background:#c33; color:#fff; }
+    a.back { background:#0b6bcb; color:#fff; font-size:.9rem; }
+    .reviews { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+    @media (max-width:700px) { .reviews { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  {% set data = d.submitted_data %}
+  {% set owner = data.get('owner') or {} %}
+  {% set gestor_data = data.get('gestor') %}
+  {% set vehicle = data.get('vehicle') or {} %}
+  <h1>Declaración #{{ d.id }}
+    <span class="badge {{ d.status }}">{{ status_labels.get(d.status, d.status) }}</span>
+    {% for f in d.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% endfor %}
+  </h1>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if d.status == pending_status %}
+  <fieldset>
+    <legend>Alertas por revisar</legend>
+    <p class="muted">Esta información es solo para el personal; nunca se muestra a quien envió la declaración.</p>
+    {% for f in flag_details %}
+    <div class="alert">
+      <h3>{{ f.title }}</h3>
+      <ul>{% for line in f.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+    </div>
+    {% endfor %}
+  </fieldset>
+  {% endif %}
+
+  <fieldset>
+    <legend>Declaración</legend>
+    <dl>
+      <dt>Fecha de envío</dt><dd>{{ d.created_at.strftime('%d/%m/%Y %H:%M') }}</dd>
+      <dt>Motivo</dt><dd>{{ d.reason }}</dd>
+      <dt>Cantidad de placas</dt><dd>{{ d.plate_quantity }}</dd>
+      <dt>Actúa como</dt><dd>{{ d.acting_as }}</dd>
+      {% if d.acting_as == 'GESTOR' %}<dt>Relación del cliente</dt><dd>{{ data.get('owner_relation') or '—' }}</dd>{% endif %}
+    </dl>
+  </fieldset>
+
+  <fieldset>
+    <legend>Propietario / poseedor</legend>
+    <dl>
+      <dt>Nombre</dt><dd>{{ owner.get('name') or '—' }}</dd>
+      <dt>Documento</dt><dd>{{ owner.get('document_type') or '—' }} {{ owner.get('document_number') or '' }}</dd>
+      <dt>Dirección</dt><dd>{{ owner.get('address') or '—' }}</dd>
+      <dt>Barrio</dt><dd>{{ owner.get('neighborhood') or '—' }}</dd>
+      <dt>Municipio</dt><dd>{{ owner.get('municipality') or '—' }}</dd>
+      <dt>Teléfono</dt><dd>{{ owner.get('phone') or '—' }}</dd>
+      <dt>Correo</dt><dd>{{ owner.get('email') or '—' }}</dd>
+    </dl>
+  </fieldset>
+
+  {% if gestor_data %}
+  <fieldset>
+    <legend>Gestor</legend>
+    <dl>
+      <dt>Nombre</dt><dd>{{ gestor_data.get('name') or '—' }}</dd>
+      <dt>Documento</dt><dd>{{ gestor_data.get('document_type') or '—' }} {{ gestor_data.get('document_number') or '' }}</dd>
+      <dt>Dirección</dt><dd>{{ gestor_data.get('address') or '—' }}</dd>
+      <dt>Barrio</dt><dd>{{ gestor_data.get('neighborhood') or '—' }}</dd>
+      <dt>Municipio</dt><dd>{{ gestor_data.get('municipality') or '—' }}</dd>
+      <dt>Teléfono</dt><dd>{{ gestor_data.get('phone') or '—' }}</dd>
+      <dt>Correo</dt><dd>{{ gestor_data.get('email') or '—' }}</dd>
+    </dl>
+  </fieldset>
+  {% endif %}
+
+  <fieldset>
+    <legend>Vehículo (tarjeta de propiedad)</legend>
+    <dl>
+      <dt>Placa</dt><dd>{{ vehicle.get('plate_number') or '—' }}</dd>
+      <dt>Licencia de tránsito</dt><dd>{{ vehicle.get('transit_license') or '—' }}</dd>
+      <dt>Tipo de vehículo</dt><dd>{{ vehicle.get('vehicle_type') or '—' }}</dd>
+      <dt>Matriculado en</dt><dd>{{ vehicle.get('registered_in') or '—' }}</dd>
+      <dt>Marca</dt><dd>{{ vehicle.get('vehicle_brand') or '—' }}</dd>
+      <dt>N° de motor</dt><dd>{{ vehicle.get('engine_number') or '—' }}</dd>
+      <dt>N° de chasis</dt><dd>{{ vehicle.get('chassis_number') or '—' }}</dd>
+    </dl>
+  </fieldset>
+
+  <fieldset>
+    <legend>Archivos</legend>
+    {% if d.owner_signature_path %}
+    <p>Firma del propietario/poseedor:
+      <a href="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='owner_signature') }}" target="_blank">abrir</a></p>
+    <img class="sig" alt="Firma del propietario/poseedor" src="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='owner_signature') }}">
+    {% endif %}
+    {% if d.gestor_signature_path %}
+    <p>Firma del gestor:
+      <a href="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='gestor_signature') }}" target="_blank">abrir</a></p>
+    <img class="sig" alt="Firma del gestor" src="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='gestor_signature') }}">
+    {% endif %}
+    {% if d.notarized_pdf_path %}
+    <p>PDF de la declaración notariada:
+      <a href="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='notarized_pdf') }}" target="_blank">abrir PDF</a></p>
+    {% endif %}
+    {% if not (d.owner_signature_path or d.gestor_signature_path or d.notarized_pdf_path) %}
+    <p class="muted">Sin archivos adjuntos.</p>
+    {% endif %}
+  </fieldset>
+
+  {% if d.status != pending_status %}
+  <fieldset>
+    <legend>Resultado de la revisión</legend>
+    <dl>
+      <dt>Estado</dt><dd>{{ status_labels.get(d.status, d.status) }}</dd>
+      {% if d.reviewed_at %}<dt>Revisada el</dt><dd>{{ d.reviewed_at.strftime('%d/%m/%Y %H:%M') }}</dd>{% endif %}
+      {% if d.review_note %}<dt>Nota</dt><dd>{{ d.review_note }}</dd>{% endif %}
+      {% if customer %}<dt>Cliente</dt><dd>{% if session.get('role') in full_access_roles %}<a href="{{ url_for('customers.customer_detail', customer_id=customer.id) }}">{{ customer.name }}</a>{% else %}{{ customer.name }}{% endif %}</dd>{% endif %}
+      {% if gestor %}<dt>Gestor</dt><dd>{% if session.get('role') in full_access_roles %}<a href="{{ url_for('customers.customer_detail', customer_id=gestor.id) }}">{{ gestor.name }}</a>{% else %}{{ gestor.name }}{% endif %}</dd>{% endif %}
+      {% if card %}<dt>Tarjeta de propiedad</dt><dd>Licencia {{ card.transit_license }}, placa {{ card.plate_number }}</dd>{% endif %}
+    </dl>
+  </fieldset>
+  {% elif session.get('role') in full_access_roles %}
+  <div class="reviews">
+    <fieldset>
+      <legend>Aprobar</legend>
+      <form method="post" action="{{ url_for('declarations.declaration_approve', declaration_id=d.id) }}">
+        <p class="muted">Crea o enlaza el cliente, el gestor y la tarjeta de propiedad a partir de lo declarado.</p>
+        <label><input type="checkbox" name="reassign_card"> Reasignar la tarjeta existente al nuevo cliente (solo si está a nombre de otro)</label>
+        <label>Nota (opcional)<textarea name="note" rows="2"></textarea></label>
+        <button type="submit" class="approve">Aprobar</button>
+      </form>
+    </fieldset>
+    <fieldset>
+      <legend>Rechazar</legend>
+      <form method="post" action="{{ url_for('declarations.declaration_reject', declaration_id=d.id) }}">
+        <p class="muted">No crea nada. La nota es obligatoria.</p>
+        <label>Nota<textarea name="note" rows="2" required></textarea></label>
+        <button type="submit" class="reject">Rechazar</button>
+      </form>
+    </fieldset>
+  </div>
+  {% else %}
+  <p class="muted">Solo un administrador puede aprobar o rechazar esta declaración.</p>
+  {% endif %}
+
+  <p><a class="back" href="{{ url_for('declarations.declarations') }}">← Volver a Declaraciones</a></p>
+</body>
+</html>

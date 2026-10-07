@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Declaraciones</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .muted { color:#777; font-size:.9rem; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { border:1px solid #e3e3e3; padding:.4rem .55rem; text-align:left; vertical-align:top; }
+    th { background:#f6f6f6; }
+    .actions { white-space:nowrap; }
+    a.ver { display:inline-block; border:0; border-radius:6px; padding:.38rem .8rem; font-size:.82rem; text-decoration:none; background:#0b6bcb; color:#fff; }
+    a.ver:hover { background:#095bb0; }
+    .filters { display:flex; gap:.4rem; margin-bottom:1rem; flex-wrap:wrap; }
+    .filters a { padding:.35rem .8rem; border:1px solid #ccc; border-radius:16px; text-decoration:none; color:#555; font-size:.85rem; }
+    .filters a.on { background:#0b6bcb; border-color:#0b6bcb; color:#fff; }
+    .search { display:flex; gap:.5rem; margin-bottom:1.2rem; }
+    .search input { flex:1; max-width:360px; padding:.5rem .7rem; border:1px solid #ccc; border-radius:6px; font-size:.95rem; }
+    .search button { border:0; border-radius:6px; padding:.5rem 1rem; background:#0b6bcb; color:#fff; font-size:.9rem; cursor:pointer; }
+    .search a.clear { align-self:center; color:#777; font-size:.85rem; text-decoration:none; }
+    .badge { display:inline-block; border-radius:5px; padding:.15rem .5rem; font-size:.78rem; margin:0 .2rem .2rem 0; }
+    .badge.pending_review { background:#fff3d6; color:#8a5a00; }
+    .badge.approved { background:#e8f6ee; color:#1a7a45; }
+    .badge.rejected { background:#fdecec; color:#900; }
+    .badge.flag { background:#fdecec; color:#900; }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  <h1>Declaraciones juramentadas</h1>
+  <p class="muted">
+    Declaraciones enviadas por el formulario público. Las que tienen una alerta quedan
+    <strong>pendientes de revisión</strong> y no crean ningún cliente ni tarjeta hasta que un administrador las apruebe.
+    Pendientes: <strong>{{ pending_count }}</strong>.
+  </p>
+
+  <div class="filters">
+    {% for value, label in filters %}
+    <a href="{{ url_for('declarations.declarations', status=value, q=query or None) }}" class="{{ 'on' if value == status_filter }}">{{ label }}{% if value == 'pending_review' %} ({{ pending_count }}){% endif %}</a>
+    {% endfor %}
+  </div>
+
+  <form class="search" method="get" action="{{ url_for('declarations.declarations') }}">
+    <input type="hidden" name="status" value="{{ status_filter }}">
+    <input type="text" name="q" value="{{ query or '' }}" placeholder="Buscar por nombre, documento, placa o licencia" autofocus>
+    <button type="submit">Buscar</button>
+    {% if query %}<a class="clear" href="{{ url_for('declarations.declarations', status=status_filter) }}">Limpiar</a>{% endif %}
+  </form>
+
+  {% if rows %}
+  <table>
+    <thead>
+      <tr><th>#</th><th>Fecha</th><th>Propietario/poseedor</th><th>Placa</th><th>Motivo</th><th>Actúa como</th><th>Estado</th><th>Alertas</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for d in rows %}
+      {% set data = d.submitted_data %}
+      <tr>
+        <td>{{ d.id }}</td>
+        <td>{{ d.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+        <td>{{ (data.get('owner') or {}).get('name') or '—' }}</td>
+        <td>{{ (data.get('vehicle') or {}).get('plate_number') or '—' }}</td>
+        <td>{{ d.reason }}</td>
+        <td>{{ d.acting_as }}</td>
+        <td><span class="badge {{ d.status }}">{{ status_labels.get(d.status, d.status) }}</span></td>
+        <td>{% for f in d.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% else %}—{% endfor %}</td>
+        <td class="actions"><a class="ver" href="{{ url_for('declarations.declaration_detail', declaration_id=d.id) }}">Ver</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif query %}
+  <p>No se encontró ninguna declaración que coincida con "{{ query }}".</p>
+  {% else %}
+  <p>No hay declaraciones en este estado.</p>
+  {% endif %}
+</body>
+</html>

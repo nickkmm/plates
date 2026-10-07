@@ -10,6 +10,7 @@
   {% if session.get('role') in pos_roles %}
   <a href="{{ url_for('ingest.ingest') }}" class="{{ 'on' if request.endpoint in ('ingest.ingest','ingest.ingest_pdf') }}">Registrar</a>
   <a href="{{ url_for('cash_summary.cuadre') }}" class="{{ 'on' if request.endpoint in ('cash_summary.cuadre','cash_summary.cuadre_pdf') }}">Cuadre</a>
+  <a href="{{ url_for('declarations.declarations') }}" class="{{ 'on' if request.endpoint in ('declarations.declarations','declarations.declaration_detail') }}">Declaraciones</a>
   {% endif %}
   {% if session.get('role') in full_access_roles %}
   <a href="{{ url_for('review.review') }}" class="{{ 'on' if request.endpoint=='review.review' }}">Revisión</a>
