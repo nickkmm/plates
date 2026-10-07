@@ -1361,3 +1361,12 @@ alerta y su contexto real, descarga autenticada de firmas y PDF, y aprobar o
 rechazar (solo admin). Listar, ver y descargar es `@pos_allowed`; el rol
 `production` recibe 403 en todo. `/customers/<id>` muestra además las tarjetas
 de propiedad del cliente. Ver `docs/WEB.md`.
+
+## Nota: ruta pública `/declaracion` (Fase 4 del plan de declaraciones)
+
+Existe `app/web/blueprints/public_declaration.py`: la primera ruta pública que
+escribe (`GET/POST /declaracion`, sin login). Combina honeypot, token firmado,
+Turnstile y límite por IP contra `declarations`, guarda firmas y PDF en
+`UPLOADS_DIR` y llama a `submit_declaration`. Queda apagada (503) hasta que se
+configuren las llaves de Turnstile. `tests/web/test_public_routes.py` fija la
+lista de rutas públicas; ver `docs/WEB.md`.

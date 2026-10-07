@@ -22,9 +22,11 @@ one module per domain:
                       POST /declaraciones/<id>/approve|reject (review of the
                       sworn declarations from the public form)
   auth_routes.py   -- GET/POST /login, GET/POST /logout
+  public_declaration.py -- GET/POST /declaracion (PUBLIC sworn-declaration
+                      form, no login; 503 until Turnstile is configured)
 
-All routes except /login, /logout and /healthz require an authenticated
-session. Most also require a full-access role (admin/producción); see
+All routes except /login, /logout, /healthz and /declaracion require an
+authenticated session. Most also require a full-access role (admin/producción); see
 app.web.auth.login_required. A small allowlist of read-only lookup routes
 (/records, /records/<id>) instead accepts any authenticated role, including
 the read-only 'producción' role -- see app.web.auth.consulta_allowed.
@@ -49,6 +51,7 @@ from app.web.blueprints.declarations import bp as declarations_bp
 from app.web.blueprints.ingest import bp as ingest_bp
 from app.web.blueprints.inventory import bp as inventory_bp
 from app.web.blueprints.pricing import bp as pricing_bp
+from app.web.blueprints.public_declaration import bp as public_declaration_bp
 from app.web.blueprints.records import bp as records_bp
 from app.web.blueprints.review import bp as review_bp
 from app.web.helpers import format_cop
@@ -87,6 +90,7 @@ app.register_blueprint(declarations_bp)
 app.register_blueprint(ingest_bp)
 app.register_blueprint(inventory_bp)
 app.register_blueprint(pricing_bp)
+app.register_blueprint(public_declaration_bp)
 app.register_blueprint(records_bp)
 app.register_blueprint(review_bp)
 
@@ -98,6 +102,11 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=_COOKIE_SECURE,
     PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+    # Public /declaracion: PDF (<=10 MB) + two PNG signatures as data URLs
+    # (~270 KB each). Werkzeug 3.1 caps non-file form fields at 500 KB by
+    # default, which would reject a gestor submission.
+    MAX_CONTENT_LENGTH=12 * 1024 * 1024,
+    MAX_FORM_MEMORY_SIZE=2 * 1024 * 1024,
 )
 
 @app.context_processor
