@@ -96,7 +96,10 @@ def uploads(tmp_path, monkeypatch) -> Path:
 
 
 @pytest.fixture
-def enabled(monkeypatch, uploads) -> Path:
+def enabled(monkeypatch, uploads, clean_db) -> Path:
+    # clean_db: every test in this module runs inside the rollback fixture, so a
+    # submission never persists and the per-IP limit (counted in `declarations`)
+    # can't be tripped by rows left over from earlier runs.
     monkeypatch.setenv("TURNSTILE_BYPASS", "1")
     return uploads
 
