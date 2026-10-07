@@ -216,3 +216,19 @@ class TestPuntoVentaRole:
         assert resp.status_code == 200
         assert b"7002" in resp.data
 
+
+
+class TestDeclarationsNav:
+    """/declaraciones is for admin + point_of_sale only; never the read-only role."""
+
+    def test_nav_link_hidden_for_production(self, produccion_client):
+        assert 'href="/declaraciones"' not in produccion_client.get("/records").data.decode()
+
+    def test_production_gets_403_on_declaraciones(self, produccion_client):
+        assert produccion_client.get("/declaraciones").status_code == 403
+
+    def test_nav_link_shown_for_point_of_sale(self, punto_venta_client, clean_db):
+        assert 'href="/declaraciones"' in punto_venta_client.get("/ingest").data.decode()
+
+    def test_nav_link_shown_for_admin(self, authenticated_client, clean_db):
+        assert 'href="/declaraciones"' in authenticated_client.get("/ingest").data.decode()
