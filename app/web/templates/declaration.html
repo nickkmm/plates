@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>INGSE — Declaración juramentada</title>
+  {% if turnstile_site_key %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
+  <style>
+    :root { --green:#1a9c5b; --blue:#0b6bcb; --red:#d33; --ink:#222; }
+    * { box-sizing:border-box; }
+    [hidden] { display:none !important; }
+    html { -webkit-text-size-adjust:100%; }
+    body { font-family: system-ui, sans-serif; color:var(--ink); background:#f3f6fb; margin:0; padding:1rem; line-height:1.4; }
+    .wrap { max-width:640px; margin:0 auto; }
+    .card { background:#fff; border:1px solid #e2e2e2; border-radius:14px;
+            box-shadow:0 4px 18px rgba(0,0,0,.07); padding:1.2rem 1.1rem; margin-bottom:1rem; }
+    .brand { text-align:center; font-weight:800; color:var(--blue); letter-spacing:.5px; font-size:1.2rem; }
+    .brand-sub { text-align:center; font-size:.8rem; color:#555; margin:.2rem 0 0; overflow-wrap:anywhere; }
+    h1 { font-size:1.35rem; text-align:center; margin:.8rem 0 .2rem; }
+    .lead { text-align:center; color:#555; font-size:.92rem; margin:0; }
+    h2 { font-size:1rem; color:var(--blue); margin:0 0 .8rem; text-transform:uppercase; letter-spacing:.3px; }
+    h3 { font-size:.9rem; margin:1rem 0 .6rem; color:#333; }
+    label.field { font-size:.85rem; color:#555; display:flex; flex-direction:column; gap:.3rem; margin-bottom:.9rem; min-width:0; }
+    input[type=text], input[type=number], input[type=email], input[type=tel], select {
+      padding:.65rem; border:1px solid #ccc; border-radius:7px; font-size:1rem; width:100%; background:#fff; color:var(--ink); }
+    input[type=file] { font-size:1rem; width:100%; }
+    .choice { display:flex; align-items:flex-start; gap:.6rem; padding:.55rem 0; font-size:1rem; }
+    .choice input { width:1.3rem; height:1.3rem; margin:.1rem 0 0; flex:none; }
+    .row2 { display:grid; grid-template-columns:minmax(0,1fr); gap:0 .8rem; }
+    @media (min-width:520px) { .row2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+    #plateInput { text-transform:uppercase; letter-spacing:1px; }
+    .note { background:#fff8e1; border:1px solid #f0d78a; border-radius:8px; padding:.6rem .8rem; font-size:.85rem; margin:.4rem 0 .9rem; }
+    .error { background:#fdecec; border:1px solid var(--red); border-radius:8px; padding:.7rem .9rem; color:#900; font-size:.9rem; margin-bottom:1rem; }
+    .error ul { margin:0; padding-left:1.1rem; }
+    .legal { border:1px solid #ccc; border-radius:8px; padding:.8rem; max-height:16rem; overflow-y:auto; font-size:.88rem; background:#fafafa; margin-bottom:.8rem; }
+    .legal h3:first-child { margin-top:0; }
+    .legal p, .legal ul, .legal ol { margin:.4rem 0; }
+    .legal li { margin-bottom:.3rem; }
+    .pad-wrap { margin-bottom:1rem; }
+    .pad-label { font-size:.85rem; color:#555; margin-bottom:.3rem; }
+    canvas.pad { display:block; width:100%; height:180px; border:2px dashed #999; border-radius:8px; background:#fff;
+                 touch-action:none; -webkit-user-select:none; user-select:none; }
+    .pad-actions { margin-top:.4rem; }
+    button.secondary { background:#fff; color:var(--blue); border:1px solid var(--blue); border-radius:8px; padding:.5rem .9rem; font-size:1rem; cursor:pointer; }
+    button.primary { width:100%; background:var(--green); color:#fff; border:0; border-radius:8px; padding:.85rem; font-size:1.05rem; font-weight:600; cursor:pointer; }
+    button.primary:hover { background:#168a50; }
+    .hp { position:absolute; left:-10000px; top:auto; width:1px; height:1px; overflow:hidden; }
+    .footer { font-size:.78rem; color:#666; text-align:center; padding:0 .4rem 1.5rem; overflow-wrap:anywhere; margin-top:1.2rem; }
+    #clientError { display:none; }
+  </style>
+</head>
+<body>
+{% set f = form if form else {} %}
+{% set acting = f.get('acting_as', '') %}
+{% set reason_v = f.get('reason', '') %}
+{% set is_gestor = acting == 'GESTOR' %}
+{% set is_loss = reason_v == 'PÉRDIDA' %}
+{% macro person(prefix, gestor=false) %}
+  {% set off = gestor and not is_gestor %}
+  <label class="field">Nombre completo
+    <input type="text" name="{{ prefix }}_name" id="{{ prefix }}Name" value="{{ f.get(prefix ~ '_name', '') }}" autocomplete="{{ 'off' if gestor else 'name' }}" maxlength="200"{% if not gestor or is_gestor %} required{% endif %}{% if off %} disabled{% endif %}>
+  </label>
+  <div class="row2">
+    <label class="field">Tipo de documento
+      <select name="{{ prefix }}_document_type"{% if not gestor %} required{% endif %}{% if off %} disabled{% endif %}>
+        <option value="">Selecciona…</option>
+        {% for t in document_types %}<option value="{{ t }}"{% if f.get(prefix ~ '_document_type', '') == t %} selected{% endif %}>{{ t }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="field">Número de documento
+      <input type="text" name="{{ prefix }}_document_number" value="{{ f.get(prefix ~ '_document_number', '') }}" inputmode="numeric" autocomplete="off" maxlength="30"{% if not gestor %} required{% endif %}{% if off %} disabled{% endif %}>
+    </label>
+  </div>
+  <label class="field">Dirección de domicilio
+    <input type="text" name="{{ prefix }}_address" value="{{ f.get(prefix ~ '_address', '') }}" autocomplete="{{ 'off' if gestor else 'street-address' }}" maxlength="200"{% if off %} disabled{% endif %}>
+  </label>
+  <div class="row2">
+    <label class="field">Barrio
+      <input type="text" name="{{ prefix }}_neighborhood" value="{{ f.get(prefix ~ '_neighborhood', '') }}" autocomplete="off" maxlength="100"{% if off %} disabled{% endif %}>
+    </label>
+    <label class="field">Municipio
+      <input type="text" name="{{ prefix }}_municipality" value="{{ f.get(prefix ~ '_municipality', '') }}" autocomplete="{{ 'off' if gestor else 'address-level2' }}" maxlength="100"{% if off %} disabled{% endif %}>
+    </label>
+  </div>
+  <div class="row2">
+    <label class="field">Teléfono
+      <input type="tel" name="{{ prefix }}_phone" value="{{ f.get(prefix ~ '_phone', '') }}" inputmode="tel" autocomplete="{{ 'off' if gestor else 'tel' }}" maxlength="30"{% if not gestor %} required{% endif %}{% if off %} disabled{% endif %}>
+    </label>
+    <label class="field">Correo electrónico
+      <input type="email" name="{{ prefix }}_email" value="{{ f.get(prefix ~ '_email', '') }}" inputmode="email" autocomplete="{{ 'off' if gestor else 'email' }}" maxlength="200"{% if off %} disabled{% endif %}>
+    </label>
+  </div>
+{% endmacro %}
+<div class="wrap">
+  <div class="card">
+    <div class="brand">INGSE SAS</div>
+    <p class="brand-sub">NIT 900.773.756-0 · Fabricante autorizado de la Placa Única Nacional para Vehículos</p>
+    <p class="brand-sub">Calle 42 # 41-47, Barrio Fray Luis Amigo, Palmira, Valle del Cauca</p>
+    <p class="brand-sub">Tel 3176410267 – 3173712906 · servicioalcliente@ingse.co</p>
+    <h1>Declaración juramentada</h1>
+    <p class="lead">Solicitud de duplicado de placa(s) por deterioro o pérdida</p>
+  </div>
+
+  {% if errors %}
+  <div class="error" role="alert"><ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
+  {% endif %}
+  <div class="error" id="clientError" role="alert"></div>
+
+  <form id="declForm" method="post" action="/declaracion" enctype="multipart/form-data">
+    <input type="hidden" name="form_token" value="{{ token }}">
+    <div class="hp" aria-hidden="true">
+      <label>No llenar este campo <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true"></label>
+    </div>
+
+    <div class="card">
+      <div class="note">NOTA. Si la placa que vas a fabricar es por PÉRDIDA, este formato debe estar autenticado por Notaría (adjunta el PDF autenticado más abajo).</div>
+      <h2>1. Motivo de la solicitud</h2>
+      <label class="choice"><input type="radio" name="reason" value="DETERIORO" required{% if reason_v == 'DETERIORO' %} checked{% endif %}> Deterioro de la(s) placa(s)</label>
+      <label class="choice"><input type="radio" name="reason" value="PÉRDIDA"{% if reason_v == 'PÉRDIDA' %} checked{% endif %}> Pérdida o hurto de la(s) placa(s)</label>
+      <label class="field" style="margin-top:.6rem">Cantidad de placas a fabricar
+        <input type="number" name="plate_quantity" min="1" step="1" inputmode="numeric" value="{{ f.get('plate_quantity', 1) }}" required>
+      </label>
+      <div id="notarizedWrap"{% if not is_loss %} hidden{% endif %}>
+        <label class="field">Formato autenticado por Notaría (PDF)
+          <input type="file" name="notarized_pdf" id="notarizedPdf" accept="application/pdf"{% if is_loss %} required{% else %} disabled{% endif %}>
+        </label>
+        {% if errors and is_loss %}<div class="note">Vuelve a adjuntar el PDF y a firmar.</div>{% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>2. Calidad en la que actúa</h2>
+      <label class="choice"><input type="radio" name="acting_as" value="PROPIETARIO" required{% if acting == 'PROPIETARIO' %} checked{% endif %}> Propietario (tarjeta de propiedad)</label>
+      <label class="choice"><input type="radio" name="acting_as" value="POSEEDOR"{% if acting == 'POSEEDOR' %} checked{% endif %}> Poseedor</label>
+      <label class="choice"><input type="radio" name="acting_as" value="GESTOR"{% if acting == 'GESTOR' %} checked{% endif %}> Gestor</label>
+    </div>
+
+    <div class="card">
+      <h2>3. Datos del declarante</h2>
+      <h3>Datos del dueño y/o poseedor</h3>
+      {{ person('owner') }}
+      <div id="ownerRelationWrap"{% if not is_gestor %} hidden{% endif %}>
+        <label class="field">El dueño y/o poseedor es
+          <select name="owner_relation" id="ownerRelation"{% if is_gestor %} required{% else %} disabled{% endif %}>
+            <option value="">Selecciona…</option>
+            {% for r in owner_relations %}<option value="{{ r }}"{% if f.get('owner_relation', '') == r %} selected{% endif %}>{{ r }}</option>{% endfor %}
+          </select>
+        </label>
+      </div>
+      <div id="gestorBlock"{% if not is_gestor %} hidden{% endif %}>
+        <h3>Datos del gestor</h3>
+        {{ person('gestor', true) }}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>4. Datos del vehículo</h2>
+      <label class="field">Placa
+        <input type="text" name="vehicle_plate_number" id="plateInput" value="{{ f.get('vehicle_plate_number', '') }}" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="10" required>
+      </label>
+      <div class="row2">
+        <label class="field">Licencia de tránsito No.
+          <input type="text" name="vehicle_transit_license" value="{{ f.get('vehicle_transit_license', '') }}" autocomplete="off" autocapitalize="characters" maxlength="40">
+        </label>
+        <label class="field">No. Motor
+          <input type="text" name="vehicle_engine_number" value="{{ f.get('vehicle_engine_number', '') }}" autocomplete="off" autocapitalize="characters" maxlength="40">
+        </label>
+        <label class="field">No. Chasis
+          <input type="text" name="vehicle_chassis_number" value="{{ f.get('vehicle_chassis_number', '') }}" autocomplete="off" autocapitalize="characters" maxlength="40">
+        </label>
+        <label class="field">Tipo de vehículo
+          <select name="vehicle_type" required>
+            <option value="">Selecciona…</option>
+            {% for t in vehicle_types %}<option value="{{ t }}"{% if f.get('vehicle_type', '') == t %} selected{% endif %}>{{ t }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="field">Matriculado en
+          <input type="text" name="vehicle_registered_in" value="{{ f.get('vehicle_registered_in', '') }}" autocomplete="off" maxlength="100">
+        </label>
+        <label class="field">Marca
+          <input type="text" name="vehicle_brand" value="{{ f.get('vehicle_brand', '') }}" autocomplete="off" maxlength="100">
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Declaración, aviso legal y compromisos</h2>
+      <div class="legal" tabindex="0" aria-label="Texto de la declaración, aviso legal y compromisos">
+        <h3>5. DECLARACIÓN Y AUTORIZACIÓN</h3>
+        <p>Manifiesto de manera libre y voluntaria, bajo la gravedad del juramento, que:</p>
+        <ol type="a">
+          <li>Soy propietario o poseedor del vehículo descrito en este formato.</li>
+          <li>Autorizo a INGSE SAS (NIT 900.773.756-0) a fabricar y entregar, Duplicado de placa bajo mi responsabilidad, la(s) placa(s) señalada(s) en la sección 1, idénticas a las que identifican mi vehículo.</li>
+          <li>Toda la información y los documentos que entrego son verídicos y copia fiel del original, y autorizo que se verifiquen por cualquier medio.</li>
+        </ol>
+        <h3>6. AVISO LEGAL — LEA ANTES DE FIRMAR</h3>
+        <p>Este documento es una declaración jurada con efectos legales. Conforme al artículo 83 de la Constitución Política de Colombia, sus actuaciones ante INGSE SAS se presumen realizadas de buena fe, es decir, con información veraz y honesta.</p>
+        <p>Si la información o los documentos entregados son falsos, alterados o inexactos, usted puede incurrir en los siguientes delitos, contemplados en el Código Penal Colombiano (Ley 599 de 2000):</p>
+        <ul>
+          <li>Falsedad en documento privado (art. 289 C.P.): prisión de 16 a 108 meses.</li>
+          <li>Falso testimonio (art. 442 C.P.), cuando la declaración jurada se rinde ante autoridad competente en una actuación administrativa: prisión de 6 a 12 años.</li>
+        </ul>
+        <p>Al firmar, usted declara que ha leído y entendido este aviso y que la información suministrada es cierta, real y verificable.</p>
+        <h3>7. COMPROMISOS Y RESPONSABILIDAD DEL CLIENTE o DUEÑO</h3>
+        <ul>
+          <li>Los trámites ante el RUNT son de responsabilidad exclusiva del cliente o de la empresa que solicita este trámite.</li>
+          <li>Debe entregar las placas deterioradas en INGSE SAS, o enviarlas a la Calle 42 # 41-47, Barrio Fray Luis Amigo, Palmira.</li>
+        </ul>
+      </div>
+      <label class="choice"><input type="checkbox" name="accept_terms" value="1" required{% if f.get('accept_terms') %} checked{% endif %}> He leído y entiendo el aviso legal y acepto la declaración</label>
+    </div>
+
+    <div class="card">
+      <h2>8. Firma</h2>
+      {% if errors %}<div class="note">Vuelve a adjuntar el PDF y a firmar.</div>{% endif %}
+      <div class="pad-wrap">
+        <div class="pad-label">Firma del dueño y/o poseedor</div>
+        <canvas class="pad" id="ownerCanvas" aria-label="Firma del dueño y/o poseedor"></canvas>
+        <input type="hidden" name="owner_signature" id="ownerSignature" disabled>
+        <div class="pad-actions"><button type="button" class="secondary" id="ownerClear">Borrar firma</button></div>
+      </div>
+      <div class="pad-wrap" id="gestorSignatureWrap"{% if not is_gestor %} hidden{% endif %}>
+        <div class="pad-label">Firma del gestor</div>
+        <canvas class="pad" id="gestorCanvas" aria-label="Firma del gestor"></canvas>
+        <input type="hidden" name="gestor_signature" id="gestorSignature" disabled>
+        <div class="pad-actions"><button type="button" class="secondary" id="gestorClear">Borrar firma</button></div>
+      </div>
+    </div>
+
+    {% if turnstile_site_key %}
+    <div class="card"><div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}"></div></div>
+    {% endif %}
+
+    <button type="submit" class="primary">Enviar declaración</button>
+  </form>
+
+  <p class="footer">INGSE SAS · NIT 900.773.756-0 · Calle 42 # 41-47, Barrio Fray Luis Amigo, Palmira, Valle del Cauca<br>
+    La huella se toma en el mostrador si INGSE la requiere.</p>
+</div>
+
+<script>
+(function () {
+  var form = document.getElementById('declForm');
+  var clientError = document.getElementById('clientError');
+
+  function checkedValue(name) {
+    var radios = document.querySelectorAll('input[name="' + name + '"]');
+    for (var i = 0; i < radios.length; i++) if (radios[i].checked) return radios[i].value;
+    return '';
+  }
+
+  // --- Signature pads -------------------------------------------------
+  function Pad(canvasId, inputId, clearId) {
+    this.canvas = document.getElementById(canvasId);
+    this.input = document.getElementById(inputId);
+    this.ctx = this.canvas.getContext('2d');
+    this.drawing = false;
+    this.sized = 0;
+    var self = this;
+    this.canvas.addEventListener('pointerdown', function (e) { self.down(e); });
+    this.canvas.addEventListener('pointermove', function (e) { self.move(e); });
+    this.canvas.addEventListener('pointerup', function (e) { self.up(e); });
+    this.canvas.addEventListener('pointercancel', function (e) { self.up(e); });
+    this.canvas.addEventListener('pointerleave', function (e) { self.up(e); });
+    document.getElementById(clearId).addEventListener('click', function () { self.clear(); });
+  }
+  // Size the bitmap for high-DPI. Only possible while visible (a hidden canvas has width 0).
+  Pad.prototype.resize = function () {
+    var w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    if (!w || w === this.sized) return;
+    var ratio = window.devicePixelRatio || 1;
+    this.canvas.width = Math.round(w * ratio);
+    this.canvas.height = Math.round(h * ratio);
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.scale(ratio, ratio);
+    this.ctx.lineWidth = 2.2;
+    this.ctx.lineCap = 'round';
+    this.ctx.lineJoin = 'round';
+    this.ctx.strokeStyle = '#111';
+    this.sized = w;
+    this.sync('');
+  };
+  Pad.prototype.pos = function (e) {
+    var r = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  Pad.prototype.down = function (e) {
+    this.resize();
+    if (e.preventDefault) e.preventDefault();
+    if (this.canvas.setPointerCapture && e.pointerId !== undefined) {
+      try { this.canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    }
+    var p = this.pos(e);
+    this.drawing = true;
+    this.ctx.beginPath();
+    this.ctx.moveTo(p.x, p.y);
+    this.ctx.lineTo(p.x + 0.1, p.y + 0.1);
+    this.ctx.stroke();
+  };
+  Pad.prototype.move = function (e) {
+    if (!this.drawing) return;
+    if (e.preventDefault) e.preventDefault();
+    var p = this.pos(e);
+    this.ctx.lineTo(p.x, p.y);
+    this.ctx.stroke();
+  };
+  Pad.prototype.up = function () {
+    if (!this.drawing) return;
+    this.drawing = false;
+    this.sync(this.canvas.toDataURL('image/png'));
+  };
+  // The hidden input is disabled while empty so a never-signed pad submits nothing.
+  Pad.prototype.sync = function (value) {
+    this.input.value = value;
+    this.input.disabled = !value;
+  };
+  Pad.prototype.clear = function () {
+    this.ctx.save();
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.restore();
+    this.sync('');
+  };
+
+  var ownerPad = new Pad('ownerCanvas', 'ownerSignature', 'ownerClear');
+  var gestorPad = new Pad('gestorCanvas', 'gestorSignature', 'gestorClear');
+
+  // --- Conditional blocks ----------------------------------------------
+  function setBlock(wrap, fields, on) {
+    wrap.hidden = !on;
+    for (var i = 0; i < fields.length; i++) fields[i].disabled = !on;
+  }
+
+  function applyState() {
+    var isGestor = checkedValue('acting_as') === 'GESTOR';
+    var isLoss = checkedValue('reason') === 'PÉRDIDA';
+
+    var gestorBlock = document.getElementById('gestorBlock');
+    setBlock(gestorBlock, gestorBlock.querySelectorAll('input, select'), isGestor);
+    document.getElementById('gestorName').required = isGestor;
+
+    var rel = document.getElementById('ownerRelation');
+    setBlock(document.getElementById('ownerRelationWrap'), [rel], isGestor);
+    rel.required = isGestor;
+
+    document.getElementById('gestorSignatureWrap').hidden = !isGestor;
+    if (!isGestor) gestorPad.clear();
+
+    var pdf = document.getElementById('notarizedPdf');
+    setBlock(document.getElementById('notarizedWrap'), [pdf], isLoss);
+    pdf.required = isLoss;
+
+    ownerPad.resize();
+    gestorPad.resize();
+  }
+
+  var actingRadios = document.querySelectorAll('input[name="acting_as"]');
+  var reasonRadios = document.querySelectorAll('input[name="reason"]');
+  for (var i = 0; i < actingRadios.length; i++) actingRadios[i].addEventListener('change', applyState);
+  for (var j = 0; j < reasonRadios.length; j++) reasonRadios[j].addEventListener('change', applyState);
+
+  // --- Plate: uppercase while typing, strip spaces on blur --------------
+  var plate = document.getElementById('plateInput');
+  plate.addEventListener('input', function () { plate.value = plate.value.toUpperCase(); });
+  plate.addEventListener('blur', function () { plate.value = plate.value.toUpperCase().replace(/\s+/g, ''); });
+
+  // --- Submit guard -----------------------------------------------------
+  form.addEventListener('submit', function (e) {
+    var missing = [];
+    if (!ownerPad.input.value) missing.push('del dueño y/o poseedor');
+    if (checkedValue('acting_as') === 'GESTOR' && !gestorPad.input.value) missing.push('del gestor');
+    if (missing.length) {
+      e.preventDefault();
+      clientError.textContent = 'La firma ' + missing.join(' y la firma ') + ' es obligatoria. Dibuja la firma con el dedo o el mouse.';
+      clientError.style.display = 'block';
+      if (clientError.scrollIntoView) clientError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    clientError.style.display = 'none';
+  });
+
+  applyState();
+})();
+</script>
+</body>
+</html>
