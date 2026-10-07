@@ -107,7 +107,8 @@
                 {% for c in categories %}<option value="{{ c }}" {% if p.plate_type==c %}selected{% endif %}>{{ c }}</option>{% endfor %}
               </select>
             </td>
-            <td><input type="text" name="plate_number" class="plate-num" value="{{ p.plate_number or '' }}"></td>
+            <td><input type="text" name="plate_number" class="plate-num" value="{{ p.plate_number or '' }}">
+              {% if p.card_transit_license %}<div class="muted"><small>Tarjeta: {{ p.card_transit_license }}</small></div>{% endif %}</td>
             <td><input type="text" name="plate_to" class="plate-num" value="{{ p.plate_to or '' }}"></td>
             <td><input type="text" name="city" list="cities" value="{{ p.city or '' }}"></td>
             <td class="r"><input type="number" name="quantity" value="{{ p.quantity }}" min="0"></td>
@@ -225,7 +226,8 @@
       {% for p in plates %}
       <tr>
         <td>{{ p.plate_type }}</td>
-        <td>{{ p.plate_number or '—' }}</td>
+        <td>{{ p.plate_number or '—' }}
+          {% if p.card_transit_license %}<div class="muted"><small>Tarjeta: {{ p.card_transit_license }}</small></div>{% endif %}</td>
         <td>{{ p.plate_to or '—' }}</td>
         <td>{{ p.city or '—' }}</td>
         <td class="r">{{ p.quantity }}</td>

@@ -732,3 +732,63 @@ class TestRecordsDeleteRoute:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (3,)  # correctly dropped to just the surviving order
 
+
+
+class TestRecordOwnershipCardLink:
+    """record_save links/relinks plates to an ownership card, and the detail
+    page shows the linked licence."""
+
+    def _setup(self, db_conn, number="SAV900"):
+        owner = db.resolve_or_create_customer(db_conn, "TITULAR")
+        card_id = db.create_ownership_card(db_conn, owner, transit_license="LIC-WEB",
+                                           plate_number="CRD123")
+        order_id = _insert_order(db_conn, order_number="3900", order_date=date(2026, 1, 1),
+                                 requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id,
+                        row=make_row(plate_type="CARRO PARTICULAR", plate_number=number),
+                        is_possible_duplicate=False)
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT id FROM plates WHERE order_id = %s", (order_id,))
+            plate_id = cur.fetchone()[0]
+        db_conn.commit()
+        return order_id, plate_id, card_id
+
+    def _post(self, client, order_id, plate_ids, numbers):
+        return client.post(f"/records/{order_id}/save", data={
+            "order_number": "3900", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "plate_id": plate_ids, "plate_type": ["CARRO PARTICULAR"] * len(numbers),
+            "plate_number": numbers, "plate_to": [""] * len(numbers), "city": [""] * len(numbers),
+            "quantity": ["1"] * len(numbers), "is_plate_annulled": [""] * len(numbers),
+        })
+
+    def _links(self, db_conn, order_id):
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT plate_number, ownership_card_id FROM plates "
+                        "WHERE order_id = %s ORDER BY id", (order_id,))
+            return cur.fetchall()
+
+    def test_editing_a_plate_number_links_it_to_the_card(self, authenticated_client, db_conn):
+        order_id, plate_id, card_id = self._setup(db_conn)
+        assert self._post(authenticated_client, order_id, [str(plate_id)], ["crd123"]).status_code == 302
+        assert self._links(db_conn, order_id) == [("CRD123", card_id)]
+
+    def test_editing_away_from_the_card_number_clears_the_link(self, authenticated_client, db_conn):
+        order_id, plate_id, card_id = self._setup(db_conn, number="CRD123")
+        assert self._links(db_conn, order_id) == [("CRD123", card_id)]
+        self._post(authenticated_client, order_id, [str(plate_id)], ["OTR456"])
+        assert self._links(db_conn, order_id) == [("OTR456", None)]
+
+    def test_adding_a_new_plate_links_it(self, authenticated_client, db_conn):
+        order_id, plate_id, card_id = self._setup(db_conn)
+        self._post(authenticated_client, order_id, [str(plate_id), ""], ["SAV900", "CRD123"])
+        assert self._links(db_conn, order_id) == [("SAV900", None), ("CRD123", card_id)]
+
+    def test_detail_shows_the_licence_of_the_linked_card(self, authenticated_client, db_conn):
+        order_id, _plate_id, _card_id = self._setup(db_conn, number="CRD123")
+        html = authenticated_client.get(f"/records/{order_id}").data.decode()
+        assert "Tarjeta: LIC-WEB" in html
+
+    def test_detail_without_link_shows_no_card_note(self, authenticated_client, db_conn):
+        order_id, _plate_id, _card_id = self._setup(db_conn)
+        html = authenticated_client.get(f"/records/{order_id}").data.decode()
+        assert "Tarjeta:" not in html

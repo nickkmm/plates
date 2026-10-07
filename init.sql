@@ -215,7 +215,15 @@ ALTER TABLE plates ADD COLUMN unit_price NUMERIC(12,2);
 ALTER TABLE plates ADD COLUMN reason TEXT;         -- DETERIORO / PÉRDIDA / OTROS
 ALTER TABLE plates ADD COLUMN vehicle_brand TEXT;
 
+-- Formal link fabricated plate -> its ownership card (see docs/DATABASE.md and
+-- app/migrations/0008_plates_ownership_card_id.sql). Added here, after
+-- ownership_cards exists, because `plates` is created before it. NULL for
+-- ranges, voided/annulled/replacement plates, EMPRESA/TRÁNSITO orders and
+-- every plate without a matching card.
+ALTER TABLE plates ADD COLUMN ownership_card_id INTEGER REFERENCES ownership_cards(id);
+
 -- First index in this schema besides primary keys / the customers.name
 -- UNIQUE: /cuadre introduces the first real aggregate JOIN over all of
 -- plates, joined on order_id.
 CREATE INDEX plates_order_id_idx ON plates(order_id);
+CREATE INDEX plates_ownership_card_id_idx ON plates(ownership_card_id);

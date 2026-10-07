@@ -810,3 +810,51 @@ class TestAtomicity:
             assert cur.fetchone() == (0,)
             cur.execute("SELECT count(*) FROM plates WHERE plate_number IN ('ATOM001', 'ATOM002')")
             assert cur.fetchone() == (0,)
+
+
+class TestOwnershipCardLink:
+    """process_rows / replace_order link fabricated plates to an existing
+    ownership card, per the order's customer type."""
+
+    def _card(self, db_conn, plate="LNK123"):
+        owner = db.resolve_or_create_customer(db_conn, "TITULAR")
+        return db.create_ownership_card(db_conn, owner, transit_license="LIC-LNK", plate_number=plate)
+
+    def _link(self, db_conn, plate):
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT ownership_card_id FROM plates WHERE plate_number = %s", (plate,))
+            return cur.fetchone()[0]
+
+    def _classify(self, db_conn, name, customer_type):
+        with db_conn.cursor() as cur:
+            cur.execute("UPDATE customers SET type = %s WHERE name = %s", (customer_type, name))
+
+    def test_process_rows_links_plate_of_a_cliente_order(self, db_conn):
+        card_id = self._card(db_conn)
+        db.resolve_or_create_customer(db_conn, "JUAN")
+        self._classify(db_conn, "JUAN", "CLIENTE")
+        process_rows(db_conn, [make_row(order_number="700", requested_by="JUAN", plate_number="LNK123")])
+        assert self._link(db_conn, "LNK123") == card_id
+
+    def test_process_rows_does_not_link_an_empresa_order(self, db_conn):
+        self._card(db_conn)
+        db.resolve_or_create_customer(db_conn, "ACME")
+        self._classify(db_conn, "ACME", "EMPRESA")
+        process_rows(db_conn, [make_row(order_number="701", requested_by="ACME", plate_number="LNK123")])
+        assert self._link(db_conn, "LNK123") is None
+
+    def test_process_rows_without_card_leaves_null(self, db_conn):
+        process_rows(db_conn, [make_row(order_number="702", requested_by="JUAN", plate_number="NOC123")])
+        assert self._link(db_conn, "NOC123") is None
+
+    def test_replace_order_links_the_recovered_plate(self, db_conn):
+        card_id = self._card(db_conn)
+        db.resolve_or_create_customer(db_conn, "JUAN")
+        self._classify(db_conn, "JUAN", "GESTOR")
+        old_id = _insert_order(db_conn, order_number="710", order_date=date(2026, 1, 1),
+                               requested_by="JUAN")
+        db.insert_plate(db_conn, order_id=old_id, row=make_row(order_number="710", plate_number=None),
+                        is_possible_duplicate=False)
+        replace_order(db_conn, "710", [make_row(order_number="710", requested_by="JUAN",
+                                                 plate_number="LNK123")])
+        assert self._link(db_conn, "LNK123") == card_id

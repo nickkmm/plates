@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import pytest
 from psycopg.rows import tuple_row
 
 from app.core import db
@@ -622,3 +623,148 @@ class TestLastFabricationDate:
         self._plate(db_conn, "1", date(2026, 1, 10), is_voided=True)
         self._plate(db_conn, "2", date(2026, 2, 10), is_plate_annulled=True)
         assert db.last_fabrication_date(db_conn, "ABC123") is None
+
+
+def _order_for_customer_type(db_conn, customer_type, *, name="DUENO UNO", order_number="900"):
+    """An order whose customer has `customer_type` (None = not classified)."""
+    customer_id = db.resolve_or_create_customer(db_conn, name)
+    with db_conn.cursor() as cur:
+        cur.execute("UPDATE customers SET type = %s WHERE id = %s", (customer_type, customer_id))
+    return db.insert_order(
+        db_conn,
+        row=make_row(order_number=order_number, requested_by=name),
+        customer_id=customer_id, created_by=None,
+    )
+
+
+def _make_card(db_conn, plate="ABC123", license_="LIC-1", name="TITULAR"):
+    owner = db.resolve_or_create_customer(db_conn, name)
+    return db.create_ownership_card(db_conn, owner, transit_license=license_, plate_number=plate)
+
+
+def _card_link(db_conn, plate_id):
+    with db_conn.cursor(row_factory=tuple_row) as cur:
+        cur.execute("SELECT ownership_card_id FROM plates WHERE id = %s", (plate_id,))
+        return cur.fetchone()[0]
+
+
+class TestPlateOwnershipCardLink:
+    """plates.ownership_card_id is resolved automatically on insert/edit."""
+
+    def test_links_for_cliente_gestor_and_unclassified_customers(self, db_conn):
+        card_id = _make_card(db_conn)
+        for i, ctype in enumerate(("CLIENTE", "GESTOR", None)):
+            order_id = _order_for_customer_type(db_conn, ctype, name=f"C{i}", order_number=str(i))
+            plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="ABC123")
+            assert _card_link(db_conn, plate_id) == card_id
+
+    def test_never_links_for_empresa_or_transito(self, db_conn):
+        _make_card(db_conn)
+        for i, ctype in enumerate(("EMPRESA", "TRÁNSITO")):
+            order_id = _order_for_customer_type(db_conn, ctype, name=f"C{i}", order_number=str(i))
+            plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="ABC123")
+            assert _card_link(db_conn, plate_id) is None
+
+    def test_order_without_customer_is_linked(self, db_conn):
+        card_id = _make_card(db_conn)
+        order_id = _insert_order(db_conn, order_number="1", order_date=date(2026, 1, 1),
+                                 requested_by="PEDRO")
+        assert _card_link(db_conn, _insert_plate_get_id(db_conn, order_id, plate_number="ABC123")) == card_id
+
+    def test_no_matching_card_stays_null(self, db_conn):
+        _make_card(db_conn, plate="ZZZ999")
+        order_id = _order_for_customer_type(db_conn, "CLIENTE")
+        assert _card_link(db_conn, _insert_plate_get_id(db_conn, order_id, plate_number="ABC123")) is None
+
+    def test_ineligible_plates_are_never_linked(self, db_conn):
+        _make_card(db_conn)
+        order_id = _order_for_customer_type(db_conn, "CLIENTE")
+        for kwargs in (
+            {"plate_to": "ABC130"},
+            {"is_voided": True},
+            {"is_plate_annulled": True},
+            {"is_batch_replacement": True},
+        ):
+            plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="ABC123", **kwargs)
+            assert _card_link(db_conn, plate_id) is None, kwargs
+
+    def test_non_real_plate_numbers_are_not_linked(self, db_conn):
+        _make_card(db_conn, plate="S/43050")
+        order_id = _order_for_customer_type(db_conn, "CLIENTE")
+        for number in (None, "S/43050"):
+            plate_id = _insert_plate_get_id(db_conn, order_id, plate_number=number)
+            assert _card_link(db_conn, plate_id) is None
+
+    def test_update_plate_full_relinks_on_number_change_and_clears_when_ineligible(self, db_conn):
+        card_a = _make_card(db_conn, plate="AAA111", license_="L-A")
+        card_b = _make_card(db_conn, plate="BBB222", license_="L-B")
+        order_id = _order_for_customer_type(db_conn, "CLIENTE")
+        plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="AAA111")
+        assert _card_link(db_conn, plate_id) == card_a
+
+        def edit(**over):
+            args = {"plate_type": "CARRO PARTICULAR", "plate_number": "AAA111", "plate_to": None,
+                    "city": None, "quantity": 1, "is_voided": False, "is_plate_annulled": False,
+                    "is_batch_replacement": False}
+            args.update(over)
+            db.update_plate_full(db_conn, plate_id, **args)
+
+        edit(plate_number="BBB222")
+        assert _card_link(db_conn, plate_id) == card_b
+        edit(plate_number="NOCARD1")
+        assert _card_link(db_conn, plate_id) is None
+        edit(plate_number="BBB222")
+        assert _card_link(db_conn, plate_id) == card_b
+        edit(plate_number="BBB222", is_plate_annulled=True)
+        assert _card_link(db_conn, plate_id) is None
+        edit(plate_number="BBB222")
+        edit(plate_number="BBB222", plate_to="BBB230")
+        assert _card_link(db_conn, plate_id) is None
+
+    def test_update_plate_relinks_and_clears_when_voided(self, db_conn):
+        card_a = _make_card(db_conn, plate="AAA111", license_="L-A")
+        order_id = _order_for_customer_type(db_conn, "GESTOR")
+        plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="XXX000")
+        assert _card_link(db_conn, plate_id) is None
+        db.update_plate(db_conn, plate_id, plate_type="CARRO PARTICULAR",
+                        plate_number="AAA111", quantity=1, is_voided=False)
+        assert _card_link(db_conn, plate_id) == card_a
+        db.update_plate(db_conn, plate_id, plate_type="CARRO PARTICULAR",
+                        plate_number="AAA111", quantity=1, is_voided=True)
+        assert _card_link(db_conn, plate_id) is None
+
+    def test_update_order_to_empresa_customer_clears_the_link(self, db_conn):
+        _make_card(db_conn)
+        order_id = _order_for_customer_type(db_conn, "CLIENTE")
+        plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="ABC123")
+        assert _card_link(db_conn, plate_id) is not None
+        empresa = db.resolve_or_create_customer(db_conn, "UNA EMPRESA")
+        with db_conn.cursor() as cur:
+            cur.execute("UPDATE customers SET type = 'EMPRESA' WHERE id = %s", (empresa,))
+        db.update_order(db_conn, order_id, order_number="900", order_date=date(2026, 1, 1),
+                        requested_by="UNA EMPRESA", customer_id=empresa)
+        assert _card_link(db_conn, plate_id) is None
+
+    def test_update_customer_type_relinks_its_plates(self, db_conn):
+        card_id = _make_card(db_conn)
+        order_id = _order_for_customer_type(db_conn, "EMPRESA", name="EMP")
+        plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="ABC123")
+        assert _card_link(db_conn, plate_id) is None
+        customer = db.get_customer_by_name(db_conn, "EMP")
+        db.update_customer(
+            db_conn, customer.id, name="EMP", type="CLIENTE", document_type=None,
+            document_number=None, document_relation=None, phone=None, email=None,
+            address=None, neighborhood=None, municipality=None,
+        )
+        assert _card_link(db_conn, plate_id) == card_id
+
+    def test_relink_plates_requires_exactly_one_scope(self, db_conn):
+        with pytest.raises(ValueError):
+            db.relink_plates(db_conn)
+        with pytest.raises(ValueError):
+            db.relink_plates(db_conn, order_id=1, customer_id=1)
+
+    def test_resolve_card_id_for_plate_is_case_and_space_insensitive(self, db_conn):
+        card_id = _make_card(db_conn)
+        assert db.resolve_card_id_for_plate(db_conn, " abc 123 ", "CLIENTE") == card_id
+        assert db.resolve_card_id_for_plate(db_conn, "ABC123", "EMPRESA") is None

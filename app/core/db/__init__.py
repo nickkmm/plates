@@ -103,6 +103,7 @@ from app.core.db.orders import (
     update_order,
 )
 from app.core.db.ownership_cards import (
+    CARD_LINK_EXCLUDED_CUSTOMER_TYPES,
     CARD_STATUS_DATA_MISMATCH,
     CARD_STATUS_NEW,
     CARD_STATUS_OTHER_OWNER,
@@ -117,6 +118,7 @@ from app.core.db.ownership_cards import (
     get_ownership_card_by_transit_license,
     list_ownership_cards_for_customer,
     reassign_ownership_card,
+    resolve_card_id_for_plate,
 )
 from app.core.db.plates import (
     delete_plate,
@@ -125,6 +127,7 @@ from app.core.db.plates import (
     find_orders_for_plate,
     insert_plate,
     last_fabrication_date,
+    relink_plates,
     resolve_plate,
     review_rows,
     search_plates_by_number,
@@ -135,6 +138,7 @@ from app.core.db.pricing import PriceRow, current_prices, price_list, set_price
 from app.core.db.users import UserRecord, create_user, get_user_by_id, get_user_by_username, list_users
 
 __all__ = [
+    "CARD_LINK_EXCLUDED_CUSTOMER_TYPES",
     "CARD_STATUS_DATA_MISMATCH",
     "CARD_STATUS_NEW",
     "CARD_STATUS_OTHER_OWNER",
@@ -182,6 +186,8 @@ __all__ = [
     "ornamental_count",
     "price_list",
     "reassign_ownership_card",
+    "relink_plates",
+    "resolve_card_id_for_plate",
     "recalc_inventory",
     "recent_orders",
     "resolve_or_create_customer",

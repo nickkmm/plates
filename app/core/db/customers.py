@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import psycopg
 from psycopg.rows import DictRow, class_row
 
+from app.core.db.plates import relink_plates
 from app.core.normalize import normalize_requested_by
 
 
@@ -185,3 +186,6 @@ def update_customer(
             (name, type, document_type, document_number, document_relation,
              phone, email, address, neighborhood, municipality, customer_id),
         )
+    # A type change (e.g. CLIENTE -> EMPRESA) changes which of this customer's
+    # plates may carry an ownership_card_id.
+    relink_plates(conn, customer_id=customer_id)
