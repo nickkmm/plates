@@ -1352,3 +1352,13 @@ Existe la tabla `declarations` (migración `0007`), su capa de datos
 (validar, enviar, aprobar, rechazar), más `db.last_fabrication_date` para la
 regla de 6 meses. Todavía no hay formulario público ni pantalla interna que la
 usen; ver `docs/DATABASE.md` y `docs/CORE.md`.
+
+## Nota: enlace formal placa fabricada -> tarjeta (última fase del plan de declaraciones)
+
+La migración `0008` agrega `plates.ownership_card_id` (nullable, FK a
+`ownership_cards`). El enlace es automático y silencioso: al insertar o editar
+una placa se busca la tarjeta con el mismo número de placa. Solo se intenta para
+órdenes de clientes `CLIENTE`, `GESTOR` o sin tipo; nunca para `EMPRESA` ni
+`TRÁNSITO`, ni para rangos, reposiciones, placas anuladas o sin placa real. El
+detalle del Registro muestra la licencia de la tarjeta enlazada. Reglas y
+columna: `docs/DATABASE.md`; funciones: `docs/CORE.md`.

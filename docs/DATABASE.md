@@ -87,6 +87,7 @@ erDiagram
         numeric unit_price "nullable — snapshot al guardar/editar, ver rarezas"
         text reason "nullable — DETERIORO/PÉRDIDA/OTROS"
         text vehicle_brand "nullable"
+        int ownership_card_id FK "nullable — tarjeta de propiedad (0008)"
         timestamp created_at
     }
     customers {
@@ -215,6 +216,7 @@ el primer índice fuera de una PK/UNIQUE — ver rarezas para ambos.
 | `unit_price` | NUMERIC(12,2) | nullable | Snapshot del precio al momento de guardar/editar la placa, tomado de `plate_type_prices` pero editable — no una referencia viva a la tarifa (la regla exacta de re-snapshot, incluidos los 3 casos de edición, vive en `app/core/db/plates.py::_resnapshot_unit_price`, ver [`CORE.md`](CORE.md)). `NULL` significa "sin tarifa capturada" — `/cuadre` lo excluye del total y lo lista como aviso, nunca lo trata como `0`. |
 | `reason` | TEXT | nullable | Dato del vehículo/placa, no de la orden. Valor esperado: `normalize.REASONS` (`DETERIORO`/`PÉRDIDA`/`OTROS`). Antes de la Fase 1c, esta columna se llamaba `motivo`. |
 | `vehicle_brand` | TEXT | nullable | Dato del vehículo, siempre de captura manual (no viene impreso en el PDF de pedido). Antes de la Fase 1c, `marca_vehiculo`. |
+| `ownership_card_id` | INTEGER | FK → `ownership_cards(id)`, nullable | *Agregada en la migración `0008`.* Enlace formal de la placa fabricada con su **tarjeta de propiedad**. Con índice (`plates_ownership_card_id_idx`). Es **automático y silencioso**: la app lo calcula en cada inserción y edición (`app/core/db/plates.py`, regla en `ownership_cards.resolve_card_id_for_plate`) comparando `plates.plate_number` con `ownership_cards.plate_number`. Queda `NULL` si no hay tarjeta con esa placa, si la orden es de un cliente `EMPRESA` o `TRÁNSITO` (no tienen tarjeta de propiedad; ni siquiera se intenta), si la placa es un rango (`plate_to`), una reposición, está anulada (`is_voided` / `is_plate_annulled`) o no tiene un número de placa real (`normalize.is_real_plate`). Si el tipo del cliente es `NULL` sí se intenta (solo enlaza si existe una tarjeta con esa placa exacta). Un `GESTOR` enlaza placas de las tarjetas de sus clientes: se busca la tarjeta por placa sin importar a nombre de quién esté. Se recalcula también al cambiar el cliente de una orden o el tipo de un cliente. La migración `0008` hace un *backfill* único e idempotente de las placas ya fabricadas con las mismas reglas (en producción no había tarjetas, así que no enlaza nada). Una tarjeta creada después **no** enlaza hacia atrás las placas ya guardadas; se enlazan al editarlas. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
 ### `customers`
