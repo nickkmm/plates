@@ -133,6 +133,35 @@ CREATE TABLE ownership_cards (
 );
 CREATE INDEX ownership_cards_customer_id_idx ON ownership_cards (customer_id);
 
+-- Sworn declarations submitted through the public form (see
+-- app/migrations/0007_declarations.sql and docs/DATABASE.md). While
+-- pending_review the three FKs are NULL and submitted_data is the only copy.
+CREATE TABLE declarations (
+    id SERIAL PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT now(),
+    reason TEXT NOT NULL,                   -- normalize.DECLARATION_REASONS (DETERIORO / PÉRDIDA)
+    plate_quantity INTEGER NOT NULL,
+    acting_as TEXT NOT NULL,                -- normalize.ACTING_AS (PROPIETARIO / POSEEDOR / GESTOR)
+    customer_id INTEGER REFERENCES customers(id),            -- the CLIENTE; NULL while pending
+    ownership_card_id INTEGER REFERENCES ownership_cards(id),
+    gestor_id INTEGER REFERENCES customers(id),              -- NULL: no gestor, or still pending
+    status TEXT NOT NULL,                   -- pending_review / approved / rejected
+    review_flags TEXT[] NOT NULL DEFAULT '{}',
+    reviewed_by INTEGER REFERENCES users(id),
+    reviewed_at TIMESTAMP,
+    review_note TEXT,
+    submitted_data JSONB NOT NULL,          -- exact copy of what was declared (legal evidence)
+    owner_signature_path TEXT,
+    gestor_signature_path TEXT,
+    notarized_pdf_path TEXT,
+    submitter_ip TEXT,
+    user_agent TEXT,
+    accepted_terms_at TIMESTAMP
+);
+CREATE INDEX declarations_status_idx ON declarations (status);
+CREATE INDEX declarations_customer_id_idx ON declarations (customer_id);
+CREATE INDEX declarations_submitter_ip_created_at_idx ON declarations (submitter_ip, created_at);
+
 -- Suggested/default unit price per plate TYPE (the 7 normalize.PLATE_TYPES
 -- values, NEVER the 3 inventory_categories materials -- see docs/DATABASE.md).
 -- Starts empty on purpose: /precios shows one row per PLATE_TYPES entry

@@ -379,6 +379,50 @@ estados, con esta precedencia:
 dueño deliberado (acción de administración del flujo de revisión de
 declaraciones): un `UPDATE` simple.
 
+### `declarations`
+
+*Agregada en la Fase 3 del plan de declaraciones (migración
+`app/migrations/0007_declarations.sql`).* Una fila por **declaración
+juramentada** enviada por el formulario público. Mientras está en
+`pending_review` no se crea ni se modifica nada en `customers` ni en
+`ownership_cards`: `submitted_data` es el **único** lugar donde viven los datos
+declarados (y la evidencia legal).
+
+| Columna | Tipo | Constraint/Default | Nota |
+|---|---|---|---|
+| `id` | SERIAL | PK | |
+| `created_at` | TIMESTAMP | DEFAULT now() | |
+| `reason` | TEXT | NOT NULL | `normalize.DECLARATION_REASONS`: `DETERIORO` / `PÉRDIDA`. |
+| `plate_quantity` | INTEGER | NOT NULL | Cantidad de placas pedidas (>= 1, validado en código). |
+| `acting_as` | TEXT | NOT NULL | `normalize.ACTING_AS`: `PROPIETARIO` / `POSEEDOR` / `GESTOR`. |
+| `customer_id` | INTEGER | FK → `customers(id)` | El CLIENTE. `NULL` mientras está pendiente (o rechazada). |
+| `ownership_card_id` | INTEGER | FK → `ownership_cards(id)` | `NULL` mientras está pendiente (o rechazada). |
+| `gestor_id` | INTEGER | FK → `customers(id)` | `NULL` si no hay gestor o si está pendiente. |
+| `status` | TEXT | NOT NULL | `pending_review` / `approved` / `rejected` (sin `CHECK`; constantes en `app/core/db/declarations.py`). |
+| `review_flags` | TEXT[] | NOT NULL DEFAULT `'{}'` | Alertas que mandaron la declaración a revisión (ver abajo). Se conservan al aprobar. |
+| `reviewed_by` | INTEGER | FK → `users(id)` | Quién aprobó/rechazó. |
+| `reviewed_at` | TIMESTAMP | nullable | |
+| `review_note` | TEXT | nullable | Obligatoria al rechazar. |
+| `submitted_data` | JSONB | NOT NULL | Copia exacta de lo declarado: `reason`, `plate_quantity`, `acting_as`, `owner{...}`, `owner_relation`, `gestor{...}` o `null`, `vehicle{...}` y, si se envió, `raw` (el formulario crudo). |
+| `owner_signature_path` / `gestor_signature_path` / `notarized_pdf_path` | TEXT | nullable | Nombres de archivo en el volumen de subidas. |
+| `submitter_ip` / `user_agent` | TEXT | nullable | Para el límite por IP y la trazabilidad. |
+| `accepted_terms_at` | TIMESTAMP | nullable | |
+
+Índices: `declarations_status_idx (status)`, `declarations_customer_id_idx
+(customer_id)` y `declarations_submitter_ip_created_at_idx (submitter_ip,
+created_at)` (el límite por IP).
+
+**Alertas (`review_flags`)** — cualquiera de ellas deja la declaración en
+`pending_review`:
+
+| Alerta | Cuándo |
+|---|---|
+| `plate_made_recently` | La última fabricación de esa placa (`db.last_fabrication_date`, ignora placas `is_voided` y `is_plate_annulled`) + 6 meses calendario es posterior a hoy (fecha de Bogotá). Exactamente 6 meses ya no alerta. |
+| `card_other_owner` | La licencia y la placa son una tarjeta existente de **otro** cliente (o el declarante aún no existe). |
+| `card_data_mismatch` | La licencia existe con otra placa, o la placa con otra licencia. |
+| `customer_type_mismatch` | Un cliente/gestor que ya existe con ese nombre no tiene el tipo esperado (`CLIENTE` para el dueño, `GESTOR` para el gestor); `NULL` cuenta como diferente. |
+| `customer_document_mismatch` | Un cliente/gestor que ya existe con ese nombre ya tiene número de documento y es **distinto** del declarado (un homónimo, no la misma persona). Se compara solo letras y dígitos (`1.234.567-8` = `12345678`); un documento vacío en cualquiera de los dos lados no cuenta. |
+
 ### `blank_preparations`
 
 | Columna | Tipo | Constraint/Default | Nota |

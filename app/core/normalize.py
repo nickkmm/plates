@@ -218,6 +218,10 @@ DOCUMENT_TYPES = ("NIT", "CÉDULA", "CÉDULA DE EXTRANJERÍA", "OTROS")
 DOCUMENT_RELATIONS = ("DUEÑO", "POSEEDOR", "OTROS")
 PAYMENT_METHODS = ("EFECTIVO", "TRANSFERENCIA", "CRÉDITO", "OTROS")
 REASONS = ("DETERIORO", "PÉRDIDA", "OTROS")
+# Public declaration form (declarations table): only these two reasons exist
+# there, and ACTING_AS says who fills the form in.
+DECLARATION_REASONS = ("DETERIORO", "PÉRDIDA")
+ACTING_AS = ("PROPIETARIO", "POSEEDOR", "GESTOR")
 
 
 def normalize_choice(value: str | None, allowed: tuple[str, ...]) -> str | None:

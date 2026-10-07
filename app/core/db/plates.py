@@ -14,6 +14,7 @@ contract that applies to every function here.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import date
 from decimal import Decimal
 
 import psycopg
@@ -61,6 +62,29 @@ def find_orders_for_plate(conn: psycopg.Connection[DictRow], plate_number: str) 
             (plate_number,),
         )
         return cur.fetchall()
+
+
+def last_fabrication_date(conn: psycopg.Connection[DictRow], plate_number: str) -> date | None:
+    """Read-only: the latest `order_date` of an order that fabricated a plate
+    with exactly this `plate_number` (normalized with clean_plate), or None.
+
+    Plates that are `is_voided` or `is_plate_annulled` are IGNORED: an
+    annulled plate was never really delivered, so it must not trigger the
+    declarations "made less than 6 months ago" warning.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT MAX(o.order_date) AS last_date
+            FROM plates p
+            JOIN production_orders o ON o.id = p.order_id
+            WHERE p.plate_number = %s
+              AND p.is_voided IS NOT TRUE AND p.is_plate_annulled IS NOT TRUE
+            """,
+            (clean_plate(plate_number),),
+        )
+        row = cur.fetchone()
+        return row["last_date"] if row else None
 
 
 def insert_plate(conn: psycopg.Connection[DictRow], *, order_id: int, row: ExtractedRow,
