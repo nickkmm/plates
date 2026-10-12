@@ -134,33 +134,54 @@ CREATE TABLE ownership_cards (
 CREATE INDEX ownership_cards_customer_id_idx ON ownership_cards (customer_id);
 
 -- Sworn declarations submitted through the public form (see
--- app/migrations/0007_declarations.sql and docs/DATABASE.md). While
--- pending_review the three FKs are NULL and submitted_data is the only copy.
+-- app/migrations/0007_declarations.sql, 0009_declaration_cards.sql and
+-- docs/DATABASE.md). ONE declarant (who signs once) and many ownership cards
+-- (declaration_cards below). While pending_review, gestor_id and the cards'
+-- customer_id / ownership_card_id are NULL and submitted_data is the only copy.
 CREATE TABLE declarations (
     id SERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT now(),
-    reason TEXT NOT NULL,                   -- normalize.DECLARATION_REASONS (DETERIORO / PÉRDIDA)
-    plate_quantity INTEGER NOT NULL,
     acting_as TEXT NOT NULL,                -- normalize.ACTING_AS (PROPIETARIO / POSEEDOR / GESTOR)
-    customer_id INTEGER REFERENCES customers(id),            -- the CLIENTE; NULL while pending
-    ownership_card_id INTEGER REFERENCES ownership_cards(id),
-    gestor_id INTEGER REFERENCES customers(id),              -- NULL: no gestor, or still pending
+    gestor_id INTEGER REFERENCES customers(id),              -- the declarant when acting_as is GESTOR; NULL otherwise or while pending
     status TEXT NOT NULL,                   -- pending_review / approved / rejected
-    review_flags TEXT[] NOT NULL DEFAULT '{}',
+    review_flags TEXT[] NOT NULL DEFAULT '{}',   -- union of the cards' flags
     reviewed_by INTEGER REFERENCES users(id),
     reviewed_at TIMESTAMP,
     review_note TEXT,
     submitted_data JSONB NOT NULL,          -- exact copy of what was declared (legal evidence)
-    owner_signature_path TEXT,
-    gestor_signature_path TEXT,
     notarized_pdf_path TEXT,
     submitter_ip TEXT,
     user_agent TEXT,
-    accepted_terms_at TIMESTAMP
+    accepted_terms_at TIMESTAMP,
+    declarant_signature_path TEXT
 );
 CREATE INDEX declarations_status_idx ON declarations (status);
-CREATE INDEX declarations_customer_id_idx ON declarations (customer_id);
 CREATE INDEX declarations_submitter_ip_created_at_idx ON declarations (submitter_ip, created_at);
+
+-- One row per ownership card of a declaration (see docs/DATABASE.md).
+CREATE TABLE declaration_cards (
+    id SERIAL PRIMARY KEY,
+    declaration_id INTEGER NOT NULL REFERENCES declarations(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,              -- 0-based order inside the declaration
+    reason TEXT NOT NULL,                   -- normalize.DECLARATION_REASONS (DETERIORO / PÉRDIDA)
+    plate_quantity INTEGER NOT NULL,        -- 1..normalize.max_plates_per_card(vehicle_type)
+    plate_number TEXT NOT NULL,
+    transit_license TEXT NOT NULL,
+    engine_number TEXT,
+    chassis_number TEXT,
+    vehicle_type TEXT,                      -- one of normalize.PLATE_TYPES
+    registered_in TEXT,
+    vehicle_brand TEXT,
+    owner_relation TEXT,                    -- DUEÑO / POSEEDOR (normalize.DOCUMENT_RELATIONS)
+    owner_data JSONB NOT NULL,              -- the card owner's person data (a copy of the declarant when not a gestor)
+    customer_id INTEGER REFERENCES customers(id),            -- the card's owner (CLIENTE); NULL while pending
+    ownership_card_id INTEGER REFERENCES ownership_cards(id),   -- NULL while pending
+    review_flags TEXT[] NOT NULL DEFAULT '{}',
+    UNIQUE (declaration_id, position)
+);
+-- UNIQUE (declaration_id, position) already indexes declaration_id lookups.
+CREATE INDEX declaration_cards_ownership_card_id_idx ON declaration_cards (ownership_card_id);
+CREATE INDEX declaration_cards_customer_id_idx ON declaration_cards (customer_id);
 
 -- Suggested/default unit price per plate TYPE (the 7 normalize.PLATE_TYPES
 -- values, NEVER the 3 inventory_categories materials -- see docs/DATABASE.md).

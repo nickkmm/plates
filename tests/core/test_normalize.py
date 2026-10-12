@@ -672,3 +672,16 @@ class TestNormalizeChoice:
         assert normalize_choice("dueno", DOCUMENT_RELATIONS) == "DUEÑO"
         assert normalize_choice("perdida", REASONS) == "PÉRDIDA"
         assert normalize_choice("recibo", RECEIPT_TYPES) == "RECIBO"
+
+
+class TestMaxPlatesPerCard:
+    @pytest.mark.parametrize("plate_type", ["CARRO PARTICULAR", "CARRO PÚBLICO"])
+    def test_cars_have_front_and_rear_plates(self, plate_type):
+        from app.core.normalize import max_plates_per_card
+        assert max_plates_per_card(plate_type) == 2
+
+    @pytest.mark.parametrize("plate_type", [
+        "MOTO PARTICULAR", "MOTO CARRO PARTICULAR", "MOTO CARRO PÚBLICO", "REMOLQUE", "ORNAMENTAL", None, "XYZ"])
+    def test_every_other_type_has_one(self, plate_type):
+        from app.core.normalize import max_plates_per_card
+        assert max_plates_per_card(plate_type) == 1
