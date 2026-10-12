@@ -406,6 +406,7 @@ lugar donde vive la declaración completa (y la evidencia legal).
 | `review_note` | TEXT | nullable | Obligatoria al rechazar. |
 | `submitted_data` | JSONB | NOT NULL | Copia exacta de lo declarado, con la forma canónica `{"acting_as", "declarant": {...}, "cards": [{...}], "raw": {...}}` (ver abajo). |
 | `declarant_signature_path` | TEXT | nullable | Firma única del declarante; cubre todas las tarjetas. Nombre de archivo en el volumen de subidas. |
+| `production_order_id` | INTEGER | FK `production_orders(id)` ON DELETE SET NULL, nullable | Pedido que atendió la declaración ("Crear pedido" desde una declaración aprobada, migración 0010). NULL = por atender; al borrar o reemplazar el pedido vuelve a quedar por atender. Índice `declarations_production_order_id_idx`. |
 | `notarized_pdf_path` | TEXT | nullable | Un solo PDF notariado por declaración; obligatorio cuando **alguna** tarjeta es por `PÉRDIDA`. |
 | `submitter_ip` / `user_agent` | TEXT | nullable | Para el límite por IP y la trazabilidad. |
 | `accepted_terms_at` | TIMESTAMP | nullable | |
