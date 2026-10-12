@@ -1,44 +1,56 @@
 """Render tests for the public declaration form templates.
 
-The blueprint that serves these doesn't exist yet, so the templates are
-rendered directly with `render_template` inside a test request context.
+The templates are rendered directly with `render_template` inside a test
+request context (the context variables mirror `public_declaration._render_form`).
 """
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
 from flask import render_template
 
-from app.core.normalize import DOCUMENT_TYPES, PLATE_TYPES
+from app.core.declarations import MAX_CARDS
+from app.core.normalize import DOCUMENT_TYPES, PLATE_TYPES, max_plates_per_card
 from app.web.app import app as flask_app
 
+VEHICLE_TYPES = [t for t in PLATE_TYPES if t != "ORNAMENTAL"]
+PERSON_LEAVES = ("name", "document_type", "document_number", "address",
+                 "neighborhood", "municipality", "phone", "email")
+
+# Two cards (indices 0 and 2: sparse on purpose), a gestor with PÉRDIDA on the second.
 FULL_FORM = {
-    "reason": "PÉRDIDA",
-    "plate_quantity": "2",
     "acting_as": "GESTOR",
-    "owner_name": "MARIA PEREZ",
-    "owner_document_type": "CÉDULA",
-    "owner_document_number": "1234567",
-    "owner_address": "CALLE 1 # 2-3",
-    "owner_neighborhood": "CENTRO",
-    "owner_municipality": "PALMIRA",
-    "owner_phone": "3001112233",
-    "owner_email": "maria@example.com",
-    "owner_relation": "POSEEDOR",
-    "gestor_name": "JUAN GESTOR",
-    "gestor_document_type": "NIT",
-    "gestor_document_number": "900111222",
-    "gestor_phone": "3109998877",
-    "vehicle_plate_number": "ABC123",
-    "vehicle_type": "MOTO PARTICULAR",
-    "vehicle_brand": "AKT",
+    "declarant_name": "JUAN GESTOR",
+    "declarant_document_type": "NIT",
+    "declarant_document_number": "900111222",
+    "declarant_phone": "3109998877",
+    "card_0_plate_number": "ABC123",
+    "card_0_vehicle_type": "MOTO PARTICULAR",
+    "card_0_vehicle_brand": "AKT",
+    "card_0_reason": "DETERIORO",
+    "card_0_plate_quantity": "1",
+    "card_0_owner_name": "MARIA PEREZ",
+    "card_0_owner_document_type": "CÉDULA",
+    "card_0_owner_document_number": "1234567",
+    "card_0_owner_phone": "3001112233",
+    "card_0_owner_email": "maria@example.com",
+    "card_0_owner_relation": "POSEEDOR",
+    "card_2_plate_number": "XYZ987",
+    "card_2_vehicle_type": "CARRO PARTICULAR",
+    "card_2_reason": "PÉRDIDA",
+    "card_2_plate_quantity": "2",
+    "card_2_owner_name": "PEDRO RUIZ",
+    "card_2_owner_relation": "DUEÑO",
     "accept_terms": "1",
 }
 
 
 def render(**overrides) -> str:
+    form = overrides.get("form") or {}
+    indices = sorted({int(m.group(1)) for k in form if (m := re.match(r"card_(\d+)_", k))}) or [0]
     ctx = {
         "form": {},
         "errors": [],
@@ -46,31 +58,52 @@ def render(**overrides) -> str:
         "turnstile_site_key": "site-key-1",
         "reasons": ("DETERIORO", "PÉRDIDA"),
         "document_types": DOCUMENT_TYPES,
-        "vehicle_types": PLATE_TYPES,
+        "vehicle_types": VEHICLE_TYPES,
         "owner_relations": ("DUEÑO", "POSEEDOR"),
+        "card_indices": indices,
+        "max_cards": MAX_CARDS,
+        "max_plates_by_type": {t: max_plates_per_card(t) for t in VEHICLE_TYPES},
+        "total_plates": 1,
     }
     ctx.update(overrides)
     with flask_app.test_request_context("/declaracion"):
         return render_template("declaration.html", **ctx)
 
 
+def split(html: str) -> tuple[str, str]:
+    """(markup outside the <template>, the <template> contents)."""
+    m = re.search(r'<template id="cardTemplate">(.*?)</template>', html, re.S)
+    assert m, "no card template"
+    return html.replace(m.group(0), ""), m.group(1)
+
+
 def tag(html: str, name: str) -> str:
-    """The first <input|select|textarea ...> opening tag with that name."""
+    """The first <input|select|textarea ...> opening tag with that name (outside the <template>)."""
+    if '<template id="cardTemplate">' in html:
+        html = split(html)[0]
     m = re.search(rf'<(?:input|select|textarea)\b[^>]*\bname="{re.escape(name)}"[^>]*>', html)
     assert m, f"no control named {name}"
     return m.group(0)
 
 
+def card_blocks(html: str) -> list[str]:
+    outside = split(html)[0]
+    parts = re.split(r'(?=<div class="card-block" data-card=")', outside)
+    return [p for p in parts if p.startswith('<div class="card-block"')]
+
+
+def card_names(i) -> list[str]:
+    leaves = [
+        "plate_number", "transit_license", "engine_number", "chassis_number", "vehicle_type",
+        "registered_in", "vehicle_brand", "reason", "plate_quantity", "owner_relation",
+        *[f"owner_{s}" for s in PERSON_LEAVES],
+    ]
+    return [f"card_{i}_{leaf}" for leaf in leaves]
+
+
 ALL_FIELDS = [
-    "reason", "plate_quantity", "acting_as",
-    *[f"owner_{s}" for s in ("name", "document_type", "document_number", "address",
-                             "neighborhood", "municipality", "phone", "email", "relation")],
-    *[f"gestor_{s}" for s in ("name", "document_type", "document_number", "address",
-                              "neighborhood", "municipality", "phone", "email")],
-    "vehicle_plate_number", "vehicle_transit_license", "vehicle_engine_number",
-    "vehicle_chassis_number", "vehicle_type", "vehicle_registered_in", "vehicle_brand",
-    "notarized_pdf", "owner_signature", "gestor_signature", "accept_terms",
-    "form_token", "website",
+    "acting_as", *[f"declarant_{s}" for s in PERSON_LEAVES], *card_names(0),
+    "notarized_pdf", "signature", "accept_terms", "form_token", "website",
 ]
 
 
@@ -78,18 +111,50 @@ def test_empty_form_renders_all_fields_standalone():
     html = render()
     for name in ALL_FIELDS:
         tag(html, name)
-    assert '<form id="declForm" method="post" action="/declaracion" enctype="multipart/form-data">' in html
+    assert '<form id="declForm" method="post" action="/declaracion" enctype="multipart/form-data"' in html
     assert 'lang="es"' in html and 'name="viewport"' in html
     # standalone: nothing from _nav.html
     assert "Salir" not in html and "logout" not in html and 'class="tabs"' not in html
     assert "Registros" not in html
-    # empty form: nothing checked, hidden blocks disabled
-    assert not re.search(r"<input[^>]* checked", html)
-    assert "disabled" in tag(html, "owner_relation")
-    assert "disabled" in tag(html, "gestor_name")
+    # empty form: nothing checked, the gestor-only parts are hidden and disabled
+    assert not re.search(r"<input[^>]* checked", split(html)[0])
+    for leaf in ("owner_name", "owner_document_number", "owner_relation"):
+        assert "disabled" in tag(html, f"card_0_{leaf}")
     assert "disabled" in tag(html, "notarized_pdf")
-    assert 'id="gestorBlock" hidden' in html
+    assert 'class="owner-box owner-wrap" hidden' in html
     assert 'id="notarizedWrap" hidden' in html
+    # the declarant block is always live
+    assert "disabled" not in tag(html, "declarant_name")
+    assert "required" in tag(html, "declarant_name")
+
+
+def test_old_single_vehicle_and_double_signature_fields_are_gone():
+    html = render()
+    for old in ("owner_signature", "gestor_signature", 'name="reason"', 'name="plate_quantity"',
+                'name="vehicle_plate_number"', 'name="owner_name"', 'name="gestor_name"',
+                'name="owner_relation"', "gestorBlock"):
+        assert old not in html, old
+    assert html.count('type="hidden" name="signature"') == 1
+    assert html.count("<canvas") == 1
+
+
+def test_one_server_rendered_block_is_first_and_has_no_remove_dependency_on_js_ids():
+    html = render()
+    assert len(card_blocks(html)) == 1
+    assert 'data-card="0"' in html
+    assert "Tarjeta de propiedad <span class=\"card-number\">1</span>" in html
+    assert "+ Agregar tarjeta de propiedad" in html
+    assert "Copiar los datos del dueño de la tarjeta anterior" in html
+    assert ">Quitar<" in html
+
+
+def test_card_template_is_a_clone_source_with_a_placeholder_index():
+    html = render()
+    outside, tpl = split(html)
+    assert "card___I__" not in outside
+    for name in card_names("__I__"):
+        assert f'name="{name}"' in tpl, name
+    assert tpl.count('class="card-block"') == 1
 
 
 def test_hidden_token_honeypot_and_signature_inputs():
@@ -99,11 +164,10 @@ def test_hidden_token_honeypot_and_signature_inputs():
     assert 'tabindex="-1"' in hp and 'autocomplete="off"' in hp
     assert 'class="hp" aria-hidden="true"' in html
     assert "left:-10000px" in html
-    for name in ("owner_signature", "gestor_signature"):
-        t = tag(html, name)
-        assert 'type="hidden"' in t and "disabled" in t  # nothing submitted until drawn
-    assert 'touch-action:none' in html
-    assert html.count("Borrar firma") >= 2
+    t = tag(html, "signature")
+    assert 'type="hidden"' in t and "disabled" in t  # nothing submitted until drawn
+    assert "touch-action:none" in html
+    assert html.count("Borrar firma") >= 1
 
 
 def test_pdf_accept_and_submit_and_footer():
@@ -117,13 +181,14 @@ def test_pdf_accept_and_submit_and_footer():
 def test_real_document_wording_present():
     html = render()
     for text in (
-        "1. Motivo de la solicitud", "2. Calidad en la que actúa", "3. Datos del declarante",
-        "4. Datos del vehículo", "5. DECLARACIÓN Y AUTORIZACIÓN", "6. AVISO LEGAL",
-        "7. COMPROMISOS Y RESPONSABILIDAD DEL CLIENTE", "8. Firma",
+        "1. Calidad en la que actúa", "2. Datos del declarante", "3. Tarjetas de propiedad",
+        "4. DECLARACIÓN Y AUTORIZACIÓN", "5. AVISO LEGAL", "6. COMPROMISOS Y RESPONSABILIDAD DEL CLIENTE",
+        "7. Firma", "señalada(s) en la sección 3",
         "Falsedad en documento privado (art. 289 C.P.)", "NIT 900.773.756-0",
         "servicioalcliente@ingse.co", "Calle 42 # 41-47",
         "He leído y entiendo el aviso legal y acepto la declaración",
         "Pérdida o hurto de la(s) placa(s)", "Propietario (tarjeta de propiedad)",
+        "Total de placas a fabricar", "El dueño es",
     ):
         assert text in html, text
 
@@ -132,51 +197,100 @@ def test_select_options_come_from_context():
     html = render()
     for t in DOCUMENT_TYPES:
         assert f'<option value="{t}"' in html
-    for t in PLATE_TYPES:
+    for t in VEHICLE_TYPES:
         assert f'<option value="{t}"' in html
+    assert "ORNAMENTAL" not in html
     assert '<option value="DUEÑO"' in html and '<option value="POSEEDOR"' in html
 
 
-def test_populated_form_is_sticky():
+def test_max_plates_by_type_is_passed_to_the_page_as_json():
+    html = render()
+    m = re.search(r"data-max-by-type='([^']*)'", html)
+    assert m
+    data = json.loads(m.group(1))
+    assert data["CARRO PARTICULAR"] == 2 and data["CARRO PÚBLICO"] == 2
+    assert data["MOTO PARTICULAR"] == 1 and data["REMOLQUE"] == 1
+    assert f'data-max-cards="{MAX_CARDS}"' in html
+
+
+def test_populated_form_is_sticky_with_sparse_indices():
     html = render(form=FULL_FORM)
-    assert 'value="MARIA PEREZ"' in tag(html, "owner_name")
-    assert 'value="ABC123"' in tag(html, "vehicle_plate_number")
-    assert 'value="2"' in tag(html, "plate_quantity")
-    assert 'value="3001112233"' in tag(html, "owner_phone")
-    assert 'value="JUAN GESTOR"' in tag(html, "gestor_name")
-    assert 'value="AKT"' in tag(html, "vehicle_brand")
-    assert "checked" in tag(html, "accept_terms")
-    # radios: only the chosen ones are checked
-    assert re.search(r'name="reason" value="PÉRDIDA" checked', html)
-    assert not re.search(r'name="reason" value="DETERIORO"[^>]*checked', html)
+    assert 'value="JUAN GESTOR"' in tag(html, "declarant_name")
+    assert 'value="3109998877"' in tag(html, "declarant_phone")
     assert re.search(r'name="acting_as" value="GESTOR" checked', html)
     assert not re.search(r'name="acting_as" value="PROPIETARIO"[^>]*checked', html)
-    # selects
-    assert '<option value="CÉDULA" selected>' in html
+    assert "checked" in tag(html, "accept_terms")
+    blocks = card_blocks(html)
+    assert [re.match(r'<div class="card-block" data-card="(\d+)"', b).group(1) for b in blocks] == ["0", "2"]
+    first, second = blocks
+    assert 'value="ABC123"' in tag(first, "card_0_plate_number")
+    assert 'value="AKT"' in tag(first, "card_0_vehicle_brand")
+    assert 'value="MARIA PEREZ"' in tag(first, "card_0_owner_name")
+    assert 'value="XYZ987"' in tag(second, "card_2_plate_number")
+    assert 'value="PEDRO RUIZ"' in tag(second, "card_2_owner_name")
+    assert '<option value="MOTO PARTICULAR" selected>' in first
+    assert '<option value="CARRO PARTICULAR" selected>' in second
+    assert '<option value="POSEEDOR" selected>' in first and '<option value="DUEÑO" selected>' in second
+    assert '<option value="CÉDULA" selected>' in first
     assert '<option value="NIT" selected>' in html
-    assert '<option value="MOTO PARTICULAR" selected>' in html
-    assert '<option value="POSEEDOR" selected>' in html
-    # GESTOR + PÉRDIDA: blocks visible and enabled, pdf required
-    assert 'id="gestorBlock" hidden' not in html
-    assert 'id="ownerRelationWrap" hidden' not in html
-    assert 'id="notarizedWrap" hidden' not in html
-    assert "disabled" not in tag(html, "owner_relation")
-    assert "disabled" not in tag(html, "gestor_name")
+    # reasons are per card
+    assert re.search(r'name="card_0_reason" value="DETERIORO" required checked', first)
+    assert re.search(r'name="card_2_reason" value="PÉRDIDA" checked', second)
+    assert not re.search(r'name="card_2_reason" value="DETERIORO"[^>]*checked', second)
+    # GESTOR + a PÉRDIDA card: owner boxes live, pdf shown and required
+    assert 'class="owner-box owner-wrap" hidden' not in html
+    assert "disabled" not in tag(html, "card_0_owner_relation")
+    assert "disabled" not in tag(html, "card_2_owner_name")
     nt = tag(html, "notarized_pdf")
     assert "disabled" not in nt and "required" in nt
+    assert 'id="notarizedWrap" hidden' not in html
 
 
-def test_propietario_hides_gestor_and_relation():
-    html = render(form={"acting_as": "PROPIETARIO", "reason": "DETERIORO"})
-    assert re.search(r'name="acting_as" value="PROPIETARIO" required checked', html)
-    assert "disabled" in tag(html, "owner_relation")
-    assert "disabled" in tag(html, "gestor_document_number")
+def test_plate_quantity_select_follows_the_card_type():
+    html = render(form=FULL_FORM)
+    first, second = card_blocks(html)
+    # the motorcycle only offers 1; the car offers 1 and 2 with the stored 2 selected
+    assert re.findall(r'<option value="(\d)"', first.split("card_0_plate_quantity")[1].split("</select>")[0]) == ["1"]
+    car = second.split("card_2_plate_quantity")[1].split("</select>")[0]
+    assert re.findall(r'<option value="(\d)"', car) == ["1", "2"]
+    assert '<option value="2" selected>' in car
+
+
+def test_car_defaults_to_two_plates_and_a_new_block_to_one():
+    car = render(form={"card_0_vehicle_type": "CARRO PARTICULAR"})
+    assert '<option value="2" selected>' in car
+    blank = render()
+    assert '<option value="1" selected>' in blank
+
+
+def test_total_plates_is_an_output_not_an_input():
+    html = render(total_plates=3)
+    assert re.search(r'<output id="totalPlates"[^>]*>3</output>', html)
+    assert 'name="total' not in html and 'name="plate_quantity"' not in html
+
+
+@pytest.mark.parametrize("acting", ["PROPIETARIO", "POSEEDOR"])
+def test_owner_or_possessor_hides_and_disables_the_card_owner_fields(acting):
+    html = render(form={"acting_as": acting, "card_0_reason": "DETERIORO"})
+    assert re.search(rf'name="acting_as" value="{acting}"( required)? checked', html)
+    for name in card_names(0):
+        if "_owner_" in name:
+            assert "disabled" in tag(html, name), name
+    assert "disabled" in tag(html, "notarized_pdf")
+    assert 'class="owner-box owner-wrap" hidden' in html
+
+
+def test_deterioro_only_keeps_the_pdf_hidden():
+    html = render(form={"acting_as": "GESTOR", "card_0_reason": "DETERIORO", "card_1_reason": "DETERIORO"})
+    assert 'id="notarizedWrap" hidden' in html
     assert "disabled" in tag(html, "notarized_pdf")
 
 
 def test_form_values_are_escaped():
-    html = render(form={"owner_name": '"><script>alert(1)</script>'})
+    html = render(form={"declarant_name": '"><script>alert(1)</script>',
+                        "card_0_plate_number": '"><img src=x onerror=1>'})
     assert "<script>alert(1)</script>" not in html
+    assert "<img src=x" not in html
 
 
 def test_errors_banner_and_reattach_note():
@@ -188,10 +302,10 @@ def test_errors_banner_and_reattach_note():
     assert "Vuelve a adjuntar" not in render()
 
 
-def test_reattach_note_next_to_pdf_only_for_perdida():
-    perdida = render(errors=["x"], form={"reason": "PÉRDIDA"})
-    deterioro = render(errors=["x"], form={"reason": "DETERIORO"})
-    assert perdida.count("Vuelve a adjuntar el PDF y a firmar") == 2  # next to the PDF + signatures
+def test_reattach_note_next_to_pdf_only_when_some_card_is_perdida():
+    perdida = render(errors=["x"], form={"card_0_reason": "PÉRDIDA"})
+    deterioro = render(errors=["x"], form={"card_0_reason": "DETERIORO"})
+    assert perdida.count("Vuelve a adjuntar el PDF y a firmar") == 2  # next to the PDF + signature
     assert deterioro.count("Vuelve a adjuntar el PDF y a firmar") == 1
 
 
@@ -212,6 +326,7 @@ def test_no_external_resources_besides_turnstile():
 
 @pytest.mark.parametrize("name", ["declaration.html", "declaration_received.html"])
 def test_templates_are_standalone(name):
+    # Bare context (what an old caller would pass): the page must still render.
     with flask_app.test_request_context("/declaracion"):
         html = render_template(name, form={}, errors=[], token="t", turnstile_site_key="",
                                reasons=(), document_types=(), vehicle_types=(), owner_relations=())
