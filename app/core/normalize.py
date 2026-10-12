@@ -138,14 +138,14 @@ PLATE_TYPES = (
     "MOTO CARRO PARTICULAR", "MOTO CARRO PÚBLICO",
     "CARRO PÚBLICO", "REMOLQUE", "ORNAMENTAL",
 )
-# Plates carried by one vehicle: a car has a front and a rear plate; motorcycles,
+# Plates a single ownership card (one vehicle) can need: a car has a front and a rear plate; motorcycles,
 # moto-carros and trailers carry a single one. Used to bound the "cantidad de
 # placas" of a declaración (a car may still ask for just 1 if only one was lost).
 TWO_PLATE_TYPES = ("CARRO PARTICULAR", "CARRO PÚBLICO")
 
 
-def max_plates_per_vehicle(plate_type: str | None) -> int:
-    """Most plates a vehicle of this type can need duplicated (2 for cars, else 1)."""
+def max_plates_per_card(plate_type: str | None) -> int:
+    """Most plates a card of this plate type can need duplicated (2 for cars, else 1)."""
     return 2 if plate_type in TWO_PLATE_TYPES else 1
 
 

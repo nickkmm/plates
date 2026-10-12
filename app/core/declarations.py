@@ -73,7 +73,7 @@ LOSS_REASON = "PÉRDIDA"
 ACTING_AS_GESTOR = "GESTOR"
 _RELATION_FOR_ACTING_AS = {"PROPIETARIO": "DUEÑO", "POSEEDOR": "POSEEDOR"}
 MIN_MONTHS_BETWEEN_PLATES = 6
-MAX_VEHICLES = 30   # per declaration; bounds what the anonymous public form can submit
+MAX_CARDS = 30   # ownership cards per declaration; bounds what the anonymous public form can submit
 BOGOTA_TZ = ZoneInfo("America/Bogota")
 
 
@@ -90,13 +90,13 @@ class PersonInput:
 
 
 @dataclass
-class VehicleInput:
-    """One vehicle of a declaration (one ownership card, one reason, one
-    plate quantity). A declaration carries 1..MAX_VEHICLES of these.
+class OwnershipCardInput:
+    """One ownership card ("tarjeta de propiedad") of a declaration, with its
+    own reason and plate quantity. A declaration carries 1..MAX_CARDS of these.
 
     `owner` / `owner_relation` are only read when the declarant acts as GESTOR
-    (every vehicle then has its own owner). When the declarant is the owner or
-    possessor, every vehicle belongs to the declarant and both are ignored."""
+    (every card then has its own owner). When the declarant is the owner or
+    possessor, every card belongs to the declarant and both are ignored."""
 
     plate_number: str = ""
     transit_license: str = ""
@@ -105,8 +105,8 @@ class VehicleInput:
     vehicle_type: str = ""
     registered_in: str = ""
     vehicle_brand: str = ""
-    reason: str = ""                    # normalize.DECLARATION_REASONS, per vehicle
-    plate_quantity: int = 1             # 1..normalize.max_plates_per_vehicle(vehicle_type)
+    reason: str = ""                    # normalize.DECLARATION_REASONS, per card
+    plate_quantity: int = 1             # 1..normalize.max_plates_per_card(vehicle_type)
     owner: PersonInput | None = None
     owner_relation: str = ""            # DUEÑO / POSEEDOR (GESTOR only)
 
@@ -115,13 +115,13 @@ class VehicleInput:
 class DeclarationInput:
     """What the public form submits. ONE declarant (the person who signs):
     the owner/possessor themself, or a gestor acting for several owners. Only
-    the declarant signs, once -- the signature covers every vehicle listed."""
+    the declarant signs, once -- the signature covers every ownership card listed."""
 
     acting_as: str = ""                 # PROPIETARIO / POSEEDOR / GESTOR
     declarant: PersonInput = field(default_factory=PersonInput)
-    vehicles: list[VehicleInput] = field(default_factory=list)
+    cards: list[OwnershipCardInput] = field(default_factory=list)
     signature_file: str | None = None   # stored file name of the declarant's signature PNG
-    notarized_pdf_file: str | None = None   # required when ANY vehicle's reason is PÉRDIDA
+    notarized_pdf_file: str | None = None   # required when ANY card's reason is PÉRDIDA
     submitter_ip: str | None = None
     user_agent: str | None = None
     accepted_terms: bool = False
