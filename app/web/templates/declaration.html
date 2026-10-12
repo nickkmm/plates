@@ -28,7 +28,7 @@
     .choice input { width:1.3rem; height:1.3rem; margin:.1rem 0 0; flex:none; }
     .row2 { display:grid; grid-template-columns:minmax(0,1fr); gap:0 .8rem; }
     @media (min-width:520px) { .row2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
-    #plateInput { text-transform:uppercase; letter-spacing:1px; }
+    .plate-input { text-transform:uppercase; letter-spacing:1px; }
     .note { background:#fff8e1; border:1px solid #f0d78a; border-radius:8px; padding:.6rem .8rem; font-size:.85rem; margin:.4rem 0 .9rem; }
     .error { background:#fdecec; border:1px solid var(--red); border-radius:8px; padding:.7rem .9rem; color:#900; font-size:.9rem; margin-bottom:1rem; }
     .error ul { margin:0; padding-left:1.1rem; }
@@ -42,8 +42,18 @@
                  touch-action:none; -webkit-user-select:none; user-select:none; }
     .pad-actions { margin-top:.4rem; }
     button.secondary { background:#fff; color:var(--blue); border:1px solid var(--blue); border-radius:8px; padding:.5rem .9rem; font-size:1rem; cursor:pointer; }
+    button.danger { background:#fff; color:var(--red); border:1px solid var(--red); border-radius:8px; padding:.4rem .8rem; font-size:.9rem; cursor:pointer; }
     button.primary { width:100%; background:var(--green); color:#fff; border:0; border-radius:8px; padding:.85rem; font-size:1.05rem; font-weight:600; cursor:pointer; }
     button.primary:hover { background:#168a50; }
+    .card-block { border:1px solid #cfd8e6; border-radius:12px; background:#f8faff; padding:.9rem .8rem .2rem; margin-bottom:1rem; }
+    .block-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; margin-bottom:.6rem; }
+    .block-title { font-weight:700; color:var(--blue); font-size:.95rem; }
+    .owner-box { border-top:1px dashed #b8c4d8; margin-top:.4rem; padding-top:.2rem; }
+    .copy-row { margin:.2rem 0 .9rem; }
+    .cards-actions { margin:.2rem 0 1rem; }
+    .total { display:flex; justify-content:space-between; align-items:center; gap:.6rem; background:#eef6f1; border:1px solid #b9dcc8;
+             border-radius:8px; padding:.6rem .8rem; font-size:.95rem; margin-bottom:.9rem; }
+    .total output { font-weight:800; font-size:1.2rem; color:var(--green); }
     .hp { position:absolute; left:-10000px; top:auto; width:1px; height:1px; overflow:hidden; }
     .footer { font-size:.78rem; color:#666; text-align:center; padding:0 .4rem 1.5rem; overflow-wrap:anywhere; margin-top:1.2rem; }
     #clientError { display:none; }
@@ -52,43 +62,110 @@
 <body>
 {% set f = form if form else {} %}
 {% set acting = f.get('acting_as', '') %}
-{% set reason_v = f.get('reason', '') %}
 {% set is_gestor = acting == 'GESTOR' %}
-{% set is_loss = reason_v == 'PÉRDIDA' %}
-{% macro person(prefix, gestor=false) %}
-  {% set off = gestor and not is_gestor %}
+{% set indices = card_indices if card_indices else [0] %}
+{% set max_cards_v = max_cards if max_cards else 30 %}
+{% set max_by_type = max_plates_by_type if max_plates_by_type else {} %}
+{% set loss = namespace(any=false) %}
+{% for i in indices %}{% if f.get('card_' ~ i ~ '_reason', '') == 'PÉRDIDA' %}{% set loss.any = true %}{% endif %}{% endfor %}
+{% set is_loss = loss.any %}
+{# One person block. `p` is the full field-name prefix (e.g. "declarant" or "card_0_owner"); `off` renders it disabled. #}
+{% macro person(p, autofill=true, off=false) %}
   <label class="field">Nombre completo
-    <input type="text" name="{{ prefix }}_name" id="{{ prefix }}Name" value="{{ f.get(prefix ~ '_name', '') }}" autocomplete="{{ 'off' if gestor else 'name' }}" maxlength="200"{% if not gestor or is_gestor %} required{% endif %}{% if off %} disabled{% endif %}>
+    <input type="text" name="{{ p }}_name" value="{{ f.get(p ~ '_name', '') }}" autocomplete="{{ 'name' if autofill else 'off' }}" maxlength="200" required{% if off %} disabled{% endif %}>
   </label>
   <div class="row2">
     <label class="field">Tipo de documento
-      <select name="{{ prefix }}_document_type"{% if not gestor %} required{% endif %}{% if off %} disabled{% endif %}>
+      <select name="{{ p }}_document_type" required{% if off %} disabled{% endif %}>
         <option value="">Selecciona…</option>
-        {% for t in document_types %}<option value="{{ t }}"{% if f.get(prefix ~ '_document_type', '') == t %} selected{% endif %}>{{ t }}</option>{% endfor %}
+        {% for t in document_types %}<option value="{{ t }}"{% if f.get(p ~ '_document_type', '') == t %} selected{% endif %}>{{ t }}</option>{% endfor %}
       </select>
     </label>
     <label class="field">Número de documento
-      <input type="text" name="{{ prefix }}_document_number" value="{{ f.get(prefix ~ '_document_number', '') }}" inputmode="numeric" autocomplete="off" maxlength="30"{% if not gestor %} required{% endif %}{% if off %} disabled{% endif %}>
+      <input type="text" name="{{ p }}_document_number" value="{{ f.get(p ~ '_document_number', '') }}" inputmode="numeric" autocomplete="off" maxlength="30" required{% if off %} disabled{% endif %}>
     </label>
   </div>
   <label class="field">Dirección de domicilio
-    <input type="text" name="{{ prefix }}_address" value="{{ f.get(prefix ~ '_address', '') }}" autocomplete="{{ 'off' if gestor else 'street-address' }}" maxlength="200"{% if off %} disabled{% endif %}>
+    <input type="text" name="{{ p }}_address" value="{{ f.get(p ~ '_address', '') }}" autocomplete="{{ 'street-address' if autofill else 'off' }}" maxlength="200"{% if off %} disabled{% endif %}>
   </label>
   <div class="row2">
     <label class="field">Barrio
-      <input type="text" name="{{ prefix }}_neighborhood" value="{{ f.get(prefix ~ '_neighborhood', '') }}" autocomplete="off" maxlength="100"{% if off %} disabled{% endif %}>
+      <input type="text" name="{{ p }}_neighborhood" value="{{ f.get(p ~ '_neighborhood', '') }}" autocomplete="off" maxlength="100"{% if off %} disabled{% endif %}>
     </label>
     <label class="field">Municipio
-      <input type="text" name="{{ prefix }}_municipality" value="{{ f.get(prefix ~ '_municipality', '') }}" autocomplete="{{ 'off' if gestor else 'address-level2' }}" maxlength="100"{% if off %} disabled{% endif %}>
+      <input type="text" name="{{ p }}_municipality" value="{{ f.get(p ~ '_municipality', '') }}" autocomplete="{{ 'address-level2' if autofill else 'off' }}" maxlength="100"{% if off %} disabled{% endif %}>
     </label>
   </div>
   <div class="row2">
     <label class="field">Teléfono
-      <input type="tel" name="{{ prefix }}_phone" value="{{ f.get(prefix ~ '_phone', '') }}" inputmode="tel" autocomplete="{{ 'off' if gestor else 'tel' }}" maxlength="30"{% if not gestor %} required{% endif %}{% if off %} disabled{% endif %}>
+      <input type="tel" name="{{ p }}_phone" value="{{ f.get(p ~ '_phone', '') }}" inputmode="tel" autocomplete="{{ 'tel' if autofill else 'off' }}" maxlength="30" required{% if off %} disabled{% endif %}>
     </label>
     <label class="field">Correo electrónico
-      <input type="email" name="{{ prefix }}_email" value="{{ f.get(prefix ~ '_email', '') }}" inputmode="email" autocomplete="{{ 'off' if gestor else 'email' }}" maxlength="200"{% if off %} disabled{% endif %}>
+      <input type="email" name="{{ p }}_email" value="{{ f.get(p ~ '_email', '') }}" inputmode="email" autocomplete="{{ 'email' if autofill else 'off' }}" maxlength="200"{% if off %} disabled{% endif %}>
     </label>
+  </div>
+{% endmacro %}
+{# One ownership-card block. `i` is the (stable, possibly sparse) field index; the <template> passes "__I__". #}
+{% macro card_block(i, number) %}
+  {% set c = 'card_' ~ i ~ '_' %}
+  {% set vtype = f.get(c ~ 'vehicle_type', '') %}
+  {% set max_q = max_by_type.get(vtype, 1) if vtype else 2 %}
+  {% set q_raw = f.get(c ~ 'plate_quantity', '') %}
+  {% set q_sel = (q_raw|int(0)) if q_raw|string in ('1', '2') else (2 if vtype and max_q == 2 else 1) %}
+  {% set rsn = f.get(c ~ 'reason', '') %}
+  <div class="card-block" data-card="{{ i }}">
+    <div class="block-head">
+      <span class="block-title">Tarjeta de propiedad <span class="card-number">{{ number }}</span></span>
+      <button type="button" class="danger remove-card" aria-label="Quitar esta tarjeta de propiedad">Quitar</button>
+    </div>
+    <label class="field">Placa
+      <input type="text" class="plate-input" name="{{ c }}plate_number" value="{{ f.get(c ~ 'plate_number', '') }}" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="10" required>
+    </label>
+    <div class="row2">
+      <label class="field">Licencia de tránsito No.
+        <input type="text" name="{{ c }}transit_license" value="{{ f.get(c ~ 'transit_license', '') }}" autocomplete="off" autocapitalize="characters" maxlength="40">
+      </label>
+      <label class="field">No. Motor
+        <input type="text" name="{{ c }}engine_number" value="{{ f.get(c ~ 'engine_number', '') }}" autocomplete="off" autocapitalize="characters" maxlength="40">
+      </label>
+      <label class="field">No. Chasis
+        <input type="text" name="{{ c }}chassis_number" value="{{ f.get(c ~ 'chassis_number', '') }}" autocomplete="off" autocapitalize="characters" maxlength="40">
+      </label>
+      <label class="field">Tipo de vehículo
+        <select name="{{ c }}vehicle_type" required>
+          <option value="">Selecciona…</option>
+          {% for t in vehicle_types %}<option value="{{ t }}"{% if vtype == t %} selected{% endif %}>{{ t }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">Matriculado en
+        <input type="text" name="{{ c }}registered_in" value="{{ f.get(c ~ 'registered_in', '') }}" autocomplete="off" maxlength="100">
+      </label>
+      <label class="field">Marca
+        <input type="text" name="{{ c }}vehicle_brand" value="{{ f.get(c ~ 'vehicle_brand', '') }}" autocomplete="off" maxlength="100">
+      </label>
+    </div>
+    <div role="radiogroup" aria-label="Motivo de la solicitud">
+      <div class="pad-label">Motivo de la solicitud</div>
+      <label class="choice"><input type="radio" name="{{ c }}reason" value="DETERIORO" required{% if rsn == 'DETERIORO' %} checked{% endif %}> Deterioro de la(s) placa(s)</label>
+      <label class="choice"><input type="radio" name="{{ c }}reason" value="PÉRDIDA"{% if rsn == 'PÉRDIDA' %} checked{% endif %}> Pérdida o hurto de la(s) placa(s)</label>
+    </div>
+    <label class="field" style="margin-top:.4rem">Cantidad de placas
+      <select name="{{ c }}plate_quantity" required>
+        <option value="1"{% if q_sel == 1 %} selected{% endif %}>1</option>
+        {% if max_q >= 2 %}<option value="2"{% if q_sel == 2 %} selected{% endif %}>2</option>{% endif %}
+      </select>
+    </label>
+    <div class="owner-box owner-wrap"{% if not is_gestor %} hidden{% endif %}>
+      <h3>Dueño y/o poseedor de esta tarjeta</h3>
+      <div class="copy-row"><button type="button" class="secondary copy-owner">Copiar los datos del dueño de la tarjeta anterior</button></div>
+      {{ person('card_' ~ i ~ '_owner', false, not is_gestor) }}
+      <label class="field">El dueño es
+        <select name="{{ c }}owner_relation" required{% if not is_gestor %} disabled{% endif %}>
+          <option value="">Selecciona…</option>
+          {% for r in owner_relations %}<option value="{{ r }}"{% if f.get(c ~ 'owner_relation', '') == r %} selected{% endif %}>{{ r }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
   </div>
 {% endmacro %}
 <div class="wrap">
@@ -106,20 +183,35 @@
   {% endif %}
   <div class="error" id="clientError" role="alert"></div>
 
-  <form id="declForm" method="post" action="/declaracion" enctype="multipart/form-data">
+  <form id="declForm" method="post" action="/declaracion" enctype="multipart/form-data" data-max-cards="{{ max_cards_v }}" data-max-by-type='{{ max_by_type|tojson }}'>
     <input type="hidden" name="form_token" value="{{ token }}">
     <div class="hp" aria-hidden="true">
       <label>No llenar este campo <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true"></label>
     </div>
 
     <div class="card">
-      <div class="note">NOTA. Si la placa que vas a fabricar es por PÉRDIDA, este formato debe estar autenticado por Notaría (adjunta el PDF autenticado más abajo).</div>
-      <h2>1. Motivo de la solicitud</h2>
-      <label class="choice"><input type="radio" name="reason" value="DETERIORO" required{% if reason_v == 'DETERIORO' %} checked{% endif %}> Deterioro de la(s) placa(s)</label>
-      <label class="choice"><input type="radio" name="reason" value="PÉRDIDA"{% if reason_v == 'PÉRDIDA' %} checked{% endif %}> Pérdida o hurto de la(s) placa(s)</label>
-      <label class="field" style="margin-top:.6rem">Cantidad de placas a fabricar
-        <input type="number" name="plate_quantity" min="1" step="1" inputmode="numeric" value="{{ f.get('plate_quantity', 1) }}" required>
-      </label>
+      <h2>1. Calidad en la que actúa</h2>
+      <label class="choice"><input type="radio" name="acting_as" value="PROPIETARIO" required{% if acting == 'PROPIETARIO' %} checked{% endif %}> Propietario (tarjeta de propiedad)</label>
+      <label class="choice"><input type="radio" name="acting_as" value="POSEEDOR"{% if acting == 'POSEEDOR' %} checked{% endif %}> Poseedor</label>
+      <label class="choice"><input type="radio" name="acting_as" value="GESTOR"{% if acting == 'GESTOR' %} checked{% endif %}> Gestor</label>
+    </div>
+
+    <div class="card">
+      <h2>2. Datos del declarante</h2>
+      <p class="lead" style="text-align:left;margin-bottom:.8rem">Es la persona que llena este formulario y firma la declaración.</p>
+      {{ person('declarant') }}
+    </div>
+
+    <div class="card">
+      <h2>3. Tarjetas de propiedad</h2>
+      <div class="note">NOTA. Agrega una tarjeta de propiedad por cada vehículo. Si la placa que vas a fabricar es por PÉRDIDA, este formato debe estar autenticado por Notaría (adjunta el PDF autenticado más abajo).</div>
+      <div id="cards">
+        {% for i in indices %}{{ card_block(i, loop.index) }}{% endfor %}
+      </div>
+      <div class="cards-actions">
+        <button type="button" class="secondary" id="addCard">+ Agregar tarjeta de propiedad</button>
+      </div>
+      <div class="total">Total de placas a fabricar <output id="totalPlates" aria-live="polite">{{ total_plates if total_plates else 1 }}</output></div>
       <div id="notarizedWrap"{% if not is_loss %} hidden{% endif %}>
         <label class="field">Formato autenticado por Notaría (PDF)
           <input type="file" name="notarized_pdf" id="notarizedPdf" accept="application/pdf"{% if is_loss %} required{% else %} disabled{% endif %}>
@@ -128,72 +220,19 @@
       </div>
     </div>
 
-    <div class="card">
-      <h2>2. Calidad en la que actúa</h2>
-      <label class="choice"><input type="radio" name="acting_as" value="PROPIETARIO" required{% if acting == 'PROPIETARIO' %} checked{% endif %}> Propietario (tarjeta de propiedad)</label>
-      <label class="choice"><input type="radio" name="acting_as" value="POSEEDOR"{% if acting == 'POSEEDOR' %} checked{% endif %}> Poseedor</label>
-      <label class="choice"><input type="radio" name="acting_as" value="GESTOR"{% if acting == 'GESTOR' %} checked{% endif %}> Gestor</label>
-    </div>
-
-    <div class="card">
-      <h2>3. Datos del declarante</h2>
-      <h3>Datos del dueño y/o poseedor</h3>
-      {{ person('owner') }}
-      <div id="ownerRelationWrap"{% if not is_gestor %} hidden{% endif %}>
-        <label class="field">El dueño y/o poseedor es
-          <select name="owner_relation" id="ownerRelation"{% if is_gestor %} required{% else %} disabled{% endif %}>
-            <option value="">Selecciona…</option>
-            {% for r in owner_relations %}<option value="{{ r }}"{% if f.get('owner_relation', '') == r %} selected{% endif %}>{{ r }}</option>{% endfor %}
-          </select>
-        </label>
-      </div>
-      <div id="gestorBlock"{% if not is_gestor %} hidden{% endif %}>
-        <h3>Datos del gestor</h3>
-        {{ person('gestor', true) }}
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>4. Datos del vehículo</h2>
-      <label class="field">Placa
-        <input type="text" name="vehicle_plate_number" id="plateInput" value="{{ f.get('vehicle_plate_number', '') }}" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="10" required>
-      </label>
-      <div class="row2">
-        <label class="field">Licencia de tránsito No.
-          <input type="text" name="vehicle_transit_license" value="{{ f.get('vehicle_transit_license', '') }}" autocomplete="off" autocapitalize="characters" maxlength="40">
-        </label>
-        <label class="field">No. Motor
-          <input type="text" name="vehicle_engine_number" value="{{ f.get('vehicle_engine_number', '') }}" autocomplete="off" autocapitalize="characters" maxlength="40">
-        </label>
-        <label class="field">No. Chasis
-          <input type="text" name="vehicle_chassis_number" value="{{ f.get('vehicle_chassis_number', '') }}" autocomplete="off" autocapitalize="characters" maxlength="40">
-        </label>
-        <label class="field">Tipo de vehículo
-          <select name="vehicle_type" required>
-            <option value="">Selecciona…</option>
-            {% for t in vehicle_types %}<option value="{{ t }}"{% if f.get('vehicle_type', '') == t %} selected{% endif %}>{{ t }}</option>{% endfor %}
-          </select>
-        </label>
-        <label class="field">Matriculado en
-          <input type="text" name="vehicle_registered_in" value="{{ f.get('vehicle_registered_in', '') }}" autocomplete="off" maxlength="100">
-        </label>
-        <label class="field">Marca
-          <input type="text" name="vehicle_brand" value="{{ f.get('vehicle_brand', '') }}" autocomplete="off" maxlength="100">
-        </label>
-      </div>
-    </div>
+    <template id="cardTemplate">{{ card_block('__I__', '') }}</template>
 
     <div class="card">
       <h2>Declaración, aviso legal y compromisos</h2>
       <div class="legal" tabindex="0" aria-label="Texto de la declaración, aviso legal y compromisos">
-        <h3>5. DECLARACIÓN Y AUTORIZACIÓN</h3>
+        <h3>4. DECLARACIÓN Y AUTORIZACIÓN</h3>
         <p>Manifiesto de manera libre y voluntaria, bajo la gravedad del juramento, que:</p>
         <ol type="a">
           <li>Soy propietario o poseedor del vehículo descrito en este formato.</li>
-          <li>Autorizo a INGSE SAS (NIT 900.773.756-0) a fabricar y entregar, Duplicado de placa bajo mi responsabilidad, la(s) placa(s) señalada(s) en la sección 1, idénticas a las que identifican mi vehículo.</li>
+          <li>Autorizo a INGSE SAS (NIT 900.773.756-0) a fabricar y entregar, Duplicado de placa bajo mi responsabilidad, la(s) placa(s) señalada(s) en la sección 3, idénticas a las que identifican mi vehículo.</li>
           <li>Toda la información y los documentos que entrego son verídicos y copia fiel del original, y autorizo que se verifiquen por cualquier medio.</li>
         </ol>
-        <h3>6. AVISO LEGAL — LEA ANTES DE FIRMAR</h3>
+        <h3>5. AVISO LEGAL — LEA ANTES DE FIRMAR</h3>
         <p>Este documento es una declaración jurada con efectos legales. Conforme al artículo 83 de la Constitución Política de Colombia, sus actuaciones ante INGSE SAS se presumen realizadas de buena fe, es decir, con información veraz y honesta.</p>
         <p>Si la información o los documentos entregados son falsos, alterados o inexactos, usted puede incurrir en los siguientes delitos, contemplados en el Código Penal Colombiano (Ley 599 de 2000):</p>
         <ul>
@@ -201,7 +240,7 @@
           <li>Falso testimonio (art. 442 C.P.), cuando la declaración jurada se rinde ante autoridad competente en una actuación administrativa: prisión de 6 a 12 años.</li>
         </ul>
         <p>Al firmar, usted declara que ha leído y entendido este aviso y que la información suministrada es cierta, real y verificable.</p>
-        <h3>7. COMPROMISOS Y RESPONSABILIDAD DEL CLIENTE o DUEÑO</h3>
+        <h3>6. COMPROMISOS Y RESPONSABILIDAD DEL CLIENTE o DUEÑO</h3>
         <ul>
           <li>Los trámites ante el RUNT son de responsabilidad exclusiva del cliente o de la empresa que solicita este trámite.</li>
           <li>Debe entregar las placas deterioradas en INGSE SAS, o enviarlas a la Calle 42 # 41-47, Barrio Fray Luis Amigo, Palmira.</li>
@@ -211,19 +250,13 @@
     </div>
 
     <div class="card">
-      <h2>8. Firma</h2>
+      <h2>7. Firma</h2>
       {% if errors %}<div class="note">Vuelve a adjuntar el PDF y a firmar.</div>{% endif %}
       <div class="pad-wrap">
-        <div class="pad-label">Firma del dueño y/o poseedor</div>
-        <canvas class="pad" id="ownerCanvas" aria-label="Firma del dueño y/o poseedor"></canvas>
-        <input type="hidden" name="owner_signature" id="ownerSignature" disabled>
-        <div class="pad-actions"><button type="button" class="secondary" id="ownerClear">Borrar firma</button></div>
-      </div>
-      <div class="pad-wrap" id="gestorSignatureWrap"{% if not is_gestor %} hidden{% endif %}>
-        <div class="pad-label">Firma del gestor</div>
-        <canvas class="pad" id="gestorCanvas" aria-label="Firma del gestor"></canvas>
-        <input type="hidden" name="gestor_signature" id="gestorSignature" disabled>
-        <div class="pad-actions"><button type="button" class="secondary" id="gestorClear">Borrar firma</button></div>
+        <div class="pad-label">Firma del declarante (cubre todas las tarjetas de propiedad de esta declaración)</div>
+        <canvas class="pad" id="signatureCanvas" aria-label="Firma del declarante"></canvas>
+        <input type="hidden" name="signature" id="signature" disabled>
+        <div class="pad-actions"><button type="button" class="secondary" id="signatureClear">Borrar firma</button></div>
       </div>
     </div>
 
@@ -242,14 +275,23 @@
 (function () {
   var form = document.getElementById('declForm');
   var clientError = document.getElementById('clientError');
+  var cardsBox = document.getElementById('cards');
+  var addBtn = document.getElementById('addCard');
+  var totalOut = document.getElementById('totalPlates');
+  var maxCards = parseInt(form.getAttribute('data-max-cards'), 10) || 30;
+  var maxByType = {};
+  try { maxByType = JSON.parse(form.getAttribute('data-max-by-type') || '{}'); } catch (err) {}
 
   function checkedValue(name) {
-    var radios = document.querySelectorAll('input[name="' + name + '"]');
+    var radios = form.querySelectorAll('input[name="' + name + '"]');
     for (var i = 0; i < radios.length; i++) if (radios[i].checked) return radios[i].value;
     return '';
   }
+  function blocks() { return cardsBox.querySelectorAll('.card-block'); }
+  function field(block, leaf) { return block.querySelector('[name="card_' + block.getAttribute('data-card') + '_' + leaf + '"]'); }
+  function isGestor() { return checkedValue('acting_as') === 'GESTOR'; }
 
-  // --- Signature pads -------------------------------------------------
+  // --- Signature pad (one: the declarant's) ----------------------------
   function Pad(canvasId, inputId, clearId) {
     this.canvas = document.getElementById(canvasId);
     this.input = document.getElementById(inputId);
@@ -321,57 +363,140 @@
     this.ctx.restore();
     this.sync('');
   };
+  var pad = new Pad('signatureCanvas', 'signature', 'signatureClear');
 
-  var ownerPad = new Pad('ownerCanvas', 'ownerSignature', 'ownerClear');
-  var gestorPad = new Pad('gestorCanvas', 'gestorSignature', 'gestorClear');
-
-  // --- Conditional blocks ----------------------------------------------
-  function setBlock(wrap, fields, on) {
-    wrap.hidden = !on;
-    for (var i = 0; i < fields.length; i++) fields[i].disabled = !on;
+  // --- Per-card plate quantity: 1..max for the plate type ---------------
+  // No type chosen yet: both 1 and 2 are offered. Cars: 1 or 2 (default 2); others: only 1.
+  function maxFor(type) { return type ? (maxByType[type] || 1) : 2; }
+  function applyType(block, userChange) {
+    var type = field(block, 'vehicle_type').value;
+    var sel = field(block, 'plate_quantity');
+    var max = maxFor(type);
+    var current = parseInt(sel.value, 10) || 1;
+    while (sel.options.length > max) sel.remove(sel.options.length - 1);
+    while (sel.options.length < max) {
+      var opt = document.createElement('option');
+      opt.value = String(sel.options.length + 1);
+      opt.textContent = opt.value;
+      sel.appendChild(opt);
+    }
+    if (userChange) current = type && max === 2 ? 2 : 1;   // a car defaults to its two plates
+    sel.value = String(Math.min(current, max));
+  }
+  function updateTotal() {
+    var total = 0, bs = blocks();
+    for (var i = 0; i < bs.length; i++) total += parseInt(field(bs[i], 'plate_quantity').value, 10) || 0;
+    totalOut.textContent = String(total);
   }
 
+  // --- Conditional parts (acting_as -> owner boxes; any PÉRDIDA -> PDF) --
   function applyState() {
-    var isGestor = checkedValue('acting_as') === 'GESTOR';
-    var isLoss = checkedValue('reason') === 'PÉRDIDA';
-
-    var gestorBlock = document.getElementById('gestorBlock');
-    setBlock(gestorBlock, gestorBlock.querySelectorAll('input, select'), isGestor);
-    document.getElementById('gestorName').required = isGestor;
-
-    var rel = document.getElementById('ownerRelation');
-    setBlock(document.getElementById('ownerRelationWrap'), [rel], isGestor);
-    rel.required = isGestor;
-
-    document.getElementById('gestorSignatureWrap').hidden = !isGestor;
-    if (!isGestor) gestorPad.clear();
-
+    var gestor = isGestor(), loss = false, bs = blocks();
+    for (var i = 0; i < bs.length; i++) {
+      var wrap = bs[i].querySelector('.owner-wrap');
+      wrap.hidden = !gestor;
+      var controls = wrap.querySelectorAll('input, select');
+      for (var k = 0; k < controls.length; k++) controls[k].disabled = !gestor;
+      // "copy previous owner" only makes sense from the second card on
+      wrap.querySelector('.copy-row').hidden = (i === 0);
+      if (checkedValue('card_' + bs[i].getAttribute('data-card') + '_reason') === 'PÉRDIDA') loss = true;
+    }
     var pdf = document.getElementById('notarizedPdf');
-    setBlock(document.getElementById('notarizedWrap'), [pdf], isLoss);
-    pdf.required = isLoss;
-
-    ownerPad.resize();
-    gestorPad.resize();
+    document.getElementById('notarizedWrap').hidden = !loss;
+    pdf.disabled = !loss;
+    pdf.required = loss;
   }
 
-  var actingRadios = document.querySelectorAll('input[name="acting_as"]');
-  var reasonRadios = document.querySelectorAll('input[name="reason"]');
-  for (var i = 0; i < actingRadios.length; i++) actingRadios[i].addEventListener('change', applyState);
-  for (var j = 0; j < reasonRadios.length; j++) reasonRadios[j].addEventListener('change', applyState);
+  function renumber() {
+    var bs = blocks();
+    for (var i = 0; i < bs.length; i++) {
+      bs[i].querySelector('.card-number').textContent = String(i + 1);
+      bs[i].querySelector('.remove-card').hidden = (bs.length === 1);
+    }
+    addBtn.disabled = bs.length >= maxCards;
+    applyState();
+    updateTotal();
+  }
 
-  // --- Plate: uppercase while typing, strip spaces on blur --------------
-  var plate = document.getElementById('plateInput');
-  plate.addEventListener('input', function () { plate.value = plate.value.toUpperCase(); });
-  plate.addEventListener('blur', function () { plate.value = plate.value.toUpperCase().replace(/\s+/g, ''); });
+  // --- Add / remove cards ----------------------------------------------
+  // Field indices are stable and may become sparse after a removal; the server
+  // reads whatever indices arrive. New blocks are cloned from <template>.
+  var nextIndex = 0;
+  (function () {
+    var bs = blocks();
+    for (var i = 0; i < bs.length; i++) nextIndex = Math.max(nextIndex, parseInt(bs[i].getAttribute('data-card'), 10) + 1);
+  })();
+
+  function addCard() {
+    if (blocks().length >= maxCards) return null;
+    var holder = document.createElement('div');
+    holder.innerHTML = document.getElementById('cardTemplate').innerHTML.replace(/__I__/g, String(nextIndex));
+    nextIndex += 1;
+    var block = holder.querySelector('.card-block');
+    cardsBox.appendChild(block);
+    applyType(block, false);
+    renumber();
+    return block;
+  }
+
+  addBtn.addEventListener('click', function () {
+    var block = addCard();
+    if (!block) return;
+    var first = block.querySelector('input, select');
+    if (first && first.focus) first.focus();
+    if (block.scrollIntoView) block.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  function copyOwnerFromPrevious(block) {
+    var bs = blocks(), prev = null;
+    for (var i = 0; i < bs.length; i++) { if (bs[i] === block) break; prev = bs[i]; }
+    if (!prev) return;
+    var from = 'card_' + prev.getAttribute('data-card') + '_owner';
+    var to = 'card_' + block.getAttribute('data-card') + '_owner';
+    var leaves = ['name', 'document_type', 'document_number', 'address', 'neighborhood', 'municipality', 'phone', 'email', 'relation'];
+    for (var k = 0; k < leaves.length; k++) {
+      var src = prev.querySelector('[name="' + from + '_' + leaves[k] + '"]');
+      var dst = block.querySelector('[name="' + to + '_' + leaves[k] + '"]');
+      if (src && dst) dst.value = src.value;
+    }
+  }
+
+  cardsBox.addEventListener('click', function (e) {
+    var t = e.target;
+    var block = t && t.closest ? t.closest('.card-block') : null;
+    if (!block) return;
+    if (t.closest('.remove-card')) {
+      if (blocks().length > 1) { block.parentNode.removeChild(block); renumber(); }
+    } else if (t.closest('.copy-owner')) {
+      copyOwnerFromPrevious(block);
+    }
+  });
+  cardsBox.addEventListener('change', function (e) {
+    var t = e.target, name = t.name || '';
+    var block = t.closest ? t.closest('.card-block') : null;
+    if (!block) return;
+    if (/_vehicle_type$/.test(name)) { applyType(block, true); updateTotal(); }
+    else if (/_plate_quantity$/.test(name)) updateTotal();
+    else if (/_reason$/.test(name)) applyState();
+  });
+  // Plate: uppercase while typing, strip spaces on blur
+  cardsBox.addEventListener('input', function (e) {
+    var t = e.target;
+    if (t.classList && t.classList.contains('plate-input')) t.value = t.value.toUpperCase();
+  });
+  cardsBox.addEventListener('focusout', function (e) {
+    var t = e.target;
+    if (t.classList && t.classList.contains('plate-input')) t.value = t.value.toUpperCase().replace(/\s+/g, '');
+  });
+
+  var actingRadios = form.querySelectorAll('input[name="acting_as"]');
+  for (var a = 0; a < actingRadios.length; a++) actingRadios[a].addEventListener('change', applyState);
 
   // --- Submit guard -----------------------------------------------------
   form.addEventListener('submit', function (e) {
-    var missing = [];
-    if (!ownerPad.input.value) missing.push('del dueño y/o poseedor');
-    if (checkedValue('acting_as') === 'GESTOR' && !gestorPad.input.value) missing.push('del gestor');
-    if (missing.length) {
+    if (!pad.input.value) {
       e.preventDefault();
-      clientError.textContent = 'La firma ' + missing.join(' y la firma ') + ' es obligatoria. Dibuja la firma con el dedo o el mouse.';
+      clientError.textContent = 'La firma del declarante es obligatoria. Dibuja la firma con el dedo o el mouse.';
       clientError.style.display = 'block';
       if (clientError.scrollIntoView) clientError.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
@@ -379,7 +504,11 @@
     clientError.style.display = 'none';
   });
 
-  applyState();
+  // Initial state: quantity options per type (sticky values are kept), then conditional parts.
+  var initial = blocks();
+  for (var b = 0; b < initial.length; b++) applyType(initial[b], false);
+  renumber();
+  pad.resize();
 })();
 </script>
 </body>
