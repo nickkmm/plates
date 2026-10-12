@@ -1354,6 +1354,12 @@ regla de 6 meses. La usan el formulario público `/declaracion` y la pantalla
 interna `/declaraciones` (notas siguientes); ver `docs/DATABASE.md` y
 `docs/CORE.md`.
 
+Actualización (migración `0009`): una declaración ya no modela un solo vehículo.
+Tiene un único declarante (quien firma, una vez) y varias tarjetas de propiedad
+en la tabla `declaration_cards` (cada una con su motivo, cantidad de placas,
+dueño y alertas). Si una sola tarjeta tiene alertas, toda la declaración queda
+pendiente de revisión. Detalle en `docs/DATABASE.md` y `docs/CORE.md`.
+
 ## Nota: enlace formal placa fabricada -> tarjeta (última fase del plan de declaraciones)
 
 La migración `0008` agrega `plates.ownership_card_id` (nullable, FK a

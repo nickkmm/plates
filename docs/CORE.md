@@ -282,7 +282,7 @@ de un único archivo de 556 líneas:
 | `db/inventory.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
 | `db/customers.py` (Fase 2) | CRUD de `customers` — ver detalle abajo. |
 | `db/ownership_cards.py` (Fase 2 declaraciones) | CRUD de `ownership_cards` (tarjeta de propiedad) y `find_card_conflicts` — ver detalle abajo. |
-| `db/declarations.py` (Fase 3 declaraciones) | Lectura/escritura de `declarations` — ver detalle abajo. |
+| `db/declarations.py` (Fase 3 declaraciones) | Lectura/escritura de `declarations` y `declaration_cards` — ver detalle abajo. |
 | `db/users.py` (Fase 2) | CRUD/lookup de `users` — backend real del login (`app/web/auth.py`), ver detalle abajo. |
 | `db/pricing.py` (Fase 2) | CRUD de `plate_type_prices` — ver detalle abajo. |
 
@@ -382,18 +382,25 @@ suben tal cual (la BD es la fuente de verdad). Ver
 ### `db/declarations.py` (Fase 3 declaraciones)
 
 Solo la capa de datos; las reglas de decisión están en `app/core/declarations.py`
-(más abajo). Columnas, estados y alertas: [`DATABASE.md`](DATABASE.md). Constantes:
-`STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` y
+(más abajo). Una declaración tiene un declarante y varias tarjetas de propiedad
+(`declaration_cards`). Columnas, estados y alertas: [`DATABASE.md`](DATABASE.md).
+Constantes: `STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` y
 `FLAG_PLATE_MADE_RECENTLY` / `FLAG_CARD_OTHER_OWNER` / `FLAG_CARD_DATA_MISMATCH` /
-`FLAG_CUSTOMER_TYPE_MISMATCH`, `FLAG_CUSTOMER_DOCUMENT_MISMATCH`.
+`FLAG_CUSTOMER_TYPE_MISMATCH`, `FLAG_CUSTOMER_DOCUMENT_MISMATCH`. Registros:
+`DeclarationRecord` (fila de `declarations`) y `DeclarationCardRecord` (fila de
+`declaration_cards`).
 
 | Función | Qué hace |
 |---|---|
-| `insert_declaration(conn, *, reason, plate_quantity, acting_as, status, submitted_data, review_flags=None, customer_id=None, ownership_card_id=None, gestor_id=None, owner_signature_path=None, ..., accepted_terms_at=None)` | Inserta y devuelve el `id`. |
+| `insert_declaration(conn, *, acting_as, status, submitted_data, review_flags=None, gestor_id=None, declarant_signature_path=None, notarized_pdf_path=None, submitter_ip=None, user_agent=None, accepted_terms_at=None)` | Inserta el encabezado y devuelve el `id`. |
+| `insert_declaration_card(conn, declaration_id, *, position, reason, plate_quantity, plate_number, transit_license, owner_data, engine_number=None, ..., owner_relation=None, review_flags=None, customer_id=None, ownership_card_id=None)` | Inserta una tarjeta de la declaración y devuelve el `id`. |
 | `get_declaration(conn, declaration_id)` | `DeclarationRecord` o `None`. |
-| `list_declarations(conn, *, status=None, query=None)` | `pending_review` primero, luego las más nuevas. `query` busca (sin mayúsculas) en nombre, documento, placa y licencia de `submitted_data` y de las filas enlazadas. |
+| `list_declaration_cards(conn, declaration_id)` | Las tarjetas de una declaración, ordenadas por `position`. |
+| `list_cards_for_declarations(conn, declaration_ids)` | Las tarjetas de varias declaraciones en una sola consulta: `{declaration_id: [DeclarationCardRecord, ...]}` (para pantallas de listado, sin N+1). |
+| `list_declarations(conn, *, status=None, query=None)` | `pending_review` primero, luego las más nuevas. `query` busca (sin mayúsculas, con `%`/`_`/`\` literales) en nombre y documento del declarante (y del gestor enlazado) y, en **cualquiera** de las tarjetas, placa, licencia, nombre y documento del dueño declarado y los clientes/tarjetas enlazados. |
 | `count_recent_by_ip(conn, ip, *, since)` | Declaraciones de esa IP con `created_at >= since` (límite por IP del formulario). |
-| `set_declaration_review(conn, declaration_id, *, status, reviewed_by, note=None, customer_id=None, ownership_card_id=None, gestor_id=None)` | Graba la decisión (`reviewed_at = now()`). No valida el estado previo. |
+| `set_declaration_review(conn, declaration_id, *, status, reviewed_by, note=None, gestor_id=None)` | Graba la decisión (`reviewed_at = now()`) y el `gestor_id`. No valida el estado previo. |
+| `set_declaration_card_links(conn, declaration_card_id, *, customer_id, ownership_card_id)` | Enlaza una tarjeta de la declaración con el dueño y la tarjeta de propiedad creados/enlazados al aprobar. |
 
 `db/plates.py` suma `last_fabrication_date(conn, plate_number)`: solo lectura,
 la `order_date` más reciente de una placa con ese número exacto, **ignorando**
@@ -403,22 +410,38 @@ placas `is_voided` o `is_plate_annulled`; `None` si nunca se fabricó.
 
 Lógica de negocio sin Flask; recibe `conn` y nunca hace commit/rollback.
 
+Modelo de entrada: `DeclarationInput(acting_as, declarant: PersonInput, cards:
+list[OwnershipCardInput], signature_file, notarized_pdf_file, ...)`. Hay **un
+solo declarante** (el propietario/poseedor mismo, o un gestor) y **una sola
+firma**, que cubre todas las tarjetas. Cada `OwnershipCardInput` trae sus
+campos de tarjeta, su `reason` (`DETERIORO` / `PÉRDIDA`), su `plate_quantity`
+(1..`normalize.max_plates_per_card`: 2 para carros, 1 para los demás; el total se
+deriva sumando) y, solo si el declarante es `GESTOR`, su propio `owner`
+(`PersonInput`) y `owner_relation` (`DUEÑO` / `POSEEDOR`). Si el declarante es
+propietario o poseedor, todas las tarjetas son suyas. Máximo `MAX_CARDS` = 30
+tarjetas por declaración.
+
 | Función | Qué hace |
 |---|---|
-| `validate_declaration(inp)` | Lista de errores en español (vacía = válida): obligatorios, vocabulario con `normalize_choice`, placa con `validate_plate`, pérdida exige PDF notariado, gestor exige su bloque y su firma, firma del dueño y términos siempre, cantidad >= 1. |
+| `validate_declaration(inp)` | Lista de errores en español (vacía = válida): declarante, firma única y términos siempre; 1..`MAX_CARDS` tarjetas; por tarjeta (con prefijo `Tarjeta N: `): obligatorios, vocabulario con `normalize_choice`, placa con `validate_plate`, cantidad de placas dentro del rango del tipo, dueño y relación si es gestor; placa o licencia repetida dentro del envío; el PDF notariado es obligatorio si **alguna** tarjeta es por pérdida. |
 | `submit_declaration(conn, inp, *, today=None)` | Aplica las reglas de abajo y devuelve `SubmitResult(declaration_id, status, flags)`. `today` por defecto es la fecha de Bogotá. |
-| `approve_declaration(conn, id, reviewer_user_id, *, reassign_card=False, note=None)` | Solo desde `pending_review`. Crea/enlaza dueño, gestor y tarjeta desde `submitted_data`. Un cliente existente con tipo `NULL` pasa al tipo esperado; con otro tipo, `ValueError`. Tarjeta de otro dueño: `ValueError` salvo `reassign_card=True`; licencia/placa que no cuadran: siempre `ValueError`. |
+| `approve_declaration(conn, id, reviewer_user_id, *, reassign_card_ids=(), note=None)` | Solo desde `pending_review`. Crea/enlaza el gestor (si lo hay) y, por **cada** tarjeta, su dueño y su tarjeta de propiedad. `reassign_card_ids` son ids de `declaration_cards` cuya tarjeta existente es de otro cliente y se puede mover. Un cliente existente con tipo `NULL` pasa al tipo esperado; con otro tipo, `ValueError`. Tarjeta de otro dueño sin estar en `reassign_card_ids`: `ValueError`; licencia/placa que no cuadran: siempre `ValueError`. Todo es verificado **antes** de escribir (todo o nada); los mensajes nombran la tarjeta y su placa. |
 | `reject_declaration(conn, id, reviewer_user_id, note)` | Marca `rejected` (nota obligatoria); no crea nada. |
 
-Reglas de `submit_declaration`:
+Reglas de `submit_declaration` (se evalúan **por tarjeta**):
 
 | Situación | Resultado |
 |---|---|
-| Cualquier alerta (`plate_made_recently`, `card_other_owner`, `card_data_mismatch`, `customer_type_mismatch`, `customer_document_mismatch`) | `pending_review`; **no se crea nada** (ni cliente, ni gestor, ni tarjeta); las tres FK quedan `NULL`. |
-| Cliente nuevo + tarjeta nueva | `approved`; se crea el CLIENTE (y el GESTOR si hay) y la tarjeta. |
-| Cliente existente (tipo `CLIENTE`) con otro carro | `approved`; se enlaza el cliente sin modificarlo y se crea la tarjeta nueva. |
+| Cualquier alerta (`plate_made_recently`, `card_other_owner`, `card_data_mismatch`, `customer_type_mismatch`, `customer_document_mismatch`) en **alguna** tarjeta | Toda la declaración queda `pending_review`; **no se crea nada** (ni clientes, ni gestor, ni tarjetas); los enlaces quedan `NULL`. Cada tarjeta guarda sus alertas y `declarations.review_flags` es la unión. |
+| Sin alertas: dueños nuevos + tarjetas nuevas | `approved`; en la misma transacción se crean el GESTOR (si hay), los CLIENTES y las tarjetas. |
+| El mismo dueño repetido en varias tarjetas | Un **solo** cliente (se identifica por nombre canónico). |
+| Cliente existente (tipo `CLIENTE`) con otra tarjeta | `approved`; se enlaza el cliente sin modificarlo y se crea la tarjeta nueva. |
 | Mismo cliente, misma licencia y placa, pasados 6 meses | `approved`; se enlaza la tarjeta existente **sin modificarla** (los datos secundarios distintos solo quedan en `submitted_data`). |
 | Cliente/gestor existentes | Solo se enlazan, nunca se modifican. |
+
+`submitted_data` queda con la forma canónica `{"acting_as", "declarant",
+"cards": [{..., "owner", "owner_relation"}], "raw"}` (ver
+[`DATABASE.md`](DATABASE.md)).
 
 **Privacidad:** `SubmitResult.flags` es solo para el personal y los logs. La capa
 web **nunca** debe mostrarlas al anónimo que envía (ni nada del dueño anterior o
