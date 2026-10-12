@@ -419,19 +419,19 @@
   }
 
   // --- Add / remove cards ----------------------------------------------
-  // Field indices are stable and may become sparse after a removal; the server
-  // reads whatever indices arrive. New blocks are cloned from <template>.
-  var nextIndex = 0;
-  (function () {
-    var bs = blocks();
-    for (var i = 0; i < bs.length; i++) nextIndex = Math.max(nextIndex, parseInt(bs[i].getAttribute('data-card'), 10) + 1);
-  })();
+  // Field indices are stable while a block lives and may be sparse after a
+  // removal; the server reads whatever indices arrive. A new block takes the
+  // highest live index + 1. New blocks are cloned from <template>.
+  function nextIndex() {
+    var bs = blocks(), next = 0;
+    for (var i = 0; i < bs.length; i++) next = Math.max(next, parseInt(bs[i].getAttribute('data-card'), 10) + 1);
+    return next;
+  }
 
   function addCard() {
     if (blocks().length >= maxCards) return null;
     var holder = document.createElement('div');
-    holder.innerHTML = document.getElementById('cardTemplate').innerHTML.replace(/__I__/g, String(nextIndex));
-    nextIndex += 1;
+    holder.innerHTML = document.getElementById('cardTemplate').innerHTML.replace(/__I__/g, String(nextIndex()));
     var block = holder.querySelector('.card-block');
     cardsBox.appendChild(block);
     applyType(block, false);

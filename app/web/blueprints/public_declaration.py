@@ -60,8 +60,8 @@ _PERSON_FIELDS = (
     "municipality", "phone", "email",
 )
 # Card blocks are numbered by the browser (stable, possibly sparse after a
-# removal); only 1-4 digit indices are recognised, anything else is ignored.
-_CARD_KEY_RE = re.compile(r"card_(\d{1,4})_")
+# removal); only 1-6 digit indices are recognised, anything else is ignored.
+_CARD_KEY_RE = re.compile(r"card_(\d{1,6})_")
 
 _ERR_TOKEN = "El formulario expiró o no es válido, inténtalo de nuevo."
 _ERR_TURNSTILE = "No pudimos verificar que eres una persona. Inténtalo de nuevo."

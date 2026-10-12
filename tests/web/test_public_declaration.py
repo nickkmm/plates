@@ -365,7 +365,7 @@ class TestParsing:
         assert stub.inp.declarant.name == "Maria Lopez"
 
     def test_keys_that_are_not_card_fields_are_ignored(self, client, stub):
-        extra = {"card_99999_plate_number": "ZZZ999", "card_x_plate_number": "ZZZ999", "xcard_5_plate_number": "ZZZ999"}
+        extra = {"card_9999999_plate_number": "ZZZ999", "card_x_plate_number": "ZZZ999", "xcard_5_plate_number": "ZZZ999"}
         post(client, _form(**extra))
         assert [c.plate_number for c in stub.inp.cards] == ["ABC123"]
 
