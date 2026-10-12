@@ -10,6 +10,10 @@ login decorator and everything else here is defence in depth:
 * POST pipeline, cheapest check first: honeypot, signed form token (minimum
   and maximum age), Turnstile, per-IP rate limit (counted in Postgres), then
   parsing, file saving, validation and finally `submit_declaration`.
+* One declarant signs once for N ownership cards. The browser numbers the card
+  blocks (`card_<i>_*`, stable and possibly sparse after a removal); the server
+  reads whichever indices arrive, in numeric order, and rejects more than
+  MAX_CARDS of them BEFORE building the input or storing any file.
 * Files are written before validation (the validator needs their names); any
   failure deletes every file saved during the request.
 * Privacy: the response is the same generic page for an approved and for a
@@ -20,7 +24,8 @@ login decorator and everything else here is defence in depth:
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -32,10 +37,11 @@ from app.core import db, normalize
 from app.core.declarations import (
     ACTING_AS_GESTOR,
     LOSS_REASON,
+    MAX_CARDS,
     DeclarationInput,
+    OwnershipCardInput,
     PersonInput,
     SubmitResult,
-    VehicleInput,
     submit_declaration,
     validate_declaration,
 )
@@ -46,25 +52,16 @@ bp = Blueprint("public_declaration", __name__)
 
 MAX_SUBMISSIONS_PER_IP_PER_HOUR = 5
 
-# Form keys never copied into `submitted_data`: the signatures are huge base64
-# blobs (stored as files) and the rest is anti-spam plumbing.
-_EXCLUDED_RAW_KEYS = frozenset(
-    {"owner_signature", "gestor_signature", "form_token", "website", "cf-turnstile-response"}
-)
+# Form keys never copied into `submitted_data`: the signature is a huge base64
+# blob (stored as a file) and the rest is anti-spam plumbing.
+_EXCLUDED_RAW_KEYS = frozenset({"signature", "form_token", "website", "cf-turnstile-response"})
 _PERSON_FIELDS = (
     "name", "document_type", "document_number", "address", "neighborhood",
     "municipality", "phone", "email",
 )
-# VehicleInput field -> form field name.
-_VEHICLE_FORM_KEYS = {
-    "plate_number": "vehicle_plate_number",
-    "transit_license": "vehicle_transit_license",
-    "engine_number": "vehicle_engine_number",
-    "chassis_number": "vehicle_chassis_number",
-    "vehicle_type": "vehicle_type",
-    "registered_in": "vehicle_registered_in",
-    "vehicle_brand": "vehicle_brand",
-}
+# Card blocks are numbered by the browser (stable, possibly sparse after a
+# removal); only 1-6 digit indices are recognised, anything else is ignored.
+_CARD_KEY_RE = re.compile(r"card_(\d{1,6})_")
 
 _ERR_TOKEN = "El formulario expiró o no es válido, inténtalo de nuevo."
 _ERR_TURNSTILE = "No pudimos verificar que eres una persona. Inténtalo de nuevo."
@@ -74,6 +71,8 @@ _ERR_RATE_LIMIT = (
     "Recibimos varias declaraciones desde tu conexión. "
     "Inténtalo de nuevo más tarde o acércate al mostrador de INGSE."
 )
+_ERR_TOO_MANY_CARDS = f"Solo puedes declarar hasta {MAX_CARDS} tarjetas de propiedad en una misma declaración."
+_ERR_NO_CARDS = "Agrega al menos una tarjeta de propiedad."
 
 
 def _form_enabled() -> bool:
@@ -94,23 +93,14 @@ def _page(template: str, status: int = 200, **context: Any) -> Response:
     return response
 
 
-def _render_form(
-    status: int = 200, *, form: dict[str, str] | None = None, errors: list[str] | None = None,
-) -> Response:
-    return _page(
-        "declaration.html", status,
-        form=form or {}, errors=errors or [],
-        token=antispam.issue_form_token(str(current_app.secret_key)),
-        turnstile_site_key=os.environ.get("TURNSTILE_SITE_KEY", "").strip(),
-        reasons=normalize.DECLARATION_REASONS,
-        document_types=normalize.DOCUMENT_TYPES,
-        vehicle_types=[t for t in normalize.PLATE_TYPES if t != "ORNAMENTAL"],
-        owner_relations=("DUEÑO", "POSEEDOR"),
-    )
-
-
-def _sticky_form() -> dict[str, str]:
-    return {k: v for k, v in request.form.items() if k not in _EXCLUDED_RAW_KEYS}
+def _card_indices(form: Mapping[str, str]) -> list[int]:
+    """Distinct card-block indices present in the submitted keys, ascending."""
+    found: set[int] = set()
+    for key in form:
+        match = _CARD_KEY_RE.match(key)
+        if match:
+            found.add(int(match.group(1)))
+    return sorted(found)
 
 
 def _parse_quantity(raw: str) -> int:
@@ -120,23 +110,71 @@ def _parse_quantity(raw: str) -> int:
         return 0  # fails validation ("al menos 1")
 
 
-def _person(form: dict[str, str], prefix: str) -> PersonInput:
+def _total_plates(form: Mapping[str, str], indices: list[int]) -> int:
+    """Sum of the (valid) per-card quantities, for the read-only total shown on re-render."""
+    total = 0
+    for i in indices:
+        quantity = _parse_quantity(form.get(f"card_{i}_plate_quantity", ""))
+        total += quantity if quantity in (1, 2) else 0
+    return total or 1
+
+
+def _render_form(
+    status: int = 200, *, form: dict[str, str] | None = None, errors: list[str] | None = None,
+) -> Response:
+    form = form or {}
+    # Never render more blocks than allowed, whatever was posted.
+    indices = _card_indices(form)[:MAX_CARDS] or [0]
+    vehicle_types = [t for t in normalize.PLATE_TYPES if t != "ORNAMENTAL"]
+    return _page(
+        "declaration.html", status,
+        form=form, errors=errors or [],
+        token=antispam.issue_form_token(str(current_app.secret_key)),
+        turnstile_site_key=os.environ.get("TURNSTILE_SITE_KEY", "").strip(),
+        reasons=normalize.DECLARATION_REASONS,
+        document_types=normalize.DOCUMENT_TYPES,
+        vehicle_types=vehicle_types,
+        owner_relations=("DUEÑO", "POSEEDOR"),
+        card_indices=indices,
+        max_cards=MAX_CARDS,
+        max_plates_by_type={t: normalize.max_plates_per_card(t) for t in vehicle_types},
+        total_plates=_total_plates(form, indices),
+    )
+
+
+def _sticky_form() -> dict[str, str]:
+    return {k: v for k, v in request.form.items() if k not in _EXCLUDED_RAW_KEYS}
+
+
+def _person(form: Mapping[str, str], prefix: str) -> PersonInput:
     return PersonInput(**{f: form.get(f"{prefix}_{f}", "").strip() for f in _PERSON_FIELDS})
 
 
-def _build_input(form: dict[str, str]) -> DeclarationInput:
+def _build_card(form: Mapping[str, str], i: int, *, is_gestor: bool) -> OwnershipCardInput:
+    def text(leaf: str) -> str:
+        return form.get(f"card_{i}_{leaf}", "").strip()
+
+    card = OwnershipCardInput(
+        plate_number=text("plate_number"), transit_license=text("transit_license"),
+        engine_number=text("engine_number"), chassis_number=text("chassis_number"),
+        vehicle_type=text("vehicle_type"), registered_in=text("registered_in"),
+        vehicle_brand=text("vehicle_brand"), reason=text("reason"),
+        plate_quantity=_parse_quantity(form.get(f"card_{i}_plate_quantity", "")),
+    )
+    if is_gestor:  # the per-card owner is only read for a gestor
+        card.owner = _person(form, f"card_{i}_owner")
+        card.owner_relation = form.get(f"card_{i}_owner_relation", "").strip()
+    return card
+
+
+def _build_input(form: Mapping[str, str], indices: list[int]) -> DeclarationInput:
+    """`indices` come from `_card_indices` and were already checked <= MAX_CARDS."""
     acting_as = form.get("acting_as", "").strip()
     is_gestor = acting_as == ACTING_AS_GESTOR
     return DeclarationInput(
-        reason=form.get("reason", "").strip(),
-        plate_quantity=_parse_quantity(form.get("plate_quantity", "")),
         acting_as=acting_as,
-        owner=_person(form, "owner"),
-        owner_relation=form.get("owner_relation", "").strip() if is_gestor else "",
-        gestor=_person(form, "gestor") if is_gestor else None,
-        vehicle=VehicleInput(
-            **{field: form.get(key, "").strip() for field, key in _VEHICLE_FORM_KEYS.items()},
-        ),
+        declarant=_person(form, "declarant"),
+        cards=[_build_card(form, i, is_gestor=is_gestor) for i in indices],
         submitter_ip=antispam.client_ip(request),
         user_agent=(request.headers.get("User-Agent") or "")[:500] or None,
         accepted_terms=bool(form.get("accept_terms", "").strip()),
@@ -152,7 +190,7 @@ def _delete_files(names: list[str]) -> None:
 
 
 def _save_files(inp: DeclarationInput, saved: list[str]) -> list[str]:
-    """Store signatures / PDF and set their names on `inp`; every stored name
+    """Store the signature / PDF and set their names on `inp`; every stored name
     is appended to `saved` so the caller can clean up. A missing file is left
     as None (the validator reports it); only a present-but-bad one errors here."""
     errors: list[str] = []
@@ -166,15 +204,11 @@ def _save_files(inp: DeclarationInput, saved: list[str]) -> list[str]:
         saved.append(name)
         return name
 
-    owner_sig = request.form.get("owner_signature", "").strip()
-    if owner_sig:
-        inp.owner_signature_file = attempt(save_signature_png, owner_sig, "Firma del propietario/poseedor")
-    if inp.acting_as == ACTING_AS_GESTOR:
-        gestor_sig = request.form.get("gestor_signature", "").strip()
-        if gestor_sig:
-            inp.gestor_signature_file = attempt(save_signature_png, gestor_sig, "Firma del gestor")
-    # The PDF only matters for PÉRDIDA; one sent for DETERIORO is discarded.
-    if normalize.normalize_choice(inp.reason, normalize.DECLARATION_REASONS) == LOSS_REASON:
+    signature = request.form.get("signature", "").strip()
+    if signature:
+        inp.signature_file = attempt(save_signature_png, signature, "Firma del declarante")
+    # The PDF only matters when some card is a PÉRDIDA; one sent otherwise is discarded.
+    if any(normalize.normalize_choice(c.reason, normalize.DECLARATION_REASONS) == LOSS_REASON for c in inp.cards):
         pdf = request.files.get("notarized_pdf")
         if pdf is not None and pdf.filename:
             inp.notarized_pdf_file = attempt(save_pdf, pdf, "PDF autenticado")
@@ -239,8 +273,16 @@ def declaration_submit() -> Response:
         current_app.logger.info("declaration rate limited ip=%s", ip)
         return _render_form(429, form=sticky, errors=[_ERR_RATE_LIMIT])
 
-    # e-f. build the input and store the files.
-    inp = _build_input(dict(form.items()))
+    # e. bound the number of card blocks BEFORE building anything.
+    indices = _card_indices(form)
+    if len(indices) > MAX_CARDS:
+        current_app.logger.info("declaration with too many cards (%d) ip=%s", len(indices), ip)
+        return _render_form(400, form=sticky, errors=[_ERR_TOO_MANY_CARDS])
+    if not indices:
+        return _render_form(400, form=sticky, errors=[_ERR_NO_CARDS])
+
+    # f. build the input and store the files.
+    inp = _build_input(form, indices)
     inp.submitted_data = sticky
     saved: list[str] = []
     errors = _save_files(inp, saved)

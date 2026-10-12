@@ -18,7 +18,7 @@ blueprints (`today_iso`, `_options`, `_padded`, `_validate_order_header`,
 | GET | `/healthz` | `app.py` | Liveness probe | — | — | abierta |
 | GET/POST | `/login` | `auth_routes.py` | Login (consulta `users`, Fase 2) | `auth.authenticate` | `login.html` | abierta |
 | GET/POST | `/logout` | `auth_routes.py` | Cierra sesión | — | (redirect) | abierta |
-| GET/POST | `/declaracion` | `public_declaration.py` | Formulario público de declaración juramentada (QR en el mostrador). POST: honeypot, token firmado, Turnstile, límite por IP (5/hora), guarda firmas/PDF en `UPLOADS_DIR`, valida y guarda. Responde **503** (`declaration_unavailable.html`) mientras no estén `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (o `TURNSTILE_BYPASS`). La página de éxito es idéntica para declaraciones aprobadas y retenidas: nunca revela estado, alertas ni al dueño anterior | `declarations.validate_declaration`, `submit_declaration`, `db.count_recent_by_ip` | `declaration.html`, `declaration_received.html`, `declaration_unavailable.html` | **sin login** (única ruta pública que escribe) |
+| GET/POST | `/declaracion` | `public_declaration.py` | Formulario público de declaración juramentada (QR en el mostrador). POST: honeypot, token firmado, Turnstile, límite por IP (5/hora), lee de 1 a 30 tarjetas de propiedad (`card_<i>_*`) con un solo declarante y una sola firma, guarda firma/PDF en `UPLOADS_DIR`, valida y guarda. Responde **503** (`declaration_unavailable.html`) mientras no estén `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (o `TURNSTILE_BYPASS`). La página de éxito es idéntica para declaraciones aprobadas y retenidas: nunca revela estado, alertas ni al dueño anterior | `declarations.validate_declaration`, `submit_declaration`, `db.count_recent_by_ip` | `declaration.html`, `declaration_received.html`, `declaration_unavailable.html` | **sin login** (única ruta pública que escribe) |
 | GET | `/ingest` | `ingest.py` | Form "Registrar" — captura completa de orden POS (Fase 3) | `db.distinct_requested_by/cities`, `db.current_prices`, `db.list_customers` | `ingest.html` | `@pos_allowed` |
 | POST | `/ingest` | `ingest.py` | Guarda orden+placas (resuelve/crea cliente, snapshotea precios); gestiona los avisos de orden/placa duplicada y el "Reemplazar" opt-in | `ingestion.process_rows`, `ingestion.replace_order`, `ingestion.find_duplicate_plate_numbers`, `db.resolve_or_create_customer`, `db.find_orders_by_number` | `ingest.html` | `@pos_allowed` |
 | GET | `/ingest/pdf` | `ingest.py` | Form de upload de PDF | — | `ingest_pdf.html` | `@pos_allowed` |
@@ -32,11 +32,11 @@ blueprints (`today_iso`, `_options`, `_padded`, `_validate_order_header`,
 | GET | `/customers` | `customers.py` | Lista de clientes, con filtro `?q=` por nombre (Fase 6) | `db.list_customers` | `customers.html` | `@login_required` (admin-only, mismo nivel que `/precios`) |
 | GET | `/customers/<id>` | `customers.py` | Form de edición de un cliente | `db.get_customer` | `customer_detail.html` | `@login_required` |
 | POST | `/customers/<id>` | `customers.py` | Sobreescribe los atributos del cliente (nombre incluido, y dirección/barrio/municipio según el tipo) — a diferencia de `db.resolve_or_create_customer`, esto SÍ reemplaza un valor ya guardado | `db.update_customer` | (redirect) | `@login_required` |
-| GET | `/declaraciones` | `declarations.py` | Lista de declaraciones juramentadas del formulario público: pestañas `?status=` (Pendientes por defecto, Aprobadas, Rechazadas, Todas), búsqueda `?q=` (nombre, documento, placa, licencia), pendientes primero y contador de pendientes | `db.list_declarations` | `declarations.html` | `@pos_allowed` (el rol `production` recibe 403: maneja datos de identidad) |
-| GET | `/declaraciones/<id>` | `declarations.py` | Detalle: lo declarado, archivos, cliente/gestor/tarjeta enlazados y, si está pendiente, la explicación de cada alerta con su contexto real (fecha de la última fabricación y desde cuándo se puede repetir, tarjetas existentes y sus dueños, tipo/documento del cliente existente). Solo personal autenticado. Id desconocido redirige a la lista | `db.get_declaration`, `db.last_fabrication_date`, `db.find_orders_for_plate`, `db.get_ownership_card_by_*`, `db.get_customer*` | `declaration_detail.html` | `@pos_allowed` |
-| GET | `/declaraciones/<id>/file/<kind>` | `declarations.py` | Descarga autenticada (`kind` = `owner_signature`, `gestor_signature` o `notarized_pdf`) vía `resolve_upload_path`; `inline`, `nosniff`, `no-store`; 404 si el tipo, la ruta o el archivo no existen. Nunca se acepta un nombre de archivo en la URL | `db.get_declaration` | (archivo) | `@pos_allowed` |
-| POST | `/declaraciones/<id>/approve` | `declarations.py` | Aprueba (campos `reassign_card` y `note`); un `ValueError` re-renderiza el detalle con el mensaje (400) sin cambiar nada | `declarations.approve_declaration` | (redirect) | `@login_required` (solo admin; `point_of_sale` recibe 403) |
-| POST | `/declaraciones/<id>/reject` | `declarations.py` | Rechaza; la nota (`note`) es obligatoria | `declarations.reject_declaration` | (redirect) | `@login_required` |
+| GET | `/declaraciones` | `declarations.py` | Lista de declaraciones juramentadas del formulario público: **una fila por declaración** con el declarante (nombre y `acting_as`), la cantidad de tarjetas de propiedad, el **total de placas** (suma de `plate_quantity`), un resumen compacto (`ABC123 · DEF45G +3`, y los motivos: `DETERIORO` o `DETERIORO 2 · PÉRDIDA 1`), estado, alertas (unión) con el número de la tarjeta que las causó, y fecha. Pestañas `?status=` (Pendientes por defecto, Aprobadas, Rechazadas, Todas), búsqueda `?q=` (declarante o placa/licencia/dueño de **cualquier** tarjeta), pendientes primero y contador de pendientes. Las tarjetas se cargan con una sola consulta (`db.list_cards_for_declarations`). En pantallas angostas cada fila se muestra como tarjeta | `db.list_declarations`, `db.list_cards_for_declarations` | `declarations.html` | `@pos_allowed` (el rol `production` recibe 403: maneja datos de identidad) |
+| GET | `/declaraciones/<id>` | `declarations.py` | Detalle: bloque del declarante, su única firma y el PDF notariado, y **una sección por tarjeta de propiedad** ("Tarjeta de propiedad N de M") con sus datos, motivo, cantidad de placas, su dueño (y relación DUEÑO/POSEEDOR) y, una vez aprobada, el cliente y la tarjeta creados o enlazados (enlace a `/customers/<id>` solo para admin). Si está pendiente, un resumen "Retenida por X de M tarjetas" con enlaces a las tarjetas que la retienen y, dentro de **cada** tarjeta, la explicación de **sus** alertas con el contexto real (fecha de la última fabricación y desde cuándo se puede repetir, tarjetas existentes y sus dueños, tipo/documento del cliente existente, mismo nombre repetido en la declaración). Las alertas del gestor (tipo/documento) se copian a todas las tarjetas y se rotulan "Gestor ...". Solo personal autenticado; las alertas nunca se muestran en páginas públicas. Id desconocido redirige a la lista | `db.get_declaration`, `db.list_declaration_cards`, `db.last_fabrication_date`, `db.find_orders_for_plate`, `db.get_ownership_card*`, `db.get_customer*` | `declaration_detail.html` | `@pos_allowed` |
+| GET | `/declaraciones/<id>/file/<kind>` | `declarations.py` | Descarga autenticada (`kind` = `signature` (la firma única del declarante, que cubre todas las tarjetas) o `notarized_pdf`) vía `resolve_upload_path`; `inline`, `nosniff`, `no-store`; 404 si el tipo, la ruta o el archivo no existen. Nunca se acepta un nombre de archivo en la URL | `db.get_declaration` | (archivo) | `@pos_allowed` |
+| POST | `/declaraciones/<id>/approve` | `declarations.py` | Aprueba **toda** la declaración (todo o nada). Campos: `note` (opcional) y una casilla `reassign_<id de la tarjeta de la declaración>` por cada tarjeta con la alerta `card_other_owner` (la casilla solo aparece en esas tarjetas y se envía con el atributo `form="approve-form"`), que se pasan como `reassign_card_ids`. Un `ValueError` (que nombra la tarjeta: "tarjeta 2 (placa DEF456)") re-renderiza el detalle con el mensaje (400), conserva las casillas marcadas y no cambia nada | `declarations.approve_declaration` | (redirect) | `@login_required` (solo admin; `point_of_sale` recibe 403) |
+| POST | `/declaraciones/<id>/reject` | `declarations.py` | Rechaza toda la declaración sin crear nada; la nota (`note`) es obligatoria | `declarations.reject_declaration` | (redirect) | `@login_required` |
 | GET | `/cuadre` | `cash_summary.py` | Cuadre de caja: totales por fecha/forma de pago en `[desde, hasta]` (default hoy, Fase 5b) | `cash_summary.build_cash_summary` | `cash_summary.html` | `@pos_allowed` |
 | GET | `/cuadre/pdf` | `cash_summary.py` | Mismo reporte, exportado a PDF | `cash_summary.build_cash_summary`, `render_cash_summary_pdf` | (descarga PDF) | `@pos_allowed` |
 | GET | `/records` | `records.py` | Registros: recientes, o búsqueda por placa/orden | `db.recent_orders`, `search_plates_by_number`, `search_orders_by_number` | `records.html` | `@consulta_allowed` |
@@ -99,8 +99,52 @@ anónima; agregar una ruta pública exige editar su lista a propósito.
 `/declaracion` se apaga sola: sin llaves de Turnstile (ni `TURNSTILE_BYPASS`)
 responde 503, así que producción no expone nada hasta que el dueño configure
 Cloudflare. `app.py` fija `MAX_CONTENT_LENGTH` en 12 MB (PDF autenticado de
-hasta 10 MB más dos firmas PNG en base64, unos 270 KB cada una); un cuerpo más
+hasta 10 MB más la firma PNG en base64, unos 270 KB); un cuerpo más
 grande recibe un 413 amigable en esa ruta.
+
+### Formulario público de declaración
+
+Una declaración tiene **un solo declarante** (quien llena el formulario: el
+propietario o poseedor, o un gestor) y **de 1 a `MAX_CARDS` (30) tarjetas de
+propiedad**. Solo el declarante firma, una vez: la firma cubre todas las
+tarjetas. Secciones: 1 Calidad en la que actúa (PROPIETARIO / POSEEDOR /
+GESTOR), 2 Datos del declarante, 3 Tarjetas de propiedad, texto legal
+(4 a 6) y 7 Firma.
+
+Cada bloque "Tarjeta de propiedad N" lleva los datos de la tarjeta (placa,
+licencia de tránsito, motor, chasis, tipo de vehículo, matriculado en, marca),
+el **motivo** (DETERIORO / PÉRDIDA) por tarjeta y la **cantidad de placas**
+(1 o 2). El tipo de placa limita la cantidad con
+`normalize.max_plates_per_card`: los carros (particular y público) permiten 1
+o 2 (por defecto 2) y los demás tipos solo 1. El mapa tipo a máximo viaja a la
+página como JSON en `data-max-by-type`. El **total de placas** se muestra
+sumado y de solo lectura; nunca se digita ni se envía.
+
+Cuando el declarante es **GESTOR**, cada tarjeta muestra además los datos de
+su dueño y "El dueño es: DUEÑO / POSEEDOR", con el botón "Copiar los datos del
+dueño de la tarjeta anterior". Cuando actúa como propietario o poseedor esos
+campos se ocultan **y se deshabilitan** (no se envían; el servidor tampoco los
+lee). El PDF autenticado (uno solo) se muestra y se exige si **alguna** tarjeta
+es PÉRDIDA.
+
+Campos del POST (`multipart/form-data`): `form_token`, `website` (honeypot),
+`cf-turnstile-response`, `acting_as`, `declarant_<campo>`, `signature` (data
+URL PNG), `notarized_pdf`, `accept_terms` y, por cada tarjeta con índice `i`:
+`card_<i>_plate_number`, `_transit_license`, `_engine_number`,
+`_chassis_number`, `_vehicle_type`, `_registered_in`, `_vehicle_brand`,
+`_reason`, `_plate_quantity` y (solo gestor) `_owner_<campo>` y
+`_owner_relation`. Los campos de persona son `name`, `document_type`,
+`document_number`, `address`, `neighborhood`, `municipality`, `phone`, `email`.
+
+Los índices los pone el navegador y pueden quedar **dispersos** (0, 2, 5) al
+quitar tarjetas; el servidor lee los que lleguen, en orden numérico. Se
+rechaza (400, antes de construir nada ni guardar archivos) un envío con más de
+`MAX_CARDS` índices distintos, y también uno sin ninguna tarjeta. Una cantidad
+no numérica se convierte en 0 para que la validación la rechace. Tras un error
+de validación se vuelven a dibujar todos los bloques con lo que la persona
+digitó (la firma y el PDF no se devuelven: hay que volver a adjuntarlos). Sin
+JavaScript la página sigue mostrando la primera tarjeta, pero agregar o quitar
+tarjetas y los límites por tipo requieren JavaScript.
 
 ## Templates
 
@@ -110,12 +154,12 @@ independiente que incluye `_nav.html` y duplica su propio `<style>`.
 | Template | Qué renderiza |
 |---|---|
 | `_nav.html` | Nav compartido; "Registrar"/"Cuadre"/"Declaraciones" solo si el rol está en `pos_roles`, "Revisión"/"Inventario"/"Precios" solo si está en `full_access_roles`. |
-| `declarations.html` | Lista de declaraciones: pestañas de estado con contador de pendientes, búsqueda, insignias de estado y de alertas (`Placa reciente`, `Tarjeta de otro dueño`, `Datos no cuadran`, `Tipo de cliente`, `Documento distinto`). |
-| `declaration_detail.html` | Detalle de una declaración: alertas con contexto (solo si está pendiente), datos declarados, firmas y PDF (enlaces a la ruta de descarga), resultado de la revisión y, solo para admin, los formularios de aprobar (con reasignar tarjeta y nota) y rechazar (nota obligatoria). |
+| `declarations.html` | Lista de declaraciones: pestañas de estado con contador de pendientes, búsqueda, una fila por declaración (declarante, tarjetas, total de placas, resumen), insignias de estado y de alertas (`Placa reciente`, `Tarjeta de otro dueño`, `Datos no cuadran`, `Tipo de cliente`, `Documento distinto`); en pantallas angostas la tabla se apila en tarjetas. |
+| `declaration_detail.html` | Detalle de una declaración: resumen de la retención, declarante, archivos, una sección por tarjeta de propiedad con sus alertas, y los formularios de aprobar (con las casillas de reasignación) y rechazar. |
 | `customer_detail.html` | Edición de un cliente (`/customers/<id>`); para clientes `CLIENTE` añade la tabla de solo lectura "Tarjetas de propiedad" (licencia, placa, tipo de vehículo, matriculado en, marca; con texto si no tiene ninguna) desde `db.list_ownership_cards_for_customer`. |
 | `_orders_table.html` | Tabla de órdenes reusada por la vista "recientes" y por los resultados de búsqueda por orden. |
 | `login.html` | Card de login (sin nav). |
-| `declaration.html` | Formulario público de declaración (sin nav, sin login). Los nombres de los campos son el contrato con `public_declaration.py`. |
+| `declaration.html` | Formulario público de declaración (sin nav, sin login): un declarante, de 1 a 30 tarjetas de propiedad repetibles (bloque clonado desde un `<template>`) y una sola firma. Los nombres de los campos son el contrato con `public_declaration.py` (ver "Formulario público de declaración"). |
 | `declaration_received.html` | Confirmación genérica "Recibimos tu declaración" (igual para aprobada y retenida). |
 | `declaration_unavailable.html` | Página 503 cuando el formulario público está apagado (faltan las llaves de Turnstile). |
 | `ingest.html` | Form de captura POS completa (Fase 3): fieldset de orden (comprobante/cliente/forma de pago obligatoria/guía#/pedido#/fechas/responsable/observaciones) + tabla de líneas con `reason`/`vehicle_brand`/`unit_price` por placa. `unit_price` se pre-llena por JS desde una tarifa embebida como JSON (`prices`); el fieldset de cliente se auto-completa por JS al matchear un nombre contra la lista de clientes embebida (`customers`). Por tipo de cliente (`toggleCustomerFields`): Propietario/Poseedor solo para `CLIENTE`; Dirección/Barrio/Municipio solo para `GESTOR` o `CLIENTE`; `TRÁNSITO` y `EMPRESA` conservan solo nombre, documento, teléfono y correo (el servidor lo vuelve a forzar en `customer_fields_from_form`). Un dato que el cliente ya tiene guardado queda bloqueado (los selects con un input oculto espejo); el bloqueo solo se agrega, nunca habilita un campo que la regla del tipo deshabilitó. Los 3 posibles avisos pre-guardado (`notices` del PDF, `order_duplicates`, `duplicates` de placa) + panel de resumen post-guardado. Mantiene TODOS los campos tipeados (orden + cliente + por línea) al ida-y-vuelta de un aviso, vía el único dict "sticky" (`_sticky_header_from_form`/`_sticky_lines_from_form` en `ingest.py`). |

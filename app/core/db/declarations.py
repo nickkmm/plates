@@ -1,12 +1,17 @@
-"""declarations reads/writes.
+"""declarations / declaration_cards reads/writes.
 
 A declaration is one sworn declaration ("declaración juramentada") submitted
-through the public form. This module is only the data layer; the decision
-rules (flags, auto-approval, review) live in app/core/declarations.py.
+through the public form: ONE declarant (the person who signs, once) and one or
+more ownership cards ("tarjetas de propiedad"), each a `declaration_cards` row
+with its own reason, plate quantity, owner and review flags. This module is
+only the data layer; the decision rules (flags, auto-approval, review) live in
+app/core/declarations.py.
 
-While a declaration is `pending_review`, customer_id / ownership_card_id /
-gestor_id are NULL and `submitted_data` (JSONB) is the ONLY place the declared
-data lives -- nothing was created in customers / ownership_cards.
+While a declaration is `pending_review`, `declarations.gestor_id` and every
+card's customer_id / ownership_card_id are NULL and `submitted_data` (JSONB)
+is the ONLY complete copy of what was declared -- nothing was created in
+customers / ownership_cards. `declarations.review_flags` is the union of the
+cards' own `review_flags`.
 
 See app/core/db/__init__.py for the module-wide connection/transaction
 contract that applies to every function here.
@@ -14,6 +19,7 @@ contract that applies to every function here.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -28,7 +34,7 @@ STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 STATUSES = (STATUS_PENDING_REVIEW, STATUS_APPROVED, STATUS_REJECTED)
 
-# declarations.review_flags values (computed by app/core/declarations.py).
+# review_flags values (computed by app/core/declarations.py).
 FLAG_PLATE_MADE_RECENTLY = "plate_made_recently"
 FLAG_CARD_OTHER_OWNER = "card_other_owner"
 FLAG_CARD_DATA_MISMATCH = "card_data_mismatch"
@@ -38,15 +44,11 @@ FLAG_CUSTOMER_DOCUMENT_MISMATCH = "customer_document_mismatch"
 
 @dataclass
 class DeclarationRecord:
-    """One `declarations` row."""
+    """One `declarations` row (the per-card data is in DeclarationCardRecord)."""
 
     id: int
     created_at: datetime
-    reason: str
-    plate_quantity: int
     acting_as: str
-    customer_id: int | None
-    ownership_card_id: int | None
     gestor_id: int | None
     status: str
     review_flags: list[str]
@@ -54,52 +56,109 @@ class DeclarationRecord:
     reviewed_at: datetime | None
     review_note: str | None
     submitted_data: dict[str, Any]
-    owner_signature_path: str | None
-    gestor_signature_path: str | None
     notarized_pdf_path: str | None
     submitter_ip: str | None
     user_agent: str | None
     accepted_terms_at: datetime | None
+    declarant_signature_path: str | None
+
+
+@dataclass
+class DeclarationCardRecord:
+    """One `declaration_cards` row: an ownership card as declared."""
+
+    id: int
+    declaration_id: int
+    position: int
+    reason: str
+    plate_quantity: int
+    plate_number: str
+    transit_license: str
+    engine_number: str | None
+    chassis_number: str | None
+    vehicle_type: str | None
+    registered_in: str | None
+    vehicle_brand: str | None
+    owner_relation: str | None
+    owner_data: dict[str, Any]
+    customer_id: int | None
+    ownership_card_id: int | None
+    review_flags: list[str]
 
 
 _SELECT_COLUMNS = (
-    "id, created_at, reason, plate_quantity, acting_as, customer_id, "
-    "ownership_card_id, gestor_id, status, review_flags, reviewed_by, "
-    "reviewed_at, review_note, submitted_data, owner_signature_path, "
-    "gestor_signature_path, notarized_pdf_path, submitter_ip, user_agent, "
-    "accepted_terms_at"
+    "id, created_at, acting_as, gestor_id, status, review_flags, reviewed_by, "
+    "reviewed_at, review_note, submitted_data, notarized_pdf_path, submitter_ip, "
+    "user_agent, accepted_terms_at, declarant_signature_path"
+)
+
+_CARD_SELECT_COLUMNS = (
+    "id, declaration_id, position, reason, plate_quantity, plate_number, "
+    "transit_license, engine_number, chassis_number, vehicle_type, registered_in, "
+    "vehicle_brand, owner_relation, owner_data, customer_id, ownership_card_id, "
+    "review_flags"
 )
 
 
 def insert_declaration(
     conn: psycopg.Connection[DictRow], *,
-    reason: str, plate_quantity: int, acting_as: str, status: str,
-    submitted_data: dict[str, Any], review_flags: list[str] | None = None,
-    customer_id: int | None = None, ownership_card_id: int | None = None,
-    gestor_id: int | None = None,
-    owner_signature_path: str | None = None, gestor_signature_path: str | None = None,
-    notarized_pdf_path: str | None = None,
+    acting_as: str, status: str, submitted_data: dict[str, Any],
+    review_flags: list[str] | None = None, gestor_id: int | None = None,
+    declarant_signature_path: str | None = None, notarized_pdf_path: str | None = None,
     submitter_ip: str | None = None, user_agent: str | None = None,
     accepted_terms_at: datetime | None = None,
 ) -> int:
-    """Insert a declaration; return its id. No pre-checks (FK violations
-    surface as psycopg errors, same convention as the other modules)."""
+    """Insert a declaration header; return its id. Its cards go in with
+    insert_declaration_card. No pre-checks (FK violations surface as psycopg
+    errors, same convention as the other modules)."""
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO declarations (
-                reason, plate_quantity, acting_as, customer_id, ownership_card_id,
-                gestor_id, status, review_flags, submitted_data,
-                owner_signature_path, gestor_signature_path, notarized_pdf_path,
+                acting_as, gestor_id, status, review_flags, submitted_data,
+                declarant_signature_path, notarized_pdf_path,
                 submitter_ip, user_agent, accepted_terms_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (reason, plate_quantity, acting_as, customer_id, ownership_card_id,
-             gestor_id, status, list(review_flags or []), Jsonb(submitted_data),
-             owner_signature_path, gestor_signature_path, notarized_pdf_path,
+            (acting_as, gestor_id, status, list(review_flags or []), Jsonb(submitted_data),
+             declarant_signature_path, notarized_pdf_path,
              submitter_ip, user_agent, accepted_terms_at),
+        )
+        row = cur.fetchone()
+        assert row is not None, "INSERT ... RETURNING id always yields a row"
+        return row["id"]
+
+
+def insert_declaration_card(
+    conn: psycopg.Connection[DictRow], declaration_id: int, *,
+    position: int, reason: str, plate_quantity: int, plate_number: str, transit_license: str,
+    owner_data: dict[str, Any], engine_number: str | None = None,
+    chassis_number: str | None = None, vehicle_type: str | None = None,
+    registered_in: str | None = None, vehicle_brand: str | None = None,
+    owner_relation: str | None = None, review_flags: list[str] | None = None,
+    customer_id: int | None = None, ownership_card_id: int | None = None,
+) -> int:
+    """Insert one card of a declaration; return its id. `position` is the
+    0-based order inside the declaration (UNIQUE per declaration). While the
+    declaration is pending, customer_id / ownership_card_id stay NULL."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO declaration_cards (
+                declaration_id, position, reason, plate_quantity, plate_number,
+                transit_license, engine_number, chassis_number, vehicle_type,
+                registered_in, vehicle_brand, owner_relation, owner_data,
+                customer_id, ownership_card_id, review_flags
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (declaration_id, position, reason, plate_quantity, plate_number,
+             transit_license, engine_number, chassis_number, vehicle_type,
+             registered_in, vehicle_brand, owner_relation, Jsonb(owner_data),
+             customer_id, ownership_card_id, list(review_flags or [])),
         )
         row = cur.fetchone()
         assert row is not None, "INSERT ... RETURNING id always yields a row"
@@ -113,17 +172,52 @@ def get_declaration(conn: psycopg.Connection[DictRow], declaration_id: int) -> D
         return cur.fetchone()
 
 
+def list_declaration_cards(
+    conn: psycopg.Connection[DictRow], declaration_id: int,
+) -> list[DeclarationCardRecord]:
+    """The cards of one declaration, in their declared order (`position`)."""
+    with conn.cursor(row_factory=class_row(DeclarationCardRecord)) as cur:
+        cur.execute(
+            f"SELECT {_CARD_SELECT_COLUMNS} FROM declaration_cards "
+            "WHERE declaration_id = %s ORDER BY position",
+            (declaration_id,),
+        )
+        return cur.fetchall()
+
+
+def list_cards_for_declarations(
+    conn: psycopg.Connection[DictRow], declaration_ids: Collection[int],
+) -> dict[int, list[DeclarationCardRecord]]:
+    """The cards of many declarations in ONE query (for list screens), keyed by
+    declaration id, each list in `position` order. Every requested id is a
+    key, with [] when it has no cards."""
+    grouped: dict[int, list[DeclarationCardRecord]] = {i: [] for i in declaration_ids}
+    if not grouped:
+        return grouped
+    with conn.cursor(row_factory=class_row(DeclarationCardRecord)) as cur:
+        cur.execute(
+            f"SELECT {_CARD_SELECT_COLUMNS} FROM declaration_cards "
+            "WHERE declaration_id = ANY(%s) ORDER BY declaration_id, position",
+            (list(grouped),),
+        )
+        for card in cur.fetchall():
+            grouped[card.declaration_id].append(card)
+    return grouped
+
+
 def list_declarations(
     conn: psycopg.Connection[DictRow], *, status: str | None = None, query: str | None = None,
 ) -> list[DeclarationRecord]:
     """Declarations, `pending_review` first and then newest first.
 
     `status` filters by exact status. `query` is a case-insensitive substring
-    match against the owner / gestor name, document number, plate and transit
-    licence declared inside `submitted_data`, plus the linked customer, gestor
-    and ownership card rows (so a declaration is still found by the canonical
-    customer name after approval). The user's own `%`, `_` and `\\` are escaped,
-    so they match literally instead of acting as LIKE wildcards.
+    match against the declarant's name / document number (declared inside
+    `submitted_data`, plus the linked gestor customer) and, on ANY of the
+    declaration's cards, the plate, transit licence, declared owner name /
+    document number and the linked owner customer / ownership card rows (so a
+    declaration is still found by the canonical customer name after
+    approval). The user's own `%`, `_` and `\\` are escaped, so they match
+    literally instead of acting as LIKE wildcards.
     """
     where: list[str] = []
     params: list[Any] = []
@@ -135,15 +229,22 @@ def list_declarations(
         pattern = f"%{escaped}%"
         where.append(
             """(
-                d.submitted_data #>> '{owner,name}' ILIKE %s
-                OR d.submitted_data #>> '{owner,document_number}' ILIKE %s
-                OR d.submitted_data #>> '{gestor,name}' ILIKE %s
-                OR d.submitted_data #>> '{gestor,document_number}' ILIKE %s
-                OR d.submitted_data #>> '{vehicle,plate_number}' ILIKE %s
-                OR d.submitted_data #>> '{vehicle,transit_license}' ILIKE %s
-                OR c.name ILIKE %s OR c.document_number ILIKE %s
+                d.submitted_data #>> '{declarant,name}' ILIKE %s
+                OR d.submitted_data #>> '{declarant,document_number}' ILIKE %s
                 OR g.name ILIKE %s OR g.document_number ILIKE %s
-                OR oc.plate_number ILIKE %s OR oc.transit_license ILIKE %s
+                OR EXISTS (
+                    SELECT 1
+                    FROM declaration_cards dc
+                    LEFT JOIN customers cc ON cc.id = dc.customer_id
+                    LEFT JOIN ownership_cards oc ON oc.id = dc.ownership_card_id
+                    WHERE dc.declaration_id = d.id AND (
+                        dc.plate_number ILIKE %s OR dc.transit_license ILIKE %s
+                        OR dc.owner_data ->> 'name' ILIKE %s
+                        OR dc.owner_data ->> 'document_number' ILIKE %s
+                        OR cc.name ILIKE %s OR cc.document_number ILIKE %s
+                        OR oc.plate_number ILIKE %s OR oc.transit_license ILIKE %s
+                    )
+                )
             )"""
         )
         params.extend([pattern] * 12)
@@ -154,9 +255,7 @@ def list_declarations(
             f"""
             SELECT {columns}
             FROM declarations d
-            LEFT JOIN customers c ON c.id = d.customer_id
             LEFT JOIN customers g ON g.id = d.gestor_id
-            LEFT JOIN ownership_cards oc ON oc.id = d.ownership_card_id
             {where_sql}
             ORDER BY (d.status = %s) DESC, d.created_at DESC, d.id DESC
             """,
@@ -180,21 +279,33 @@ def count_recent_by_ip(conn: psycopg.Connection[DictRow], ip: str, *, since: dat
 
 def set_declaration_review(
     conn: psycopg.Connection[DictRow], declaration_id: int, *, status: str,
-    reviewed_by: int | None, note: str | None = None,
-    customer_id: int | None = None, ownership_card_id: int | None = None,
-    gestor_id: int | None = None,
+    reviewed_by: int | None, note: str | None = None, gestor_id: int | None = None,
 ) -> None:
-    """Record a review decision: sets status, reviewed_by, reviewed_at=now()
-    and review_note, and the three FKs (an approval fills them in; a
-    rejection leaves them NULL). Does NOT check the previous status -- that
-    rule lives in app/core/declarations.py."""
+    """Record a review decision: sets status, reviewed_by, reviewed_at=now(),
+    review_note and gestor_id (an approval of a GESTOR declaration fills it in;
+    a rejection leaves it NULL). The cards' own links are set with
+    set_declaration_card_links. Does NOT check the previous status -- that rule
+    lives in app/core/declarations.py."""
     with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE declarations SET
                 status = %s, reviewed_by = %s, reviewed_at = now(), review_note = %s,
-                customer_id = %s, ownership_card_id = %s, gestor_id = %s
+                gestor_id = %s
             WHERE id = %s
             """,
-            (status, reviewed_by, note, customer_id, ownership_card_id, gestor_id, declaration_id),
+            (status, reviewed_by, note, gestor_id, declaration_id),
+        )
+
+
+def set_declaration_card_links(
+    conn: psycopg.Connection[DictRow], declaration_card_id: int, *,
+    customer_id: int | None, ownership_card_id: int | None,
+) -> None:
+    """Point one declaration card at the customer (owner) and the ownership
+    card that were created or linked for it on approval."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE declaration_cards SET customer_id = %s, ownership_card_id = %s WHERE id = %s",
+            (customer_id, ownership_card_id, declaration_card_id),
         )

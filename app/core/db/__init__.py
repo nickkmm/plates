@@ -50,7 +50,8 @@ This package replaces what used to be a single flat db.py, split by table:
     customers.py  -- customers reads/writes (Fase 2).
     ownership_cards.py -- ownership_cards ("tarjeta de propiedad") reads/writes
                      and the find_card_conflicts classifier.
-    declarations.py -- declarations (sworn declarations of the public form)
+    declarations.py -- declarations + declaration_cards (sworn declarations of
+                     the public form, one declarant and many ownership cards)
                      reads/writes; the decision rules live in app/core/declarations.py.
     users.py      -- users reads/writes (Fase 2; backs app/web/auth.py).
     pricing.py    -- plate_type_prices reads/writes (Fase 2).
@@ -78,11 +79,16 @@ from app.core.db.customers import (
     update_customer,
 )
 from app.core.db.declarations import (
+    DeclarationCardRecord,
     DeclarationRecord,
     count_recent_by_ip,
     get_declaration,
     insert_declaration,
+    insert_declaration_card,
+    list_cards_for_declarations,
+    list_declaration_cards,
     list_declarations,
+    set_declaration_card_links,
     set_declaration_review,
 )
 from app.core.db.inventory import (
@@ -145,6 +151,7 @@ __all__ = [
     "CARD_STATUS_SAME_CARD",
     "CardLookup",
     "CustomerRecord",
+    "DeclarationCardRecord",
     "DeclarationRecord",
     "OrderSummary",
     "OwnershipCardRecord",
@@ -174,11 +181,14 @@ __all__ = [
     "get_user_by_username",
     "insert_blank_preparation",
     "insert_declaration",
+    "insert_declaration_card",
     "insert_order",
     "insert_plate",
     "inventory_view",
     "last_fabrication_date",
     "list_customers",
+    "list_cards_for_declarations",
+    "list_declaration_cards",
     "list_declarations",
     "list_ownership_cards_for_customer",
     "list_users",
@@ -195,6 +205,7 @@ __all__ = [
     "review_rows",
     "search_orders_by_number",
     "search_plates_by_number",
+    "set_declaration_card_links",
     "set_declaration_review",
     "set_price",
     "update_customer",

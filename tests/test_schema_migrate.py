@@ -31,6 +31,7 @@ from pathlib import Path
 import psycopg
 import pytest
 from psycopg.rows import tuple_row
+from psycopg.types.json import Jsonb
 
 from app import schema_migrate
 from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
@@ -92,6 +93,7 @@ CREATE TABLE blank_preparations (
 _APP_TABLES = (
     "production_orders", "plates", "blank_preparations", "inventory_categories",
     "customers", "users", "plate_type_prices", "schema_migrations", "plate_types",
+    "ownership_cards", "declarations", "declaration_cards",
 )
 
 
@@ -254,6 +256,116 @@ class TestApplySqlMigrations:
         for tag in ("empresa", "transito", "range", "voided", "annulled", "replacement", "other_number"):
             assert linked[plates[tag]] is None, tag
         assert "plates_ownership_card_id_idx" in indexes
+
+
+    def test_0009_declaration_cards_backfills_old_one_card_declarations_and_is_idempotent(self, db_conn):
+        """Rebuild the OLD `declarations` shape (inside the test's rolled-back
+        transaction), insert an approved PROPIETARIO and a pending GESTOR row,
+        then apply 0009 twice: each becomes one declaration_cards row, the
+        signature is the gestor's (else the owner's), submitted_data takes the
+        canonical shape, and the per-card columns are gone from declarations."""
+        sql = (_MIGRATIONS_DIR / "0009_declaration_cards.sql").read_text(encoding="utf-8")
+        person = lambda name: {  # noqa: E731
+            "name": name, "document_type": "CÉDULA", "document_number": "1", "address": "a",
+            "neighborhood": "b", "municipality": "c", "phone": "3", "email": ""}
+        vehicle = lambda plate, licence: {  # noqa: E731
+            "plate_number": plate, "transit_license": licence, "engine_number": "E",
+            "chassis_number": "", "vehicle_type": "CARRO PARTICULAR", "registered_in": "BOGOTÁ",
+            "vehicle_brand": "KIA"}
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("DROP TABLE declaration_cards")
+            cur.execute("DROP TABLE declarations")
+            cur.execute(
+                """
+                CREATE TABLE declarations (
+                    id SERIAL PRIMARY KEY, created_at TIMESTAMP DEFAULT now(),
+                    reason TEXT NOT NULL, plate_quantity INTEGER NOT NULL, acting_as TEXT NOT NULL,
+                    customer_id INTEGER REFERENCES customers(id),
+                    ownership_card_id INTEGER REFERENCES ownership_cards(id),
+                    gestor_id INTEGER REFERENCES customers(id), status TEXT NOT NULL,
+                    review_flags TEXT[] NOT NULL DEFAULT '{}', reviewed_by INTEGER REFERENCES users(id),
+                    reviewed_at TIMESTAMP, review_note TEXT, submitted_data JSONB NOT NULL,
+                    owner_signature_path TEXT, gestor_signature_path TEXT, notarized_pdf_path TEXT,
+                    submitter_ip TEXT, user_agent TEXT, accepted_terms_at TIMESTAMP
+                )
+                """
+            )
+            cur.execute("CREATE INDEX declarations_customer_id_idx ON declarations (customer_id)")
+            cur.execute("INSERT INTO customers (name, type) VALUES ('ANA', 'CLIENTE') RETURNING id")
+            owner = cur.fetchone()[0]
+            cur.execute("INSERT INTO customers (name, type) VALUES ('GESTORIA', 'GESTOR') RETURNING id")
+            cur.fetchone()
+            cur.execute(
+                "INSERT INTO ownership_cards (customer_id, transit_license, plate_number) "
+                "VALUES (%s, 'L1', 'AAA111') RETURNING id", (owner,),
+            )
+            card = cur.fetchone()[0]
+            insert = (
+                "INSERT INTO declarations (reason, plate_quantity, acting_as, customer_id, "
+                "ownership_card_id, gestor_id, status, review_flags, submitted_data, "
+                "owner_signature_path, gestor_signature_path, notarized_pdf_path) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
+            )
+            cur.execute(insert, (
+                "DETERIORO", 2, "PROPIETARIO", owner, card, None, "approved", [],
+                Jsonb({"reason": "DETERIORO", "plate_quantity": 2, "acting_as": "PROPIETARIO",
+                       "owner": person("ANA"), "owner_relation": "", "gestor": None,
+                       "vehicle": vehicle("AAA111", "L1"), "raw": {"x": 1}}),
+                "owner.png", None, None))
+            approved = cur.fetchone()[0]
+            cur.execute(insert, (
+                "PÉRDIDA", 1, "GESTOR", None, None, None, "pending_review", ["plate_made_recently"],
+                Jsonb({"reason": "PÉRDIDA", "plate_quantity": 1, "acting_as": "GESTOR",
+                       "owner": person("BETO"), "owner_relation": "POSEEDOR",
+                       "gestor": person("GESTORIA"), "vehicle": vehicle("BBB222", "L2")}),
+                "owner2.png", "gestor2.png", "n.pdf"))
+            pending = cur.fetchone()[0]
+            cur.execute(sql)
+            cur.execute(sql)
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'declarations' AND table_schema = current_schema()"
+            )
+            columns = {row[0] for row in cur.fetchall()}
+            cur.execute(
+                "SELECT declaration_id, position, reason, plate_quantity, plate_number, transit_license, "
+                "engine_number, chassis_number, vehicle_type, owner_relation, owner_data ->> 'name', "
+                "customer_id, ownership_card_id, review_flags "
+                "FROM declaration_cards ORDER BY declaration_id"
+            )
+            cards = cur.fetchall()
+            cur.execute("SELECT id, declarant_signature_path, notarized_pdf_path, gestor_id, review_flags, "
+                        "submitted_data FROM declarations ORDER BY id")
+            declarations = {row[0]: row[1:] for row in cur.fetchall()}
+        assert columns.isdisjoint({"reason", "plate_quantity", "customer_id", "ownership_card_id",
+                                   "owner_signature_path", "gestor_signature_path"})
+        assert {"declarant_signature_path", "gestor_id", "review_flags"} <= columns
+        assert cards == [
+            (approved, 0, "DETERIORO", 2, "AAA111", "L1", "E", None, "CARRO PARTICULAR", "DUEÑO", "ANA",
+             owner, card, []),
+            (pending, 0, "PÉRDIDA", 1, "BBB222", "L2", "E", None, "CARRO PARTICULAR", "POSEEDOR", "BETO",
+             None, None, ["plate_made_recently"]),
+        ]
+        assert declarations[approved][:4] == ("owner.png", None, None, [])
+        assert declarations[pending][:4] == ("gestor2.png", "n.pdf", None, ["plate_made_recently"])
+        data = declarations[approved][4]
+        assert set(data) == {"acting_as", "declarant", "cards", "raw"}
+        assert data["declarant"]["name"] == "ANA" and data["raw"] == {"x": 1}
+        (data_card,) = data["cards"]
+        assert data_card["plate_number"] == "AAA111" and data_card["reason"] == "DETERIORO"
+        assert data_card["plate_quantity"] == 2 and data_card["owner_relation"] == "DUEÑO"
+        assert data_card["owner"]["name"] == "ANA"
+        pending_data = declarations[pending][4]
+        assert "raw" not in pending_data
+        assert pending_data["declarant"]["name"] == "GESTORIA"          # the gestor is the declarant
+        assert pending_data["cards"][0]["owner"]["name"] == "BETO"
+        assert pending_data["cards"][0]["owner_relation"] == "POSEEDOR"
+
+    def test_0009_is_safe_to_apply_twice_directly_on_the_new_schema(self, db_conn):
+        sql = (_MIGRATIONS_DIR / "0009_declaration_cards.sql").read_text(encoding="utf-8")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(sql)
+            cur.execute(sql)
 
 
 # --------------------------------------------------------------------------

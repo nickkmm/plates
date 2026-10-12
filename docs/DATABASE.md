@@ -384,35 +384,76 @@ declaraciones): un `UPDATE` simple.
 ### `declarations`
 
 *Agregada en la Fase 3 del plan de declaraciones (migración
-`app/migrations/0007_declarations.sql`).* Una fila por **declaración
-juramentada** enviada por el formulario público. Mientras está en
-`pending_review` no se crea ni se modifica nada en `customers` ni en
-`ownership_cards`: `submitted_data` es el **único** lugar donde viven los datos
-declarados (y la evidencia legal).
+`app/migrations/0007_declarations.sql`) y reestructurada por
+`app/migrations/0009_declaration_cards.sql`.* Una fila por **declaración
+juramentada** enviada por el formulario público. Una declaración tiene **un
+solo declarante** (quien la firma, una sola vez, para todo lo declarado) y
+**una o más tarjetas de propiedad** (tabla `declaration_cards`, abajo; máximo
+`MAX_CARDS` = 30). Mientras está en `pending_review` no se crea ni se modifica
+nada en `customers` ni en `ownership_cards`: `submitted_data` es el **único**
+lugar donde vive la declaración completa (y la evidencia legal).
 
 | Columna | Tipo | Constraint/Default | Nota |
 |---|---|---|---|
 | `id` | SERIAL | PK | |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
-| `reason` | TEXT | NOT NULL | `normalize.DECLARATION_REASONS`: `DETERIORO` / `PÉRDIDA`. |
-| `plate_quantity` | INTEGER | NOT NULL | Cantidad de placas pedidas (>= 1, validado en código). |
 | `acting_as` | TEXT | NOT NULL | `normalize.ACTING_AS`: `PROPIETARIO` / `POSEEDOR` / `GESTOR`. |
-| `customer_id` | INTEGER | FK → `customers(id)` | El CLIENTE. `NULL` mientras está pendiente (o rechazada). |
-| `ownership_card_id` | INTEGER | FK → `ownership_cards(id)` | `NULL` mientras está pendiente (o rechazada). |
-| `gestor_id` | INTEGER | FK → `customers(id)` | `NULL` si no hay gestor o si está pendiente. |
+| `gestor_id` | INTEGER | FK → `customers(id)` | El declarante cuando `acting_as` es `GESTOR` (cliente tipo `GESTOR`). `NULL` en los otros casos o mientras está pendiente. |
 | `status` | TEXT | NOT NULL | `pending_review` / `approved` / `rejected` (sin `CHECK`; constantes en `app/core/db/declarations.py`). |
-| `review_flags` | TEXT[] | NOT NULL DEFAULT `'{}'` | Alertas que mandaron la declaración a revisión (ver abajo). Se conservan al aprobar. |
+| `review_flags` | TEXT[] | NOT NULL DEFAULT `'{}'` | **Unión** (sin repetidos) de las alertas de todas sus tarjetas. Se conservan al aprobar. |
 | `reviewed_by` | INTEGER | FK → `users(id)` | Quién aprobó/rechazó. |
 | `reviewed_at` | TIMESTAMP | nullable | |
 | `review_note` | TEXT | nullable | Obligatoria al rechazar. |
-| `submitted_data` | JSONB | NOT NULL | Copia exacta de lo declarado: `reason`, `plate_quantity`, `acting_as`, `owner{...}`, `owner_relation`, `gestor{...}` o `null`, `vehicle{...}` y, si se envió, `raw` (el formulario crudo). |
-| `owner_signature_path` / `gestor_signature_path` / `notarized_pdf_path` | TEXT | nullable | Nombres de archivo en el volumen de subidas. |
+| `submitted_data` | JSONB | NOT NULL | Copia exacta de lo declarado, con la forma canónica `{"acting_as", "declarant": {...}, "cards": [{...}], "raw": {...}}` (ver abajo). |
+| `declarant_signature_path` | TEXT | nullable | Firma única del declarante; cubre todas las tarjetas. Nombre de archivo en el volumen de subidas. |
+| `notarized_pdf_path` | TEXT | nullable | Un solo PDF notariado por declaración; obligatorio cuando **alguna** tarjeta es por `PÉRDIDA`. |
 | `submitter_ip` / `user_agent` | TEXT | nullable | Para el límite por IP y la trazabilidad. |
 | `accepted_terms_at` | TIMESTAMP | nullable | |
 
-Índices: `declarations_status_idx (status)`, `declarations_customer_id_idx
-(customer_id)` y `declarations_submitter_ip_created_at_idx (submitter_ip,
-created_at)` (el límite por IP).
+Índices: `declarations_status_idx (status)` y
+`declarations_submitter_ip_created_at_idx (submitter_ip, created_at)` (el
+límite por IP).
+
+**Forma canónica de `submitted_data`**: `declarant` es la persona
+(`name`, `document_type`, `document_number`, `address`, `neighborhood`,
+`municipality`, `phone`, `email`); cada elemento de `cards` trae los campos de
+la tarjeta (`plate_number`, `transit_license`, `engine_number`,
+`chassis_number`, `vehicle_type`, `registered_in`, `vehicle_brand`), su
+`reason`, su `plate_quantity`, su `owner` (la persona dueña; una copia del
+declarante cuando este es propietario o poseedor) y `owner_relation`
+(`DUEÑO` / `POSEEDOR`); `raw` es el formulario crudo, si se envió. La
+migración 0009 reescribe así las declaraciones que existían con la forma
+anterior (una sola tarjeta).
+
+### `declaration_cards`
+
+*Agregada por `app/migrations/0009_declaration_cards.sql`.* Una fila por
+**tarjeta de propiedad declarada**; las filas de una declaración se borran con
+ella (`ON DELETE CASCADE`). Si el declarante actúa como `PROPIETARIO` /
+`POSEEDOR`, todas las tarjetas son suyas; si actúa como `GESTOR`, cada tarjeta
+trae su propio dueño (`owner_data`). Las reglas de alerta se evalúan **por
+tarjeta**: si una sola tiene alguna alerta, **toda** la declaración queda en
+`pending_review` y no se crea nada.
+
+| Columna | Tipo | Constraint/Default | Nota |
+|---|---|---|---|
+| `id` | SERIAL | PK | |
+| `declaration_id` | INTEGER | NOT NULL, FK → `declarations(id)` ON DELETE CASCADE | |
+| `position` | INTEGER | NOT NULL, `UNIQUE (declaration_id, position)` | Orden dentro de la declaración, desde 0. |
+| `reason` | TEXT | NOT NULL | `normalize.DECLARATION_REASONS`: `DETERIORO` / `PÉRDIDA`, por tarjeta. |
+| `plate_quantity` | INTEGER | NOT NULL | Placas pedidas para esa tarjeta: 1..`normalize.max_plates_per_card(vehicle_type)` (2 para carros, 1 para los demás; validado en código). La cantidad total de la declaración es la suma, nunca se digita. |
+| `plate_number` / `transit_license` | TEXT | NOT NULL | Normalizadas (placa con `clean_plate`, licencia en mayúsculas sin espacios en los extremos). No se repiten dentro de una declaración. |
+| `engine_number` / `chassis_number` / `registered_in` / `vehicle_brand` | TEXT | nullable | Mismos campos que `ownership_cards`. |
+| `vehicle_type` | TEXT | nullable | Un valor de `normalize.PLATE_TYPES`. |
+| `owner_relation` | TEXT | nullable | `DUEÑO` / `POSEEDOR`: del declarante (`PROPIETARIO` → `DUEÑO`, `POSEEDOR` → `POSEEDOR`) o, si es gestor, el que indicó para esa tarjeta. |
+| `owner_data` | JSONB | NOT NULL | La persona dueña de esa tarjeta (una copia del declarante cuando no es gestor). |
+| `customer_id` | INTEGER | FK → `customers(id)` | El dueño (CLIENTE). `NULL` mientras está pendiente (o rechazada). El mismo dueño repetido en varias tarjetas es **un solo** cliente (se identifica por nombre canónico). |
+| `ownership_card_id` | INTEGER | FK → `ownership_cards(id)` | La tarjeta creada o enlazada. `NULL` mientras está pendiente (o rechazada). |
+| `review_flags` | TEXT[] | NOT NULL DEFAULT `'{}'` | Alertas de **esa** tarjeta. Las que atañen al declarante gestor (tipo/documento de un gestor ya existente) se anotan en todas. |
+
+Índices: el de `UNIQUE (declaration_id, position)` (cubre las búsquedas por
+`declaration_id`), `declaration_cards_ownership_card_id_idx` y
+`declaration_cards_customer_id_idx`.
 
 **Alertas (`review_flags`)** — cualquiera de ellas deja la declaración en
 `pending_review`:
@@ -420,10 +461,10 @@ created_at)` (el límite por IP).
 | Alerta | Cuándo |
 |---|---|
 | `plate_made_recently` | La última fabricación de esa placa (`db.last_fabrication_date`, ignora placas `is_voided` y `is_plate_annulled`) + 6 meses calendario es posterior a hoy (fecha de Bogotá). Exactamente 6 meses ya no alerta. |
-| `card_other_owner` | La licencia y la placa son una tarjeta existente de **otro** cliente (o el declarante aún no existe). |
+| `card_other_owner` | La licencia y la placa son una tarjeta existente de **otro** cliente (o el dueño aún no existe). |
 | `card_data_mismatch` | La licencia existe con otra placa, o la placa con otra licencia. |
-| `customer_type_mismatch` | Un cliente/gestor que ya existe con ese nombre no tiene el tipo esperado (`CLIENTE` para el dueño, `GESTOR` para el gestor); `NULL` cuenta como diferente. |
-| `customer_document_mismatch` | Un cliente/gestor que ya existe con ese nombre ya tiene número de documento y es **distinto** del declarado (un homónimo, no la misma persona). Se compara solo letras y dígitos (`1.234.567-8` = `12345678`); un documento vacío en cualquiera de los dos lados no cuenta. |
+| `customer_type_mismatch` | Un cliente/gestor que ya existe con ese nombre no tiene el tipo esperado (`CLIENTE` para el dueño, `GESTOR` para el gestor); `NULL` cuenta como diferente. También cuando, en la misma declaración, el nombre del gestor aparece como dueño de una tarjeta. |
+| `customer_document_mismatch` | Un cliente/gestor que ya existe con ese nombre ya tiene número de documento y es **distinto** del declarado (un homónimo, no la misma persona). Se compara solo letras y dígitos (`1.234.567-8` = `12345678`); un documento vacío en cualquiera de los dos lados no cuenta. También cuando el mismo nombre de dueño aparece en la misma declaración con dos documentos distintos. |
 
 ### `blank_preparations`
 

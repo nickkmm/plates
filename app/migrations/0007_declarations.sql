@@ -36,5 +36,9 @@ CREATE TABLE IF NOT EXISTS declarations (
 );
 
 CREATE INDEX IF NOT EXISTS declarations_status_idx ON declarations (status);
-CREATE INDEX IF NOT EXISTS declarations_customer_id_idx ON declarations (customer_id);
+-- (This file used to also create declarations_customer_id_idx. 0009 moves
+-- customer_id out of `declarations` and drops that index, and this file is
+-- re-run on a database built from the CURRENT init.sql -- where the column no
+-- longer exists -- so the CREATE INDEX had to go. Databases that already ran the
+-- old version get the index dropped by 0009; new ones never had it.)
 CREATE INDEX IF NOT EXISTS declarations_submitter_ip_created_at_idx ON declarations (submitter_ip, created_at);
