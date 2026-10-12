@@ -106,7 +106,7 @@ def _gestor_form(*cards: dict, **overrides) -> dict:
     if not cards:
         cards = (
             {**_card(0, plate_number="ABC123", transit_license="L-1"), **_owner(0, "Maria Lopez")},
-            {**_card(1, plate_number="DEF456", transit_license="L-2", vehicle_type="MOTO PARTICULAR"),
+            {**_card(1, plate_number="DEF45G", transit_license="L-2", vehicle_type="MOTO PARTICULAR"),
              **_owner(1, "Pedro Ruiz", "POSEEDOR", document_number="555666777")},
         )
     base = {
@@ -327,7 +327,7 @@ class TestParsing:
         assert resp.status_code == 200
         inp = stub.inp
         assert inp.acting_as == "GESTOR" and inp.declarant.name == "Juan Gestor"
-        assert [c.plate_number for c in inp.cards] == ["ABC123", "DEF456"]
+        assert [c.plate_number for c in inp.cards] == ["ABC123", "DEF45G"]
         first, second = inp.cards
         assert first.owner is not None and first.owner.name == "Maria Lopez"
         assert first.owner_relation == "DUEÑO"
