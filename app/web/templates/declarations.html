@@ -30,6 +30,9 @@
     .badge.approved { background:#e8f6ee; color:#1a7a45; }
     .badge.rejected { background:#fdecec; color:#900; }
     .badge.flag { background:#fdecec; color:#900; }
+    .badge.attended { background:#e6f0fb; color:#0b5cad; }
+    .badge.to_attend { background:#fff3d6; color:#8a5a00; }
+    .search select { padding:.5rem .6rem; border:1px solid #ccc; border-radius:6px; font-size:.9rem; background:#fff; }
     @media (max-width:700px) {
       table.list thead { display:none; }
       table.list, table.list tbody, table.list tr, table.list td { display:block; width:100%; box-sizing:border-box; }
@@ -51,17 +54,23 @@
     Pendientes: <strong>{{ pending_count }}</strong>.
   </p>
 
+  {% set attended_arg = attended_filter if attended_filter != 'all' else None %}
   <div class="filters">
     {% for value, label in filters %}
-    <a href="{{ url_for('declarations.declarations', status=value, q=query or None) }}" class="{{ 'on' if value == status_filter }}">{{ label }}{% if value == 'pending_review' %} ({{ pending_count }}){% endif %}</a>
+    <a href="{{ url_for('declarations.declarations', status=value, q=query or None, attended=attended_arg) }}" class="{{ 'on' if value == status_filter }}">{{ label }}{% if value == 'pending_review' %} ({{ pending_count }}){% endif %}</a>
     {% endfor %}
   </div>
 
   <form class="search" method="get" action="{{ url_for('declarations.declarations') }}">
     <input type="hidden" name="status" value="{{ status_filter }}">
     <input type="text" name="q" value="{{ query or '' }}" placeholder="Buscar por nombre, documento, placa o licencia" autofocus>
+    <select name="attended" aria-label="Atención del pedido" onchange="this.form.submit()">
+      {% for value, label, _ in attended_filters %}
+      <option value="{{ value }}"{{ ' selected' if value == attended_filter }}>{{ label }}</option>
+      {% endfor %}
+    </select>
     <button type="submit">Buscar</button>
-    {% if query %}<a class="clear" href="{{ url_for('declarations.declarations', status=status_filter) }}">Limpiar</a>{% endif %}
+    {% if query %}<a class="clear" href="{{ url_for('declarations.declarations', status=status_filter, attended=attended_arg) }}">Limpiar</a>{% endif %}
   </form>
 
   {% if rows %}
@@ -80,7 +89,7 @@
         <td data-label="Tarjetas">{{ s.card_count }}</td>
         <td data-label="Placas">{{ s.plate_total }}</td>
         <td data-label="Resumen">{{ s.plates }}<br><span class="muted">{{ s.reasons }}</span></td>
-        <td data-label="Estado"><span class="badge {{ d.status }}">{{ status_labels.get(d.status, d.status) }}</span></td>
+        <td data-label="Estado"><span class="badge {{ d.status }}">{{ status_labels.get(d.status, d.status) }}</span>{% if d.production_order_id %}<span class="badge attended">Atendida</span>{% elif d.status == approved_status %}<span class="badge to_attend">Por atender</span>{% endif %}</td>
         <td data-label="Alertas">{% for f in d.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% else %}—{% endfor %}{% if s.flagged_numbers %}<br><span class="muted">en la tarjeta {{ s.flagged_numbers | join(', ') }}</span>{% endif %}</td>
         <td class="actions"><a class="ver" href="{{ url_for('declarations.declaration_detail', declaration_id=d.id) }}">Ver</a></td>
       </tr>

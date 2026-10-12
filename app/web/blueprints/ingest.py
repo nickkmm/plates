@@ -3,19 +3,28 @@ lines, built by hand or pre-filled from an uploaded pedido PDF)."""
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, render_template, request, session
+from collections import Counter
+from dataclasses import dataclass, field
+
+from flask import Blueprint, abort, current_app, render_template, request, session
 
 from app.core import db
+from app.core.db.declarations import STATUS_APPROVED, STATUS_PENDING_REVIEW
+from app.core.declarations import ACTING_AS_GESTOR
 from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
 from app.core.models import ExtractedRow
 from app.core.normalize import (
+    _CITY_SPECIFIC_TYPES,
     CUSTOMER_TYPES,
     DOCUMENT_RELATIONS,
     DOCUMENT_TYPES,
     PAYMENT_METHODS,
     REASONS,
     RECEIPT_TYPES,
+    clean_plate,
     normalize_choice,
+    normalize_plate_type,
+    normalize_requested_by,
     validate_plate,
 )
 from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
@@ -293,20 +302,214 @@ def _customers_context(conn) -> dict[str, dict]:
     }
 
 
+def _form_context(conn) -> dict:
+    """The template variables every render of ingest.html needs (dropdown and
+    autofill data) -- the same block used to be repeated at each render site."""
+    requesters, cities = _options(conn)
+    return {
+        "requesters": requesters, "cities": cities,
+        "categories": FORM_PLATE_TYPES, "today": today_iso(),
+        "receipt_types": RECEIPT_TYPES, "customer_types": CUSTOMER_TYPES,
+        "document_types": DOCUMENT_TYPES, "document_relations": DOCUMENT_RELATIONS,
+        "payment_methods": PAYMENT_METHODS, "reasons": REASONS,
+        "prices": _pricing_context(conn), "customers": _customers_context(conn),
+    }
+
+
+# Highest value a Postgres INTEGER id can hold; a larger declaration_id in the
+# query string / form can never exist and must not reach the database.
+_MAX_ID = 2_147_483_647
+
+
+def _parse_declaration_id(raw: str | None) -> int | None:
+    """The declaration id from the query string / hidden input, or None when
+    it is not a positive integer that can be a real id."""
+    try:
+        value = int((raw or "").strip())
+    except ValueError:
+        return None
+    return value if 0 < value <= _MAX_ID else None
+
+
+@dataclass
+class _DeclarationCheck:
+    """Whether a declaration can be turned into an order right now.
+
+    `declaration` is None only when the id does not exist. `error` (Spanish,
+    shown to the person) is set whenever it cannot be used -- unknown,
+    pending, rejected or already attended; for the attended case
+    `attended_order` is the order that attended it so the page can link it.
+    """
+
+    declaration: db.DeclarationRecord | None
+    cards: list[db.DeclarationCardRecord] = field(default_factory=list)
+    error: str | None = None
+    attended_order: dict | None = None
+
+
+def _check_declaration(conn, declaration_id: int | None) -> _DeclarationCheck:
+    """Re-read the declaration and decide if it is usable: it must exist, be
+    `approved` and not yet attended (production_order_id NULL). Used by the
+    GET prefill AND, again, by POST /ingest -- the server never trusts the
+    hidden input."""
+    declaration = db.get_declaration(conn, declaration_id) if declaration_id else None
+    if declaration is None:
+        return _DeclarationCheck(None, error="La declaración indicada no existe.")
+    label = f"La declaración #{declaration.id}"
+    if declaration.status == STATUS_PENDING_REVIEW:
+        return _DeclarationCheck(
+            declaration,
+            error=f"{label} todavía está pendiente de revisión: aprobala antes de crear la orden.",
+        )
+    if declaration.status != STATUS_APPROVED:
+        return _DeclarationCheck(
+            declaration, error=f"{label} fue rechazada: no se puede crear una orden desde ella.",
+        )
+    if declaration.production_order_id is not None:
+        order, _ = db.order_detail(conn, declaration.production_order_id)
+        order_number = order["order_number"] if order else str(declaration.production_order_id)
+        return _DeclarationCheck(
+            declaration,
+            error=f"{label} ya fue atendida por la orden {order_number}.",
+            attended_order={"id": declaration.production_order_id, "order_number": order_number},
+        )
+    return _DeclarationCheck(declaration, cards=db.list_declaration_cards(conn, declaration.id))
+
+
+def _declaration_customer(conn, declaration: db.DeclarationRecord,
+                          cards: list[db.DeclarationCardRecord]) -> db.CustomerRecord | None:
+    """The declarant as a customer record: the gestor when a gestor filled the
+    form in, otherwise the customer the cards were linked to on approval (the
+    owner / possessor who declared)."""
+    if declaration.acting_as == ACTING_AS_GESTOR:
+        return db.get_customer(conn, declaration.gestor_id) if declaration.gestor_id else None
+    for card in cards:
+        if card.customer_id:
+            return db.get_customer(conn, card.customer_id)
+    return None
+
+
+def _form_from_declaration(
+    conn, declaration: db.DeclarationRecord, cards: list[db.DeclarationCardRecord],
+    prices: dict[str, str],
+) -> tuple[dict, list[dict], list[str]]:
+    """Turn an approved declaration into (header, lines, notices) for the
+    /ingest form -- the same shapes as _form_from_pedido, so the person reviews
+    the real form pre-filled and nothing is saved by the GET.
+
+    order_number and payment_method stay blank (staff decide them); city stays
+    blank (staff fill it in); unit_price is the current tariff for the card's
+    type when there is one.
+    """
+    notices = ["Completá el N° de orden y elegí la forma de pago."]
+    header = dict.fromkeys(_STICKY_HEADER_FIELDS, "")
+    header["order_date"] = today_iso()
+
+    customer = _declaration_customer(conn, declaration, cards)
+    if customer is not None:
+        header["requested_by"] = customer.name
+        header["customer_type"] = customer.type or ""
+        header["customer_document_type"] = customer.document_type or ""
+        header["customer_document_number"] = customer.document_number or ""
+        header["customer_document_relation"] = customer.document_relation or ""
+        header["customer_phone"] = customer.phone or ""
+        header["customer_email"] = customer.email or ""
+        header["customer_address"] = customer.address or ""
+        header["customer_neighborhood"] = customer.neighborhood or ""
+        header["customer_municipality"] = customer.municipality or ""
+    else:
+        declarant = declaration.submitted_data.get("declarant") or {}
+        header["requested_by"] = normalize_requested_by(str(declarant.get("name") or ""))
+        notices.append(
+            "No se encontró el cliente de esta declaración entre los clientes guardados: "
+            "revisá el nombre y completá sus datos."
+        )
+
+    lines: list[dict] = []
+    unknown_type: list[str] = []
+    city_specific: list[str] = []
+    for number, card in enumerate(cards, start=1):
+        plate_type = normalize_plate_type(card.vehicle_type) or ""
+        if plate_type not in FORM_PLATE_TYPES:
+            plate_type = ""
+            unknown_type.append(str(number))
+        elif plate_type in _CITY_SPECIFIC_TYPES:
+            city_specific.append(str(number))
+        lines.append({
+            "line_type": "placa", "plate_type": plate_type,
+            "plate_number": card.plate_number, "plate_to": "",
+            "quantity": card.plate_quantity, "city": "",
+            "reason": card.reason, "vehicle_brand": card.vehicle_brand or "",
+            "unit_price": prices.get(plate_type, ""),
+        })
+    if unknown_type:
+        notices.append(
+            f"La tarjeta de propiedad de la(s) línea(s) {', '.join(unknown_type)} no tiene un tipo "
+            "de placa reconocido — elegilo antes de guardar."
+        )
+    if city_specific:
+        notices.append(
+            f"Completá la ciudad de la(s) línea(s) {', '.join(city_specific)}: las placas de "
+            "CARRO PARTICULAR y CARRO PÚBLICO son específicas de una ciudad."
+        )
+    return header, lines, notices
+
+
+def _blocking_duplicates(
+    duplicates: set[str], rows: list[ExtractedRow], exempt_plates: frozenset[str],
+) -> set[str]:
+    """The duplicate plate numbers that still block a save once the plates of
+    the attended declaration are exempt (reprinting a lost / deteriorated plate
+    is the whole point of that order). An exempt plate typed twice in this same
+    submission is still a likely typo, so it keeps blocking."""
+    typed = Counter(r.plate_number for r in rows if r.plate_number)
+    return {pn for pn in duplicates if pn not in exempt_plates or typed[pn] > 1}
+
+
+def _mark_declaration_attended(conn, declaration_id: int, order_number: str) -> None:
+    """Link the declaration to the order just created under `order_number`
+    (the newest one, if the person confirmed saving beside an existing order
+    with that number). Runs in the SAME transaction as the save, and refuses
+    -- rolling the whole save back -- if someone else attended it meanwhile."""
+    declaration = db.get_declaration(conn, declaration_id)
+    if declaration is None or declaration.production_order_id is not None:
+        raise ValueError(f"La declaración #{declaration_id} ya fue atendida por otra orden.")
+    orders = db.find_orders_by_number(conn, order_number)
+    if not orders:
+        raise ValueError("No se encontró la orden recién creada para marcar la declaración como atendida.")
+    db.set_declaration_production_order(conn, declaration_id, max(o.id for o in orders))
+
+
 @bp.get("/ingest")
 @pos_allowed
 def ingest():
+    """The blank form, or -- with `?declaration_id=N` -- the form pre-filled
+    from an approved, not yet attended declaration (nothing is saved here)."""
+    raw_declaration_id = request.args.get("declaration_id")
+    declaration_id = _parse_declaration_id(raw_declaration_id)
+    if raw_declaration_id is not None and declaration_id is None:
+        abort(404)
     with db.get_conn() as conn:
-        requesters, cities = _options(conn)
-        prices = _pricing_context(conn)
-        customers = _customers_context(conn)
+        context = _form_context(conn)
+        if declaration_id is None:
+            return render_template("ingest.html", **context)
+        check = _check_declaration(conn, declaration_id)
+        if check.declaration is None:
+            abort(404)
+        if check.error:
+            return render_template(
+                "ingest.html", **context, error=check.error, attended_order=check.attended_order,
+            )
+        header, lines, notices = _form_from_declaration(
+            conn, check.declaration, check.cards, context["prices"],
+        )
     return render_template(
-        "ingest.html", requesters=requesters, cities=cities,
-        categories=FORM_PLATE_TYPES, today=today_iso(),
-        receipt_types=RECEIPT_TYPES, customer_types=CUSTOMER_TYPES,
-        document_types=DOCUMENT_TYPES, document_relations=DOCUMENT_RELATIONS,
-        payment_methods=PAYMENT_METHODS, reasons=REASONS,
-        prices=prices, customers=customers,
+        "ingest.html", **context, header=header, lines=lines, notices=notices,
+        notices_title=(
+            f"Revisá esto antes de guardar — los datos vienen de la declaración "
+            f"#{declaration_id}, todavía no se guardó nada."
+        ),
+        declaration_id=declaration_id,
     )
 
 
@@ -319,9 +522,31 @@ def ingest_post():
     order_duplicates = None
     header = None
     lines = None
+    # Set only when the hidden `declaration_id` re-validated OK (see
+    # _check_declaration); None for a normal order or a refused declaration.
+    declaration_id: int | None = None
+    attended_order = None
+    attended_declaration_id: int | None = None
+    exempt_plates: frozenset[str] = frozenset()
     try:
-        rows = _rows_from_form(request.form)
-        if not rows:
+        raw_declaration_id = (request.form.get("declaration_id") or "").strip()
+        if raw_declaration_id:
+            with db.get_conn() as conn:
+                check = _check_declaration(conn, _parse_declaration_id(raw_declaration_id))
+            if check.error or check.declaration is None:
+                # Refuse to save, but give the form back exactly as typed.
+                error = check.error
+                attended_order = check.attended_order
+                header = _sticky_header_from_form(request.form)
+                lines = _sticky_lines_from_form(request.form)
+            else:
+                declaration_id = check.declaration.id
+                exempt_plates = frozenset(clean_plate(card.plate_number) for card in check.cards)
+
+        rows = [] if error else _rows_from_form(request.form)
+        if error:
+            pass  # the declaration was refused above
+        elif not rows:
             error = "Agregá al menos una placa."
         elif request.form.get("replace_order"):
             # Explicit, opt-in fuse (see the "Reemplazar" button below): wipe
@@ -337,6 +562,9 @@ def ingest_post():
                 )
                 summary = replace_order(conn, rows[0].order_number, rows,
                                         created_by=session.get("user_id"))
+                if declaration_id is not None:
+                    _mark_declaration_attended(conn, declaration_id, rows[0].order_number)
+                    attended_declaration_id = declaration_id
             current_app.logger.info(
                 "order replaced: user=%s order_number=%s plates=%d",
                 session.get("user"), rows[0].order_number, len(rows),
@@ -361,7 +589,9 @@ def ingest_post():
                     lines = _sticky_lines_from_form(request.form)
                 else:
                     order_duplicates = None  # not a collision the user needs to see anymore
-                    dup_plate_numbers = find_duplicate_plate_numbers(conn, rows)
+                    dup_plate_numbers = _blocking_duplicates(
+                        find_duplicate_plate_numbers(conn, rows), rows, exempt_plates,
+                    )
                     if dup_plate_numbers and not request.form.get("confirm_duplicate"):
                         duplicates = {
                             pn: db.find_orders_for_plate(conn, pn) for pn in sorted(dup_plate_numbers)
@@ -373,26 +603,32 @@ def ingest_post():
                             conn, rows[0].requested_by, **customer_fields_from_form(request.form)
                         )
                         summary = process_rows(conn, rows, created_by=session.get("user_id"))
+                        if declaration_id is not None:
+                            _mark_declaration_attended(conn, declaration_id, rows[0].order_number)
+                            attended_declaration_id = declaration_id
                         current_app.logger.info(
                             "order created: user=%s order_number=%s plates=%d",
                             session.get("user"), rows[0].order_number, len(rows),
                         )
     except Exception as e:  # surface validation/DB errors without crashing
         error = f"Error: {e}"
+        summary = None  # the transaction rolled back, nothing was saved
+        attended_declaration_id = None
+        if declaration_id is not None and header is None:
+            # A declaration-backed order is worth not retyping: keep the form.
+            header = _sticky_header_from_form(request.form)
+            lines = _sticky_lines_from_form(request.form)
 
     with db.get_conn() as conn:
-        requesters, cities = _options(conn)
-        prices = _pricing_context(conn)
-        customers = _customers_context(conn)
+        context = _form_context(conn)
     return render_template(
-        "ingest.html", requesters=requesters, cities=cities,
-        categories=FORM_PLATE_TYPES, today=today_iso(),
-        receipt_types=RECEIPT_TYPES, customer_types=CUSTOMER_TYPES,
-        document_types=DOCUMENT_TYPES, document_relations=DOCUMENT_RELATIONS,
-        payment_methods=PAYMENT_METHODS, reasons=REASONS,
-        prices=prices, customers=customers,
+        "ingest.html", **context,
         summary=summary.model_dump() if summary else None, error=error,
         duplicates=duplicates, order_duplicates=order_duplicates, header=header, lines=lines,
+        # After a successful save the form is blank again, so the hidden field
+        # is only carried while the declaration still has to be attended.
+        declaration_id=None if attended_declaration_id else declaration_id,
+        attended_declaration_id=attended_declaration_id, attended_order=attended_order,
     )
 
 
@@ -431,15 +667,8 @@ def ingest_pdf():
         order_duplicates = (
             db.find_orders_by_number(conn, pedido.order_number) if pedido.order_number else []
         )
-        requesters, cities = _options(conn)
-        prices = _pricing_context(conn)
-        customers = _customers_context(conn)
+        context = _form_context(conn)
     return render_template(
-        "ingest.html", requesters=requesters, cities=cities,
-        categories=FORM_PLATE_TYPES, today=today_iso(),
-        receipt_types=RECEIPT_TYPES, customer_types=CUSTOMER_TYPES,
-        document_types=DOCUMENT_TYPES, document_relations=DOCUMENT_RELATIONS,
-        payment_methods=PAYMENT_METHODS, reasons=REASONS,
-        prices=prices, customers=customers,
+        "ingest.html", **context,
         header=header, lines=lines, notices=notices, order_duplicates=order_duplicates,
     )

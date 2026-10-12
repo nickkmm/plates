@@ -61,6 +61,7 @@ class DeclarationRecord:
     user_agent: str | None
     accepted_terms_at: datetime | None
     declarant_signature_path: str | None
+    production_order_id: int | None    # the order that attended it; NULL = not attended yet
 
 
 @dataclass
@@ -89,7 +90,7 @@ class DeclarationCardRecord:
 _SELECT_COLUMNS = (
     "id, created_at, acting_as, gestor_id, status, review_flags, reviewed_by, "
     "reviewed_at, review_note, submitted_data, notarized_pdf_path, submitter_ip, "
-    "user_agent, accepted_terms_at, declarant_signature_path"
+    "user_agent, accepted_terms_at, declarant_signature_path, production_order_id"
 )
 
 _CARD_SELECT_COLUMNS = (
@@ -207,10 +208,14 @@ def list_cards_for_declarations(
 
 def list_declarations(
     conn: psycopg.Connection[DictRow], *, status: str | None = None, query: str | None = None,
+    attended: bool | None = None,
 ) -> list[DeclarationRecord]:
     """Declarations, `pending_review` first and then newest first.
 
-    `status` filters by exact status. `query` is a case-insensitive substring
+    `status` filters by exact status. `attended` filters by whether an order
+    already attended the declaration (`production_order_id`): None = no filter,
+    True = IS NOT NULL, False = IS NULL (it does not look at the status, so
+    False also includes pending/rejected ones; combine it with `status`). `query` is a case-insensitive substring
     match against the declarant's name / document number (declared inside
     `submitted_data`, plus the linked gestor customer) and, on ANY of the
     declaration's cards, the plate, transit licence, declared owner name /
@@ -224,6 +229,8 @@ def list_declarations(
     if status is not None:
         where.append("d.status = %s")
         params.append(status)
+    if attended is not None:
+        where.append("d.production_order_id IS NOT NULL" if attended else "d.production_order_id IS NULL")
     if query and query.strip():
         escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped}%"
@@ -308,4 +315,17 @@ def set_declaration_card_links(
         cur.execute(
             "UPDATE declaration_cards SET customer_id = %s, ownership_card_id = %s WHERE id = %s",
             (customer_id, ownership_card_id, declaration_card_id),
+        )
+
+
+def set_declaration_production_order(
+    conn: psycopg.Connection[DictRow], declaration_id: int, production_order_id: int | None,
+) -> None:
+    """Mark a declaration as attended by an order (or clear it with None).
+    Does not check the declaration's status -- the caller (the /ingest save)
+    only passes approved declarations."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE declarations SET production_order_id = %s WHERE id = %s",
+            (production_order_id, declaration_id),
         )

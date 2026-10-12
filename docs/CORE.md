@@ -401,6 +401,7 @@ Constantes: `STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` y
 | `count_recent_by_ip(conn, ip, *, since)` | Declaraciones de esa IP con `created_at >= since` (límite por IP del formulario). |
 | `set_declaration_review(conn, declaration_id, *, status, reviewed_by, note=None, gestor_id=None)` | Graba la decisión (`reviewed_at = now()`) y el `gestor_id`. No valida el estado previo. |
 | `set_declaration_card_links(conn, declaration_card_id, *, customer_id, ownership_card_id)` | Enlaza una tarjeta de la declaración con el dueño y la tarjeta de propiedad creados/enlazados al aprobar. |
+| `set_declaration_production_order(conn, declaration_id, production_order_id)` | Marca la declaración como atendida por un pedido (o `None` para limpiarla). No revisa el estado: lo hace quien llama (`/ingest`). |
 
 `db/plates.py` suma `last_fabrication_date(conn, plate_number)`: solo lectura,
 la `order_date` más reciente de una placa con ese número exacto, **ignorando**
