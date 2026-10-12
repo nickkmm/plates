@@ -73,6 +73,7 @@ LOSS_REASON = "PÉRDIDA"
 ACTING_AS_GESTOR = "GESTOR"
 _RELATION_FOR_ACTING_AS = {"PROPIETARIO": "DUEÑO", "POSEEDOR": "POSEEDOR"}
 MIN_MONTHS_BETWEEN_PLATES = 6
+MAX_VEHICLES = 30   # per declaration; bounds what the anonymous public form can submit
 BOGOTA_TZ = ZoneInfo("America/Bogota")
 
 
@@ -90,6 +91,13 @@ class PersonInput:
 
 @dataclass
 class VehicleInput:
+    """One vehicle of a declaration (one ownership card, one reason, one
+    plate quantity). A declaration carries 1..MAX_VEHICLES of these.
+
+    `owner` / `owner_relation` are only read when the declarant acts as GESTOR
+    (every vehicle then has its own owner). When the declarant is the owner or
+    possessor, every vehicle belongs to the declarant and both are ignored."""
+
     plate_number: str = ""
     transit_license: str = ""
     engine_number: str = ""
@@ -97,20 +105,23 @@ class VehicleInput:
     vehicle_type: str = ""
     registered_in: str = ""
     vehicle_brand: str = ""
+    reason: str = ""                    # normalize.DECLARATION_REASONS, per vehicle
+    plate_quantity: int = 1             # 1..normalize.max_plates_per_vehicle(vehicle_type)
+    owner: PersonInput | None = None
+    owner_relation: str = ""            # DUEÑO / POSEEDOR (GESTOR only)
 
 
 @dataclass
 class DeclarationInput:
-    reason: str = ""
-    plate_quantity: int = 1
-    acting_as: str = ""
-    owner: PersonInput = field(default_factory=PersonInput)
-    owner_relation: str = ""          # only read when acting_as == GESTOR
-    gestor: PersonInput | None = None
-    vehicle: VehicleInput = field(default_factory=VehicleInput)
-    owner_signature_file: str | None = None
-    gestor_signature_file: str | None = None
-    notarized_pdf_file: str | None = None
+    """What the public form submits. ONE declarant (the person who signs):
+    the owner/possessor themself, or a gestor acting for several owners. Only
+    the declarant signs, once -- the signature covers every vehicle listed."""
+
+    acting_as: str = ""                 # PROPIETARIO / POSEEDOR / GESTOR
+    declarant: PersonInput = field(default_factory=PersonInput)
+    vehicles: list[VehicleInput] = field(default_factory=list)
+    signature_file: str | None = None   # stored file name of the declarant's signature PNG
+    notarized_pdf_file: str | None = None   # required when ANY vehicle's reason is PÉRDIDA
     submitter_ip: str | None = None
     user_agent: str | None = None
     accepted_terms: bool = False
