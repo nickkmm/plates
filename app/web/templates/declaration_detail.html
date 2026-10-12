@@ -15,125 +15,160 @@
     .alert { background:#fff8e6; border:1px solid #e0b040; border-radius:8px; padding:.8rem 1rem; margin-bottom:.8rem; }
     .alert h3 { margin:0 0 .4rem; font-size:1rem; color:#8a5a00; }
     .alert ul { margin:0; padding-left:1.2rem; font-size:.9rem; }
-    fieldset { border:1px solid #ddd; border-radius:10px; margin-bottom:1.2rem; padding:1rem; }
+    .hold { background:#fff8e6; border:1px solid #e0b040; border-radius:10px; padding:.9rem 1rem; margin-bottom:1.2rem; }
+    .hold h2 { margin:0 0 .4rem; font-size:1.05rem; color:#8a5a00; }
+    .hold ul { margin:.4rem 0 0; padding-left:1.2rem; font-size:.92rem; }
+    fieldset { border:1px solid #ddd; border-radius:10px; margin:0 0 1.2rem; padding:1rem; min-width:0; }
+    fieldset.flagged { border-color:#e0b040; border-width:2px; }
     legend { font-weight:600; padding:0 .4rem; }
+    h3.sub { font-size:.95rem; margin:1rem 0 .5rem; color:#444; }
     dl { display:grid; grid-template-columns:max-content 1fr; gap:.3rem 1rem; margin:0; font-size:.9rem; }
     dt { color:#555; }
-    dd { margin:0; }
+    dd { margin:0; overflow-wrap:anywhere; }
     .muted { color:#777; font-size:.9rem; }
     .badge { display:inline-block; border-radius:5px; padding:.15rem .5rem; font-size:.78rem; margin-right:.2rem; }
     .badge.pending_review { background:#fff3d6; color:#8a5a00; }
     .badge.approved { background:#e8f6ee; color:#1a7a45; }
     .badge.rejected { background:#fdecec; color:#900; }
     .badge.flag { background:#fdecec; color:#900; }
-    .sig { max-width:320px; border:1px solid #ddd; background:#fff; display:block; }
+    .sig { max-width:100%; width:320px; border:1px solid #ddd; background:#fff; display:block; }
     label { font-size:.85rem; color:#555; display:block; margin-bottom:.5rem; }
+    label.reassign { background:#fff3d6; border:1px solid #e0b040; border-radius:6px; padding:.5rem .6rem; color:#5c3d00; margin:.6rem 0 0; }
     textarea { width:100%; box-sizing:border-box; padding:.4rem; border:1px solid #ccc; border-radius:5px; font:inherit; }
     button, a.back { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
     .approve { background:#1a9c5b; color:#fff; }
     .reject { background:#c33; color:#fff; }
     a.back { background:#0b6bcb; color:#fff; font-size:.9rem; }
     .reviews { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
-    @media (max-width:700px) { .reviews { grid-template-columns:1fr; } }
+    .reviews fieldset { margin:0; }
+    @media (max-width:700px) {
+      .reviews { grid-template-columns:1fr; }
+      dl { grid-template-columns:1fr; gap:0; }
+      dt { margin-top:.4rem; font-size:.8rem; }
+      .tabs { overflow-x:auto; }
+    }
   </style>
 </head>
 <body>
   {% include "_nav.html" %}
-  {% set data = d.submitted_data %}
-  {% set owner = data.get('owner') or {} %}
-  {% set gestor_data = data.get('gestor') %}
-  {% set vehicle = data.get('vehicle') or {} %}
+  {% set is_admin = session.get('role') in full_access_roles %}
+
+  {% macro person(p) %}
+    <dl>
+      <dt>Nombre</dt><dd>{{ p.get('name') or '—' }}</dd>
+      <dt>Documento</dt><dd>{{ p.get('document_type') or '—' }} {{ p.get('document_number') or '' }}</dd>
+      <dt>Dirección</dt><dd>{{ p.get('address') or '—' }}</dd>
+      <dt>Barrio</dt><dd>{{ p.get('neighborhood') or '—' }}</dd>
+      <dt>Municipio</dt><dd>{{ p.get('municipality') or '—' }}</dd>
+      <dt>Teléfono</dt><dd>{{ p.get('phone') or '—' }}</dd>
+      <dt>Correo</dt><dd>{{ p.get('email') or '—' }}</dd>
+    </dl>
+  {% endmacro %}
+
   <h1>Declaración #{{ d.id }}
     <span class="badge {{ d.status }}">{{ status_labels.get(d.status, d.status) }}</span>
     {% for f in d.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% endfor %}
   </h1>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
-  {% if d.status == pending_status %}
-  <fieldset>
-    <legend>Alertas por revisar</legend>
-    <p class="muted">Esta información es solo para el personal; nunca se muestra a quien envió la declaración.</p>
-    {% for f in flag_details %}
-    <div class="alert">
-      <h3>{{ f.title }}</h3>
-      <ul>{% for line in f.lines %}<li>{{ line }}</li>{% endfor %}</ul>
-    </div>
-    {% endfor %}
-  </fieldset>
+  {% if d.status == pending_status and flagged_cards %}
+  <div class="hold">
+    <h2>Retenida por {{ flagged_cards | length }} de {{ cards | length }} tarjeta{{ 's' if cards | length != 1 }}</h2>
+    <p class="muted">Basta una tarjeta con alerta para retener toda la declaración. Esta información es solo para el personal; nunca se muestra a quien envió la declaración.</p>
+    <ul>
+      {% for c in flagged_cards %}
+      <li><a href="#card-{{ c.number }}">Tarjeta de propiedad {{ c.number }}</a> (placa {{ c.record.plate_number }}):
+        {% for f in c.record.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% endfor %}</li>
+      {% endfor %}
+    </ul>
+  </div>
   {% endif %}
 
   <fieldset>
     <legend>Declaración</legend>
     <dl>
       <dt>Fecha de envío</dt><dd>{{ d.created_at.strftime('%d/%m/%Y %H:%M') }}</dd>
-      <dt>Motivo</dt><dd>{{ d.reason }}</dd>
-      <dt>Cantidad de placas</dt><dd>{{ d.plate_quantity }}</dd>
       <dt>Actúa como</dt><dd>{{ d.acting_as }}</dd>
-      {% if d.acting_as == 'GESTOR' %}<dt>Relación del cliente</dt><dd>{{ data.get('owner_relation') or '—' }}</dd>{% endif %}
+      <dt>Tarjetas de propiedad</dt><dd>{{ cards | length }}</dd>
+      <dt>Total de placas</dt><dd>{{ plate_total }}</dd>
     </dl>
   </fieldset>
 
   <fieldset>
-    <legend>Propietario / poseedor</legend>
-    <dl>
-      <dt>Nombre</dt><dd>{{ owner.get('name') or '—' }}</dd>
-      <dt>Documento</dt><dd>{{ owner.get('document_type') or '—' }} {{ owner.get('document_number') or '' }}</dd>
-      <dt>Dirección</dt><dd>{{ owner.get('address') or '—' }}</dd>
-      <dt>Barrio</dt><dd>{{ owner.get('neighborhood') or '—' }}</dd>
-      <dt>Municipio</dt><dd>{{ owner.get('municipality') or '—' }}</dd>
-      <dt>Teléfono</dt><dd>{{ owner.get('phone') or '—' }}</dd>
-      <dt>Correo</dt><dd>{{ owner.get('email') or '—' }}</dd>
-    </dl>
-  </fieldset>
-
-  {% if gestor_data %}
-  <fieldset>
-    <legend>Gestor</legend>
-    <dl>
-      <dt>Nombre</dt><dd>{{ gestor_data.get('name') or '—' }}</dd>
-      <dt>Documento</dt><dd>{{ gestor_data.get('document_type') or '—' }} {{ gestor_data.get('document_number') or '' }}</dd>
-      <dt>Dirección</dt><dd>{{ gestor_data.get('address') or '—' }}</dd>
-      <dt>Barrio</dt><dd>{{ gestor_data.get('neighborhood') or '—' }}</dd>
-      <dt>Municipio</dt><dd>{{ gestor_data.get('municipality') or '—' }}</dd>
-      <dt>Teléfono</dt><dd>{{ gestor_data.get('phone') or '—' }}</dd>
-      <dt>Correo</dt><dd>{{ gestor_data.get('email') or '—' }}</dd>
-    </dl>
-  </fieldset>
-  {% endif %}
-
-  <fieldset>
-    <legend>Vehículo (tarjeta de propiedad)</legend>
-    <dl>
-      <dt>Placa</dt><dd>{{ vehicle.get('plate_number') or '—' }}</dd>
-      <dt>Licencia de tránsito</dt><dd>{{ vehicle.get('transit_license') or '—' }}</dd>
-      <dt>Tipo de vehículo</dt><dd>{{ vehicle.get('vehicle_type') or '—' }}</dd>
-      <dt>Matriculado en</dt><dd>{{ vehicle.get('registered_in') or '—' }}</dd>
-      <dt>Marca</dt><dd>{{ vehicle.get('vehicle_brand') or '—' }}</dd>
-      <dt>N° de motor</dt><dd>{{ vehicle.get('engine_number') or '—' }}</dd>
-      <dt>N° de chasis</dt><dd>{{ vehicle.get('chassis_number') or '—' }}</dd>
-    </dl>
+    <legend>Declarante{% if d.acting_as == 'GESTOR' %} (gestor){% endif %}</legend>
+    {{ person(declarant) }}
+    {% if gestor %}
+    <p class="muted">Gestor creado o enlazado al aprobar:
+      {% if is_admin %}<a href="{{ url_for('customers.customer_detail', customer_id=gestor.id) }}">{{ gestor.name }}</a>{% else %}{{ gestor.name }}{% endif %}</p>
+    {% endif %}
   </fieldset>
 
   <fieldset>
     <legend>Archivos</legend>
-    {% if d.owner_signature_path %}
-    <p>Firma del propietario/poseedor:
-      <a href="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='owner_signature') }}" target="_blank">abrir</a></p>
-    <img class="sig" alt="Firma del propietario/poseedor" src="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='owner_signature') }}">
-    {% endif %}
-    {% if d.gestor_signature_path %}
-    <p>Firma del gestor:
-      <a href="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='gestor_signature') }}" target="_blank">abrir</a></p>
-    <img class="sig" alt="Firma del gestor" src="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='gestor_signature') }}">
+    {% if d.declarant_signature_path %}
+    <p>Firma del declarante (cubre todas las tarjetas):
+      <a href="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='signature') }}" target="_blank">abrir</a></p>
+    <img class="sig" alt="Firma del declarante" src="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='signature') }}">
     {% endif %}
     {% if d.notarized_pdf_path %}
     <p>PDF de la declaración notariada:
       <a href="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='notarized_pdf') }}" target="_blank">abrir PDF</a></p>
     {% endif %}
-    {% if not (d.owner_signature_path or d.gestor_signature_path or d.notarized_pdf_path) %}
+    {% if not (d.declarant_signature_path or d.notarized_pdf_path) %}
     <p class="muted">Sin archivos adjuntos.</p>
     {% endif %}
   </fieldset>
+
+  {% for c in cards %}
+  {% set card = c.record %}
+  <fieldset id="card-{{ c.number }}" class="{{ 'flagged' if card.review_flags and d.status == pending_status }}">
+    <legend>Tarjeta de propiedad {{ c.number }} de {{ cards | length }} · placa {{ card.plate_number }}
+      {% for f in card.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% endfor %}</legend>
+
+    {% if d.status == pending_status %}
+    {% for f in c.flag_details %}
+    <div class="alert">
+      <h3>{{ f.title }}</h3>
+      <ul>{% for line in f.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <dl>
+      <dt>Motivo</dt><dd>{{ card.reason }}</dd>
+      <dt>Cantidad de placas</dt><dd>{{ card.plate_quantity }}</dd>
+      <dt>Placa</dt><dd>{{ card.plate_number or '—' }}</dd>
+      <dt>Licencia de tránsito</dt><dd>{{ card.transit_license or '—' }}</dd>
+      <dt>Tipo de vehículo</dt><dd>{{ card.vehicle_type or '—' }}</dd>
+      <dt>Matriculado en</dt><dd>{{ card.registered_in or '—' }}</dd>
+      <dt>Marca</dt><dd>{{ card.vehicle_brand or '—' }}</dd>
+      <dt>N° de motor</dt><dd>{{ card.engine_number or '—' }}</dd>
+      <dt>N° de chasis</dt><dd>{{ card.chassis_number or '—' }}</dd>
+    </dl>
+
+    <h3 class="sub">Propietario / poseedor{% if card.owner_relation %} ({{ card.owner_relation }}){% endif %}</h3>
+    {% if d.acting_as == 'GESTOR' %}
+    {{ person(card.owner_data) }}
+    {% else %}
+    <p class="muted">Es el mismo declarante.</p>
+    {% endif %}
+
+    {% if d.status == 'approved' %}
+    <h3 class="sub">Creado o enlazado al aprobar</h3>
+    <dl>
+      {% if c.customer %}<dt>Cliente</dt><dd>{% if is_admin %}<a href="{{ url_for('customers.customer_detail', customer_id=c.customer.id) }}">{{ c.customer.name }}</a>{% else %}{{ c.customer.name }}{% endif %}</dd>{% endif %}
+      {% if c.ownership_card %}<dt>Tarjeta de propiedad</dt><dd>Licencia {{ c.ownership_card.transit_license }}, placa {{ c.ownership_card.plate_number }}</dd>{% endif %}
+    </dl>
+    {% endif %}
+
+    {% if c.can_reassign and is_admin %}
+    <label class="reassign">
+      <input type="checkbox" name="reassign_{{ card.id }}" form="approve-form"{{ ' checked' if card.id in reassign_ids }}>
+      Reasignar esta tarjeta: moverla del cliente actual al propietario declarado
+    </label>
+    {% endif %}
+  </fieldset>
+  {% endfor %}
 
   {% if d.status != pending_status %}
   <fieldset>
@@ -142,18 +177,14 @@
       <dt>Estado</dt><dd>{{ status_labels.get(d.status, d.status) }}</dd>
       {% if d.reviewed_at %}<dt>Revisada el</dt><dd>{{ d.reviewed_at.strftime('%d/%m/%Y %H:%M') }}</dd>{% endif %}
       {% if d.review_note %}<dt>Nota</dt><dd>{{ d.review_note }}</dd>{% endif %}
-      {% if customer %}<dt>Cliente</dt><dd>{% if session.get('role') in full_access_roles %}<a href="{{ url_for('customers.customer_detail', customer_id=customer.id) }}">{{ customer.name }}</a>{% else %}{{ customer.name }}{% endif %}</dd>{% endif %}
-      {% if gestor %}<dt>Gestor</dt><dd>{% if session.get('role') in full_access_roles %}<a href="{{ url_for('customers.customer_detail', customer_id=gestor.id) }}">{{ gestor.name }}</a>{% else %}{{ gestor.name }}{% endif %}</dd>{% endif %}
-      {% if card %}<dt>Tarjeta de propiedad</dt><dd>Licencia {{ card.transit_license }}, placa {{ card.plate_number }}</dd>{% endif %}
     </dl>
   </fieldset>
-  {% elif session.get('role') in full_access_roles %}
+  {% elif is_admin %}
   <div class="reviews">
     <fieldset>
       <legend>Aprobar</legend>
-      <form method="post" action="{{ url_for('declarations.declaration_approve', declaration_id=d.id) }}">
-        <p class="muted">Crea o enlaza el cliente, el gestor y la tarjeta de propiedad a partir de lo declarado.</p>
-        <label><input type="checkbox" name="reassign_card"> Reasignar la tarjeta existente al nuevo cliente (solo si está a nombre de otro)</label>
+      <form id="approve-form" method="post" action="{{ url_for('declarations.declaration_approve', declaration_id=d.id) }}">
+        <p class="muted">Aprueba toda la declaración: crea o enlaza el gestor, los clientes y cada tarjeta de propiedad a partir de lo declarado. Si una tarjeta falla, no se aprueba ninguna.</p>
         <label>Nota (opcional)<textarea name="note" rows="2"></textarea></label>
         <button type="submit" class="approve">Aprobar</button>
       </form>
@@ -161,7 +192,7 @@
     <fieldset>
       <legend>Rechazar</legend>
       <form method="post" action="{{ url_for('declarations.declaration_reject', declaration_id=d.id) }}">
-        <p class="muted">No crea nada. La nota es obligatoria.</p>
+        <p class="muted">Rechaza toda la declaración y no crea nada. La nota es obligatoria.</p>
         <label>Nota<textarea name="note" rows="2" required></textarea></label>
         <button type="submit" class="reject">Rechazar</button>
       </form>

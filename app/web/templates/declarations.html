@@ -30,14 +30,24 @@
     .badge.approved { background:#e8f6ee; color:#1a7a45; }
     .badge.rejected { background:#fdecec; color:#900; }
     .badge.flag { background:#fdecec; color:#900; }
+    @media (max-width:700px) {
+      table.list thead { display:none; }
+      table.list, table.list tbody, table.list tr, table.list td { display:block; width:100%; box-sizing:border-box; }
+      table.list tr { border:1px solid #e3e3e3; border-radius:8px; margin-bottom:.8rem; padding:.3rem .2rem; }
+      table.list td { border:0; padding:.25rem .55rem; overflow-wrap:anywhere; }
+      table.list td[data-label]::before { content:attr(data-label) ": "; color:#777; font-size:.8rem; }
+      .tabs { overflow-x:auto; }
+      .search input { max-width:none; min-width:0; }
+    }
   </style>
 </head>
 <body>
   {% include "_nav.html" %}
   <h1>Declaraciones juramentadas</h1>
   <p class="muted">
-    Declaraciones enviadas por el formulario público. Las que tienen una alerta quedan
-    <strong>pendientes de revisión</strong> y no crean ningún cliente ni tarjeta hasta que un administrador las apruebe.
+    Declaraciones enviadas por el formulario público: un declarante y una o más tarjetas de propiedad.
+    Si <strong>cualquier tarjeta</strong> tiene una alerta, toda la declaración queda
+    <strong>pendiente de revisión</strong> y no crea ningún cliente ni tarjeta hasta que un administrador la apruebe.
     Pendientes: <strong>{{ pending_count }}</strong>.
   </p>
 
@@ -55,22 +65,23 @@
   </form>
 
   {% if rows %}
-  <table>
+  <table class="list">
     <thead>
-      <tr><th>#</th><th>Fecha</th><th>Propietario/poseedor</th><th>Placa</th><th>Motivo</th><th>Actúa como</th><th>Estado</th><th>Alertas</th><th></th></tr>
+      <tr><th>#</th><th>Fecha</th><th>Declarante</th><th>Tarjetas</th><th>Placas</th><th>Resumen</th><th>Estado</th><th>Alertas</th><th></th></tr>
     </thead>
     <tbody>
-      {% for d in rows %}
-      {% set data = d.submitted_data %}
+      {% for row in rows %}
+      {% set d = row.d %}
+      {% set s = row.summary %}
       <tr>
-        <td>{{ d.id }}</td>
-        <td>{{ d.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
-        <td>{{ (data.get('owner') or {}).get('name') or '—' }}</td>
-        <td>{{ (data.get('vehicle') or {}).get('plate_number') or '—' }}</td>
-        <td>{{ d.reason }}</td>
-        <td>{{ d.acting_as }}</td>
-        <td><span class="badge {{ d.status }}">{{ status_labels.get(d.status, d.status) }}</span></td>
-        <td>{% for f in d.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% else %}—{% endfor %}</td>
+        <td data-label="#">{{ d.id }}</td>
+        <td data-label="Fecha">{{ d.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+        <td data-label="Declarante">{{ row.declarant.get('name') or '—' }}<br><span class="muted">{{ d.acting_as }}</span></td>
+        <td data-label="Tarjetas">{{ s.card_count }}</td>
+        <td data-label="Placas">{{ s.plate_total }}</td>
+        <td data-label="Resumen">{{ s.plates }}<br><span class="muted">{{ s.reasons }}</span></td>
+        <td data-label="Estado"><span class="badge {{ d.status }}">{{ status_labels.get(d.status, d.status) }}</span></td>
+        <td data-label="Alertas">{% for f in d.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% else %}—{% endfor %}{% if s.flagged_numbers %}<br><span class="muted">en la tarjeta {{ s.flagged_numbers | join(', ') }}</span>{% endif %}</td>
         <td class="actions"><a class="ver" href="{{ url_for('declarations.declaration_detail', declaration_id=d.id) }}">Ver</a></td>
       </tr>
       {% endfor %}
