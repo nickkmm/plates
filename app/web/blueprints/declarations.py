@@ -13,6 +13,11 @@ point_of_sale -- the counter needs them); approve/reject are @login_required
 (admin only). The read-only 'production' role gets 403 on everything here: it
 handles identity documents and signatures. The flags context (previous owner,
 fabrication dates) is shown ONLY here, never to the anonymous submitter.
+
+An approved declaration that no order has attended yet (production_order_id
+NULL) shows a "Crear pedido" button on the detail page that opens
+/ingest?declaration_id=N (the /ingest save marks it attended). The button is
+for everyone who can see the screen; only approve/reject stay admin-only.
 """
 
 from __future__ import annotations
@@ -65,6 +70,13 @@ FILTERS = (
     (STATUS_APPROVED, "Aprobadas"),
     (STATUS_REJECTED, "Rechazadas"),
     ("all", "Todas"),
+)
+# Attended filter: (query value, label, db.list_declarations(attended=...)).
+# "Atendida" = an order was created from the declaration (production_order_id).
+ATTENDED_FILTERS = (
+    ("all", "Todas", None),
+    ("no", "Por atender", False),
+    ("yes", "Atendidas", True),
 )
 FLAG_LABELS = {
     FLAG_PLATE_MADE_RECENTLY: "Placa reciente",
@@ -227,6 +239,9 @@ def _render_detail(
         gestor = db.get_customer(conn, declaration.gestor_id) if declaration.gestor_id else None
         card_records = db.list_declaration_cards(conn, declaration_id)
         pending = declaration.status == STATUS_PENDING_REVIEW
+        attended_order: dict[str, Any] | None = None
+        if declaration.production_order_id is not None:
+            attended_order, _plates = db.order_detail(conn, declaration.production_order_id)
         cards: list[dict[str, Any]] = []
         for card in card_records:
             cards.append({
@@ -245,6 +260,7 @@ def _render_detail(
         plate_total=sum(c["record"].plate_quantity for c in cards),
         flag_labels=FLAG_LABELS, status_labels=STATUS_LABELS,
         error=error, pending_status=STATUS_PENDING_REVIEW, reassign_ids=reassign_ids,
+        attended_order=attended_order, approved_status=STATUS_APPROVED,
     )
     return (page, 400) if error else page
 
@@ -255,10 +271,15 @@ def declarations():
     status_filter = request.args.get("status") or STATUS_PENDING_REVIEW
     if status_filter not in {value for value, _ in FILTERS}:
         status_filter = STATUS_PENDING_REVIEW
+    attended_values = {value: flag for value, _, flag in ATTENDED_FILTERS}
+    attended_filter = request.args.get("attended") or "all"
+    if attended_filter not in attended_values:
+        attended_filter = "all"
     query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
         records = db.list_declarations(
             conn, status=None if status_filter == "all" else status_filter, query=query or None,
+            attended=attended_values[attended_filter],
         )
         pending_count = len(db.list_declarations(conn, status=STATUS_PENDING_REVIEW))
         cards_by_declaration = db.list_cards_for_declarations(conn, [d.id for d in records])
@@ -269,7 +290,8 @@ def declarations():
     return render_template(
         "declarations.html", rows=rows, query=query, status_filter=status_filter,
         filters=FILTERS, pending_count=pending_count, flag_labels=FLAG_LABELS,
-        status_labels=STATUS_LABELS,
+        status_labels=STATUS_LABELS, attended_filter=attended_filter,
+        attended_filters=ATTENDED_FILTERS, approved_status=STATUS_APPROVED,
     )
 
 

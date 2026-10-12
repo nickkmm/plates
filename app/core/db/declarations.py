@@ -208,10 +208,14 @@ def list_cards_for_declarations(
 
 def list_declarations(
     conn: psycopg.Connection[DictRow], *, status: str | None = None, query: str | None = None,
+    attended: bool | None = None,
 ) -> list[DeclarationRecord]:
     """Declarations, `pending_review` first and then newest first.
 
-    `status` filters by exact status. `query` is a case-insensitive substring
+    `status` filters by exact status. `attended` filters by whether an order
+    already attended the declaration (`production_order_id`): None = no filter,
+    True = IS NOT NULL, False = IS NULL (it does not look at the status, so
+    False also includes pending/rejected ones; combine it with `status`). `query` is a case-insensitive substring
     match against the declarant's name / document number (declared inside
     `submitted_data`, plus the linked gestor customer) and, on ANY of the
     declaration's cards, the plate, transit licence, declared owner name /
@@ -225,6 +229,8 @@ def list_declarations(
     if status is not None:
         where.append("d.status = %s")
         params.append(status)
+    if attended is not None:
+        where.append("d.production_order_id IS NOT NULL" if attended else "d.production_order_id IS NULL")
     if query and query.strip():
         escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped}%"

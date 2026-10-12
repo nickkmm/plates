@@ -31,6 +31,12 @@
     .badge.approved { background:#e8f6ee; color:#1a7a45; }
     .badge.rejected { background:#fdecec; color:#900; }
     .badge.flag { background:#fdecec; color:#900; }
+    .badge.attended { background:#e6f0fb; color:#0b5cad; }
+    .next { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; background:#e8f6ee; border:1px solid #1a9c5b; border-radius:10px; padding:.9rem 1rem; margin-bottom:1.2rem; }
+    .next.done { background:#e6f0fb; border-color:#0b6bcb; }
+    .next.waiting { background:#f6f6f6; border-color:#ccc; }
+    .next p { margin:0; flex:1; min-width:200px; font-size:.95rem; }
+    a.create { background:#1a9c5b; color:#fff; font-size:1.05rem; font-weight:600; padding:.65rem 1.3rem; }
     .sig { max-width:100%; width:320px; border:1px solid #ddd; background:#fff; display:block; }
     label { font-size:.85rem; color:#555; display:block; margin-bottom:.5rem; }
     label.reassign { background:#fff3d6; border:1px solid #e0b040; border-radius:6px; padding:.5rem .6rem; color:#5c3d00; margin:.6rem 0 0; }
@@ -67,9 +73,26 @@
 
   <h1>Declaración #{{ d.id }}
     <span class="badge {{ d.status }}">{{ status_labels.get(d.status, d.status) }}</span>
+    {% if d.production_order_id %}<span class="badge attended">Atendida</span>{% endif %}
     {% for f in d.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% endfor %}
   </h1>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if d.production_order_id %}
+  <div class="next done" id="attended">
+    <p><strong>Atendida.</strong> Con esta declaración se creó el pedido
+      {% if attended_order %}<a href="{{ url_for('records.record_detail', order_id=d.production_order_id) }}">{{ attended_order.order_number }}</a>{% else %}<a href="{{ url_for('records.record_detail', order_id=d.production_order_id) }}">#{{ d.production_order_id }}</a>{% endif %}.</p>
+  </div>
+  {% elif d.status == approved_status %}
+  <div class="next" id="create-order">
+    <p><strong>Declaración aprobada.</strong> Falta registrar el pedido de las placas declaradas.</p>
+    <a class="create" href="{{ url_for('ingest.ingest', declaration_id=d.id) }}">Crear pedido</a>
+  </div>
+  {% elif d.status == pending_status %}
+  <div class="next waiting">
+    <p class="muted">El pedido se podrá crear cuando un administrador apruebe esta declaración.</p>
+  </div>
+  {% endif %}
 
   {% if d.status == pending_status and flagged_cards %}
   <div class="hold">

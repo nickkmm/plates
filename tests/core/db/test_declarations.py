@@ -171,6 +171,38 @@ class TestListDeclarations:
         _insert(db_conn, status="approved")
         assert [d.id for d in db.list_declarations(db_conn, status="pending_review")] == [pending]
 
+    def test_filter_by_attended(self, db_conn):
+        from datetime import date
+
+        from app.core.models import ExtractedRow
+
+        row = ExtractedRow(
+            order_number="9001", order_date=date(2026, 9, 1), requested_by="ANA",
+            plate_type="CARRO PARTICULAR",
+        )
+        order_id = db.insert_order(db_conn, row=row, customer_id=None, created_by=None)
+        attended = _insert(db_conn, status="approved")
+        db.set_declaration_production_order(db_conn, attended, order_id)
+        to_attend = _insert(db_conn, status="approved")
+        pending = _insert(db_conn, status="pending_review")
+
+        assert {d.id for d in db.list_declarations(db_conn)} == {attended, to_attend, pending}
+        assert [d.id for d in db.list_declarations(db_conn, attended=True)] == [attended]
+        # attended=False ignores the status; combine it to get "approved and still to attend".
+        assert {d.id for d in db.list_declarations(db_conn, attended=False)} == {to_attend, pending}
+        assert [d.id for d in db.list_declarations(db_conn, status="approved", attended=False)] == [to_attend]
+        assert [d.id for d in db.list_declarations(db_conn, status="approved", attended=True)] == [attended]
+        assert db.list_declarations(db_conn, status="pending_review", attended=True) == []
+
+    def test_attended_combines_with_query_and_keeps_ordering(self, db_conn):
+        base = datetime(2026, 3, 1, 12, 0)
+        old = _insert(db_conn, status="approved")
+        new = _insert(db_conn, status="approved")
+        _set_created_at(db_conn, old, base)
+        _set_created_at(db_conn, new, base + timedelta(days=1))
+        assert [d.id for d in db.list_declarations(db_conn, attended=False, query="ana")] == [new, old]
+        assert db.list_declarations(db_conn, attended=False, query="nobody") == []
+
     def test_query_matches_declarant_case_insensitive(self, db_conn):
         match = _insert(db_conn, submitted_data={
             "declarant": {"name": "Gestoria Sur", "document_number": "555"}, "cards": []})
