@@ -48,8 +48,6 @@
     .card-block { border:1px solid #cfd8e6; border-radius:12px; background:#f8faff; padding:.9rem .8rem .2rem; margin-bottom:1rem; }
     .block-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; margin-bottom:.6rem; }
     .block-title { font-weight:700; color:var(--blue); font-size:.95rem; }
-    .owner-box { border-top:1px dashed #b8c4d8; margin-top:.4rem; padding-top:.2rem; }
-    .copy-row { margin:.2rem 0 .9rem; }
     .cards-actions { margin:.2rem 0 1rem; }
     .total { display:flex; justify-content:space-between; align-items:center; gap:.6rem; background:#eef6f1; border:1px solid #b9dcc8;
              border-radius:8px; padding:.6rem .8rem; font-size:.95rem; margin-bottom:.9rem; }
@@ -62,46 +60,45 @@
 <body>
 {% set f = form if form else {} %}
 {% set acting = f.get('acting_as', '') %}
-{% set is_gestor = acting == 'GESTOR' %}
 {% set indices = card_indices if card_indices else [0] %}
 {% set max_cards_v = max_cards if max_cards else 30 %}
 {% set max_by_type = max_plates_by_type if max_plates_by_type else {} %}
 {% set loss = namespace(any=false) %}
 {% for i in indices %}{% if f.get('card_' ~ i ~ '_reason', '') == 'PÉRDIDA' %}{% set loss.any = true %}{% endif %}{% endfor %}
 {% set is_loss = loss.any %}
-{# One person block. `p` is the full field-name prefix (e.g. "declarant" or "card_0_owner"); `off` renders it disabled. #}
-{% macro person(p, autofill=true, off=false) %}
+{# The declarant block. `p` is the field-name prefix ("declarant"). #}
+{% macro person(p) %}
   <label class="field">Nombre completo
-    <input type="text" name="{{ p }}_name" value="{{ f.get(p ~ '_name', '') }}" autocomplete="{{ 'name' if autofill else 'off' }}" maxlength="200" required{% if off %} disabled{% endif %}>
+    <input type="text" name="{{ p }}_name" value="{{ f.get(p ~ '_name', '') }}" autocomplete="name" maxlength="200" required>
   </label>
   <div class="row2">
     <label class="field">Tipo de documento
-      <select name="{{ p }}_document_type" required{% if off %} disabled{% endif %}>
+      <select name="{{ p }}_document_type" required>
         <option value="">Selecciona…</option>
         {% for t in document_types %}<option value="{{ t }}"{% if f.get(p ~ '_document_type', '') == t %} selected{% endif %}>{{ t }}</option>{% endfor %}
       </select>
     </label>
     <label class="field">Número de documento
-      <input type="text" name="{{ p }}_document_number" value="{{ f.get(p ~ '_document_number', '') }}" inputmode="numeric" autocomplete="off" maxlength="30" required{% if off %} disabled{% endif %}>
+      <input type="text" name="{{ p }}_document_number" value="{{ f.get(p ~ '_document_number', '') }}" inputmode="numeric" autocomplete="off" maxlength="30" required>
     </label>
   </div>
   <label class="field">Dirección de domicilio
-    <input type="text" name="{{ p }}_address" value="{{ f.get(p ~ '_address', '') }}" autocomplete="{{ 'street-address' if autofill else 'off' }}" maxlength="200"{% if off %} disabled{% endif %}>
+    <input type="text" name="{{ p }}_address" value="{{ f.get(p ~ '_address', '') }}" autocomplete="street-address" maxlength="200">
   </label>
   <div class="row2">
     <label class="field">Barrio
-      <input type="text" name="{{ p }}_neighborhood" value="{{ f.get(p ~ '_neighborhood', '') }}" autocomplete="off" maxlength="100"{% if off %} disabled{% endif %}>
+      <input type="text" name="{{ p }}_neighborhood" value="{{ f.get(p ~ '_neighborhood', '') }}" autocomplete="off" maxlength="100">
     </label>
     <label class="field">Municipio
-      <input type="text" name="{{ p }}_municipality" value="{{ f.get(p ~ '_municipality', '') }}" autocomplete="{{ 'address-level2' if autofill else 'off' }}" maxlength="100"{% if off %} disabled{% endif %}>
+      <input type="text" name="{{ p }}_municipality" value="{{ f.get(p ~ '_municipality', '') }}" autocomplete="address-level2" maxlength="100">
     </label>
   </div>
   <div class="row2">
     <label class="field">Teléfono
-      <input type="tel" name="{{ p }}_phone" value="{{ f.get(p ~ '_phone', '') }}" inputmode="tel" autocomplete="{{ 'tel' if autofill else 'off' }}" maxlength="30" required{% if off %} disabled{% endif %}>
+      <input type="tel" name="{{ p }}_phone" value="{{ f.get(p ~ '_phone', '') }}" inputmode="tel" autocomplete="tel" maxlength="30" required>
     </label>
     <label class="field">Correo electrónico
-      <input type="email" name="{{ p }}_email" value="{{ f.get(p ~ '_email', '') }}" inputmode="email" autocomplete="{{ 'email' if autofill else 'off' }}" maxlength="200"{% if off %} disabled{% endif %}>
+      <input type="email" name="{{ p }}_email" value="{{ f.get(p ~ '_email', '') }}" inputmode="email" autocomplete="email" maxlength="200">
     </label>
   </div>
 {% endmacro %}
@@ -155,17 +152,6 @@
         {% if max_q >= 2 %}<option value="2"{% if q_sel == 2 %} selected{% endif %}>2</option>{% endif %}
       </select>
     </label>
-    <div class="owner-box owner-wrap"{% if not is_gestor %} hidden{% endif %}>
-      <h3>Dueño y/o poseedor de esta tarjeta</h3>
-      <div class="copy-row"><button type="button" class="secondary copy-owner">Copiar los datos del dueño de la tarjeta anterior</button></div>
-      {{ person('card_' ~ i ~ '_owner', false, not is_gestor) }}
-      <label class="field">El dueño es
-        <select name="{{ c }}owner_relation" required{% if not is_gestor %} disabled{% endif %}>
-          <option value="">Selecciona…</option>
-          {% for r in owner_relations %}<option value="{{ r }}"{% if f.get(c ~ 'owner_relation', '') == r %} selected{% endif %}>{{ r }}</option>{% endfor %}
-        </select>
-      </label>
-    </div>
   </div>
 {% endmacro %}
 <div class="wrap">
@@ -191,20 +177,20 @@
 
     <div class="card">
       <h2>1. Calidad en la que actúa</h2>
+      <p class="lead" style="text-align:left;margin-bottom:.8rem">Este formulario es para personas que declaran por sí mismas, a su propio nombre.</p>
       <label class="choice"><input type="radio" name="acting_as" value="PROPIETARIO" required{% if acting == 'PROPIETARIO' %} checked{% endif %}> Propietario (tarjeta de propiedad)</label>
       <label class="choice"><input type="radio" name="acting_as" value="POSEEDOR"{% if acting == 'POSEEDOR' %} checked{% endif %}> Poseedor</label>
-      <label class="choice"><input type="radio" name="acting_as" value="GESTOR"{% if acting == 'GESTOR' %} checked{% endif %}> Gestor</label>
     </div>
 
     <div class="card">
       <h2>2. Datos del declarante</h2>
-      <p class="lead" style="text-align:left;margin-bottom:.8rem">Es la persona que llena este formulario y firma la declaración.</p>
+      <p class="lead" style="text-align:left;margin-bottom:.8rem">Es la persona que llena este formulario, firma la declaración y es la titular de todas las tarjetas de propiedad que declares.</p>
       {{ person('declarant') }}
     </div>
 
     <div class="card">
       <h2>3. Tarjetas de propiedad</h2>
-      <div class="note">NOTA. Agrega una tarjeta de propiedad por cada vehículo. Si la placa que vas a fabricar es por PÉRDIDA, este formato debe estar autenticado por Notaría (adjunta el PDF autenticado más abajo).</div>
+      <div class="note">NOTA. Agrega un bloque por cada tarjeta de propiedad de la que necesites placas. Si la placa que vas a fabricar es por PÉRDIDA, este formato debe estar autenticado por Notaría (adjunta el PDF autenticado más abajo).</div>
       <div id="cards">
         {% for i in indices %}{{ card_block(i, loop.index) }}{% endfor %}
       </div>
@@ -228,8 +214,8 @@
         <h3>4. DECLARACIÓN Y AUTORIZACIÓN</h3>
         <p>Manifiesto de manera libre y voluntaria, bajo la gravedad del juramento, que:</p>
         <ol type="a">
-          <li>Soy propietario o poseedor del vehículo descrito en este formato.</li>
-          <li>Autorizo a INGSE SAS (NIT 900.773.756-0) a fabricar y entregar, Duplicado de placa bajo mi responsabilidad, la(s) placa(s) señalada(s) en la sección 3, idénticas a las que identifican mi vehículo.</li>
+          <li>Soy propietario o poseedor de lo descrito en la(s) tarjeta(s) de propiedad de este formato.</li>
+          <li>Autorizo a INGSE SAS (NIT 900.773.756-0) a fabricar y entregar, Duplicado de placa bajo mi responsabilidad, la(s) placa(s) señalada(s) en la sección 3, idénticas a las que figuran en dichas tarjetas de propiedad.</li>
           <li>Toda la información y los documentos que entrego son verídicos y copia fiel del original, y autorizo que se verifiquen por cualquier medio.</li>
         </ol>
         <h3>5. AVISO LEGAL — LEA ANTES DE FIRMAR</h3>
@@ -240,9 +226,9 @@
           <li>Falso testimonio (art. 442 C.P.), cuando la declaración jurada se rinde ante autoridad competente en una actuación administrativa: prisión de 6 a 12 años.</li>
         </ul>
         <p>Al firmar, usted declara que ha leído y entendido este aviso y que la información suministrada es cierta, real y verificable.</p>
-        <h3>6. COMPROMISOS Y RESPONSABILIDAD DEL CLIENTE o DUEÑO</h3>
+        <h3>6. COMPROMISOS Y RESPONSABILIDAD DEL CLIENTE</h3>
         <ul>
-          <li>Los trámites ante el RUNT son de responsabilidad exclusiva del cliente o de la empresa que solicita este trámite.</li>
+          <li>Los trámites ante el RUNT son de responsabilidad exclusiva del cliente.</li>
           <li>Debe entregar las placas deterioradas en INGSE SAS, o enviarlas a la Calle 42 # 41-47, Barrio Fray Luis Amigo, Palmira.</li>
         </ul>
       </div>
@@ -289,7 +275,6 @@
   }
   function blocks() { return cardsBox.querySelectorAll('.card-block'); }
   function field(block, leaf) { return block.querySelector('[name="card_' + block.getAttribute('data-card') + '_' + leaf + '"]'); }
-  function isGestor() { return checkedValue('acting_as') === 'GESTOR'; }
 
   // --- Signature pad (one: the declarant's) ----------------------------
   function Pad(canvasId, inputId, clearId) {
@@ -389,16 +374,10 @@
     totalOut.textContent = String(total);
   }
 
-  // --- Conditional parts (acting_as -> owner boxes; any PÉRDIDA -> PDF) --
+  // --- Conditional part (any PÉRDIDA -> PDF) ----------------------------
   function applyState() {
-    var gestor = isGestor(), loss = false, bs = blocks();
+    var loss = false, bs = blocks();
     for (var i = 0; i < bs.length; i++) {
-      var wrap = bs[i].querySelector('.owner-wrap');
-      wrap.hidden = !gestor;
-      var controls = wrap.querySelectorAll('input, select');
-      for (var k = 0; k < controls.length; k++) controls[k].disabled = !gestor;
-      // "copy previous owner" only makes sense from the second card on
-      wrap.querySelector('.copy-row').hidden = (i === 0);
       if (checkedValue('card_' + bs[i].getAttribute('data-card') + '_reason') === 'PÉRDIDA') loss = true;
     }
     var pdf = document.getElementById('notarizedPdf');
@@ -447,28 +426,13 @@
     if (block.scrollIntoView) block.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
-  function copyOwnerFromPrevious(block) {
-    var bs = blocks(), prev = null;
-    for (var i = 0; i < bs.length; i++) { if (bs[i] === block) break; prev = bs[i]; }
-    if (!prev) return;
-    var from = 'card_' + prev.getAttribute('data-card') + '_owner';
-    var to = 'card_' + block.getAttribute('data-card') + '_owner';
-    var leaves = ['name', 'document_type', 'document_number', 'address', 'neighborhood', 'municipality', 'phone', 'email', 'relation'];
-    for (var k = 0; k < leaves.length; k++) {
-      var src = prev.querySelector('[name="' + from + '_' + leaves[k] + '"]');
-      var dst = block.querySelector('[name="' + to + '_' + leaves[k] + '"]');
-      if (src && dst) dst.value = src.value;
-    }
-  }
-
   cardsBox.addEventListener('click', function (e) {
     var t = e.target;
     var block = t && t.closest ? t.closest('.card-block') : null;
     if (!block) return;
-    if (t.closest('.remove-card')) {
-      if (blocks().length > 1) { block.parentNode.removeChild(block); renumber(); }
-    } else if (t.closest('.copy-owner')) {
-      copyOwnerFromPrevious(block);
+    if (t.closest('.remove-card') && blocks().length > 1) {
+      block.parentNode.removeChild(block);
+      renumber();
     }
   });
   cardsBox.addEventListener('change', function (e) {
@@ -488,9 +452,6 @@
     var t = e.target;
     if (t.classList && t.classList.contains('plate-input')) t.value = t.value.toUpperCase().replace(/\s+/g, '');
   });
-
-  var actingRadios = form.querySelectorAll('input[name="acting_as"]');
-  for (var a = 0; a < actingRadios.length; a++) actingRadios[a].addEventListener('change', applyState);
 
   // --- Submit guard -----------------------------------------------------
   form.addEventListener('submit', function (e) {

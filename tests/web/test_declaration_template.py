@@ -20,30 +20,23 @@ VEHICLE_TYPES = [t for t in PLATE_TYPES if t != "ORNAMENTAL"]
 PERSON_LEAVES = ("name", "document_type", "document_number", "address",
                  "neighborhood", "municipality", "phone", "email")
 
-# Two cards (indices 0 and 2: sparse on purpose), a gestor with PÉRDIDA on the second.
+# One person with two cards of different types (indices 0 and 2: sparse on purpose),
+# a PÉRDIDA on the second.
 FULL_FORM = {
-    "acting_as": "GESTOR",
-    "declarant_name": "JUAN GESTOR",
-    "declarant_document_type": "NIT",
-    "declarant_document_number": "900111222",
+    "acting_as": "POSEEDOR",
+    "declarant_name": "MARIA PEREZ",
+    "declarant_document_type": "CÉDULA",
+    "declarant_document_number": "1234567",
     "declarant_phone": "3109998877",
     "card_0_plate_number": "ABC123",
     "card_0_vehicle_type": "MOTO PARTICULAR",
     "card_0_vehicle_brand": "AKT",
     "card_0_reason": "DETERIORO",
     "card_0_plate_quantity": "1",
-    "card_0_owner_name": "MARIA PEREZ",
-    "card_0_owner_document_type": "CÉDULA",
-    "card_0_owner_document_number": "1234567",
-    "card_0_owner_phone": "3001112233",
-    "card_0_owner_email": "maria@example.com",
-    "card_0_owner_relation": "POSEEDOR",
     "card_2_plate_number": "XYZ987",
     "card_2_vehicle_type": "CARRO PARTICULAR",
     "card_2_reason": "PÉRDIDA",
     "card_2_plate_quantity": "2",
-    "card_2_owner_name": "PEDRO RUIZ",
-    "card_2_owner_relation": "DUEÑO",
     "accept_terms": "1",
 }
 
@@ -59,7 +52,6 @@ def render(**overrides) -> str:
         "reasons": ("DETERIORO", "PÉRDIDA"),
         "document_types": DOCUMENT_TYPES,
         "vehicle_types": VEHICLE_TYPES,
-        "owner_relations": ("DUEÑO", "POSEEDOR"),
         "card_indices": indices,
         "max_cards": MAX_CARDS,
         "max_plates_by_type": {t: max_plates_per_card(t) for t in VEHICLE_TYPES},
@@ -95,8 +87,7 @@ def card_blocks(html: str) -> list[str]:
 def card_names(i) -> list[str]:
     leaves = [
         "plate_number", "transit_license", "engine_number", "chassis_number", "vehicle_type",
-        "registered_in", "vehicle_brand", "reason", "plate_quantity", "owner_relation",
-        *[f"owner_{s}" for s in PERSON_LEAVES],
+        "registered_in", "vehicle_brand", "reason", "plate_quantity",
     ]
     return [f"card_{i}_{leaf}" for leaf in leaves]
 
@@ -116,19 +107,16 @@ def test_empty_form_renders_all_fields_standalone():
     # standalone: nothing from _nav.html
     assert "Salir" not in html and "logout" not in html and 'class="tabs"' not in html
     assert "Registros" not in html
-    # empty form: nothing checked, the gestor-only parts are hidden and disabled
+    # empty form: nothing checked, the PDF is hidden and disabled
     assert not re.search(r"<input[^>]* checked", split(html)[0])
-    for leaf in ("owner_name", "owner_document_number", "owner_relation"):
-        assert "disabled" in tag(html, f"card_0_{leaf}")
     assert "disabled" in tag(html, "notarized_pdf")
-    assert 'class="owner-box owner-wrap" hidden' in html
     assert 'id="notarizedWrap" hidden' in html
     # the declarant block is always live
     assert "disabled" not in tag(html, "declarant_name")
     assert "required" in tag(html, "declarant_name")
 
 
-def test_old_single_vehicle_and_double_signature_fields_are_gone():
+def test_old_single_card_and_double_signature_fields_are_gone():
     html = render()
     for old in ("owner_signature", "gestor_signature", 'name="reason"', 'name="plate_quantity"',
                 'name="vehicle_plate_number"', 'name="owner_name"', 'name="gestor_name"',
@@ -144,7 +132,6 @@ def test_one_server_rendered_block_is_first_and_has_no_remove_dependency_on_js_i
     assert 'data-card="0"' in html
     assert "Tarjeta de propiedad <span class=\"card-number\">1</span>" in html
     assert "+ Agregar tarjeta de propiedad" in html
-    assert "Copiar los datos del dueño de la tarjeta anterior" in html
     assert ">Quitar<" in html
 
 
@@ -188,9 +175,25 @@ def test_real_document_wording_present():
         "servicioalcliente@ingse.co", "Calle 42 # 41-47",
         "He leído y entiendo el aviso legal y acepto la declaración",
         "Pérdida o hurto de la(s) placa(s)", "Propietario (tarjeta de propiedad)",
-        "Total de placas a fabricar", "El dueño es",
+        "Total de placas a fabricar",
     ):
         assert text in html, text
+
+
+def test_form_is_only_for_individuals_no_gestor_or_per_card_owner_ui():
+    html = render()
+    # only PROPIETARIO and POSEEDOR are offered
+    assert re.findall(r'name="acting_as" value="(\w+)"', html) == ["PROPIETARIO", "POSEEDOR"]
+    assert "Este formulario es para personas que declaran por sí mismas" in html
+    # no gestor wording, no per-card owner blocks, no "copy previous owner", no gestor JS
+    for text in ("gestor", "Gestor", "GESTOR", "owner", "El dueño es", "Copiar los datos", "dueño",
+                 "DUEÑO", "copy-owner", "copy-row", "isGestor", "empresa que solicita"):
+        assert text not in html, text
+    # the five numbered sections are all still there, in order
+    positions = [html.index(t) for t in (
+        "1. Calidad en la que actúa", "2. Datos del declarante", "3. Tarjetas de propiedad",
+        "4. DECLARACIÓN Y AUTORIZACIÓN", "5. AVISO LEGAL", "6. COMPROMISOS", "7. Firma")]
+    assert positions == sorted(positions)
 
 
 def test_select_options_come_from_context():
@@ -200,7 +203,6 @@ def test_select_options_come_from_context():
     for t in VEHICLE_TYPES:
         assert f'<option value="{t}"' in html
     assert "ORNAMENTAL" not in html
-    assert '<option value="DUEÑO"' in html and '<option value="POSEEDOR"' in html
 
 
 def test_max_plates_by_type_is_passed_to_the_page_as_json():
@@ -215,9 +217,9 @@ def test_max_plates_by_type_is_passed_to_the_page_as_json():
 
 def test_populated_form_is_sticky_with_sparse_indices():
     html = render(form=FULL_FORM)
-    assert 'value="JUAN GESTOR"' in tag(html, "declarant_name")
+    assert 'value="MARIA PEREZ"' in tag(html, "declarant_name")
     assert 'value="3109998877"' in tag(html, "declarant_phone")
-    assert re.search(r'name="acting_as" value="GESTOR" checked', html)
+    assert re.search(r'name="acting_as" value="POSEEDOR" checked', html)
     assert not re.search(r'name="acting_as" value="PROPIETARIO"[^>]*checked', html)
     assert "checked" in tag(html, "accept_terms")
     blocks = card_blocks(html)
@@ -225,22 +227,15 @@ def test_populated_form_is_sticky_with_sparse_indices():
     first, second = blocks
     assert 'value="ABC123"' in tag(first, "card_0_plate_number")
     assert 'value="AKT"' in tag(first, "card_0_vehicle_brand")
-    assert 'value="MARIA PEREZ"' in tag(first, "card_0_owner_name")
     assert 'value="XYZ987"' in tag(second, "card_2_plate_number")
-    assert 'value="PEDRO RUIZ"' in tag(second, "card_2_owner_name")
     assert '<option value="MOTO PARTICULAR" selected>' in first
     assert '<option value="CARRO PARTICULAR" selected>' in second
-    assert '<option value="POSEEDOR" selected>' in first and '<option value="DUEÑO" selected>' in second
-    assert '<option value="CÉDULA" selected>' in first
-    assert '<option value="NIT" selected>' in html
+    assert '<option value="CÉDULA" selected>' in html
     # reasons are per card
     assert re.search(r'name="card_0_reason" value="DETERIORO" required checked', first)
     assert re.search(r'name="card_2_reason" value="PÉRDIDA" checked', second)
     assert not re.search(r'name="card_2_reason" value="DETERIORO"[^>]*checked', second)
-    # GESTOR + a PÉRDIDA card: owner boxes live, pdf shown and required
-    assert 'class="owner-box owner-wrap" hidden' not in html
-    assert "disabled" not in tag(html, "card_0_owner_relation")
-    assert "disabled" not in tag(html, "card_2_owner_name")
+    # a PÉRDIDA card: the PDF is shown and required
     nt = tag(html, "notarized_pdf")
     assert "disabled" not in nt and "required" in nt
     assert 'id="notarizedWrap" hidden' not in html
@@ -270,18 +265,20 @@ def test_total_plates_is_an_output_not_an_input():
 
 
 @pytest.mark.parametrize("acting", ["PROPIETARIO", "POSEEDOR"])
-def test_owner_or_possessor_hides_and_disables_the_card_owner_fields(acting):
+def test_owner_or_possessor_is_checked_and_deterioro_keeps_the_pdf_off(acting):
     html = render(form={"acting_as": acting, "card_0_reason": "DETERIORO"})
     assert re.search(rf'name="acting_as" value="{acting}"( required)? checked', html)
-    for name in card_names(0):
-        if "_owner_" in name:
-            assert "disabled" in tag(html, name), name
     assert "disabled" in tag(html, "notarized_pdf")
-    assert 'class="owner-box owner-wrap" hidden' in html
+
+
+def test_a_posted_gestor_is_not_pre_selected_on_the_re_rendered_form():
+    html = render(form={"acting_as": "GESTOR", "card_0_reason": "DETERIORO"})
+    assert not re.search(r'name="acting_as"[^>]* checked', html)
+    assert "gestor" not in html.lower()
 
 
 def test_deterioro_only_keeps_the_pdf_hidden():
-    html = render(form={"acting_as": "GESTOR", "card_0_reason": "DETERIORO", "card_1_reason": "DETERIORO"})
+    html = render(form={"acting_as": "POSEEDOR", "card_0_reason": "DETERIORO", "card_1_reason": "DETERIORO"})
     assert 'id="notarizedWrap" hidden' in html
     assert "disabled" in tag(html, "notarized_pdf")
 
@@ -329,7 +326,7 @@ def test_templates_are_standalone(name):
     # Bare context (what an old caller would pass): the page must still render.
     with flask_app.test_request_context("/declaracion"):
         html = render_template(name, form={}, errors=[], token="t", turnstile_site_key="",
-                               reasons=(), document_types=(), vehicle_types=(), owner_relations=())
+                               reasons=(), document_types=(), vehicle_types=())
     assert 'class="tabs"' not in html and "Salir" not in html
     assert html.lstrip().startswith("<!doctype html>")
 

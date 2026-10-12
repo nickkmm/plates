@@ -10,6 +10,10 @@ login decorator and everything else here is defence in depth:
 * POST pipeline, cheapest check first: honeypot, signed form token (minimum
   and maximum age), Turnstile, per-IP rate limit (counted in Postgres), then
   parsing, file saving, validation and finally `submit_declaration`.
+* The form is ONLY for individuals declaring for themselves (PROPIETARIO or
+  POSEEDOR). The core still supports acting_as GESTOR (a separate public
+  endpoint for gestores is planned), but a GESTOR posted here by hand is
+  rejected as an ordinary validation error and never reaches the core.
 * One declarant signs once for N ownership cards. The browser numbers the card
   blocks (`card_<i>_*`, stable and possibly sparse after a removal); the server
   reads whichever indices arrive, in numeric order, and rejects more than
@@ -73,6 +77,10 @@ _ERR_RATE_LIMIT = (
 )
 _ERR_TOO_MANY_CARDS = f"Solo puedes declarar hasta {MAX_CARDS} tarjetas de propiedad en una misma declaración."
 _ERR_NO_CARDS = "Agrega al menos una tarjeta de propiedad."
+_ERR_NOT_FOR_GESTOR = (
+    "Este formulario es solo para personas que declaran por sí mismas. "
+    "Elige Propietario o Poseedor, o acércate al mostrador de INGSE."
+)
 
 
 def _form_enabled() -> bool:
@@ -134,7 +142,6 @@ def _render_form(
         reasons=normalize.DECLARATION_REASONS,
         document_types=normalize.DOCUMENT_TYPES,
         vehicle_types=vehicle_types,
-        owner_relations=("DUEÑO", "POSEEDOR"),
         card_indices=indices,
         max_cards=MAX_CARDS,
         max_plates_by_type={t: normalize.max_plates_per_card(t) for t in vehicle_types},
@@ -150,31 +157,25 @@ def _person(form: Mapping[str, str], prefix: str) -> PersonInput:
     return PersonInput(**{f: form.get(f"{prefix}_{f}", "").strip() for f in _PERSON_FIELDS})
 
 
-def _build_card(form: Mapping[str, str], i: int, *, is_gestor: bool) -> OwnershipCardInput:
+def _build_card(form: Mapping[str, str], i: int) -> OwnershipCardInput:
     def text(leaf: str) -> str:
         return form.get(f"card_{i}_{leaf}", "").strip()
 
-    card = OwnershipCardInput(
+    return OwnershipCardInput(
         plate_number=text("plate_number"), transit_license=text("transit_license"),
         engine_number=text("engine_number"), chassis_number=text("chassis_number"),
         vehicle_type=text("vehicle_type"), registered_in=text("registered_in"),
         vehicle_brand=text("vehicle_brand"), reason=text("reason"),
         plate_quantity=_parse_quantity(form.get(f"card_{i}_plate_quantity", "")),
     )
-    if is_gestor:  # the per-card owner is only read for a gestor
-        card.owner = _person(form, f"card_{i}_owner")
-        card.owner_relation = form.get(f"card_{i}_owner_relation", "").strip()
-    return card
 
 
 def _build_input(form: Mapping[str, str], indices: list[int]) -> DeclarationInput:
     """`indices` come from `_card_indices` and were already checked <= MAX_CARDS."""
-    acting_as = form.get("acting_as", "").strip()
-    is_gestor = acting_as == ACTING_AS_GESTOR
     return DeclarationInput(
-        acting_as=acting_as,
+        acting_as=form.get("acting_as", "").strip(),
         declarant=_person(form, "declarant"),
-        cards=[_build_card(form, i, is_gestor=is_gestor) for i in indices],
+        cards=[_build_card(form, i) for i in indices],
         submitter_ip=antispam.client_ip(request),
         user_agent=(request.headers.get("User-Agent") or "")[:500] or None,
         accepted_terms=bool(form.get("accept_terms", "").strip()),
@@ -281,19 +282,25 @@ def declaration_submit() -> Response:
     if not indices:
         return _render_form(400, form=sticky, errors=[_ERR_NO_CARDS])
 
-    # f. build the input and store the files.
+    # f. the public form is for individuals only: a hand-posted GESTOR is an
+    #    ordinary validation error (nothing is built or stored).
+    if normalize.normalize_choice(form.get("acting_as"), normalize.ACTING_AS) == ACTING_AS_GESTOR:
+        current_app.logger.info("declaration posted as gestor on the public form ip=%s", ip)
+        return _render_form(400, form=sticky, errors=[_ERR_NOT_FOR_GESTOR])
+
+    # g. build the input and store the files.
     inp = _build_input(form, indices)
     inp.submitted_data = sticky
     saved: list[str] = []
     errors = _save_files(inp, saved)
 
-    # g. validate; on any error leave no files behind.
+    # h. validate; on any error leave no files behind.
     errors += validate_declaration(inp)
     if errors:
         _delete_files(saved)
         return _render_form(400, form=sticky, errors=errors)
 
-    # h. persist (one retry on a plate/licence UniqueViolation race).
+    # i. persist (one retry on a plate/licence UniqueViolation race).
     try:
         result = _submit(inp)
     except Exception:
@@ -301,7 +308,7 @@ def declaration_submit() -> Response:
         current_app.logger.exception("declaration submit failed ip=%s", ip)
         return _render_form(500, form=sticky, errors=[_ERR_GENERIC])
 
-    # i. same page for approved and pending_review; log without PII.
+    # j. same page for approved and pending_review; log without PII.
     current_app.logger.info(
         "declaration stored id=%s status=%s flags=%s ip=%s",
         result.declaration_id, result.status, ",".join(result.flags) or "-", ip,
