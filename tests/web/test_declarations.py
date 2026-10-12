@@ -30,6 +30,7 @@ import pytest
 
 from app.core import db
 from app.core import declarations as decl
+from app.core.models import ExtractedRow
 from tests.core.test_declarations import (
     TODAY,
     _card,
@@ -89,6 +90,27 @@ def _status(db_conn, declaration_id: int) -> str:
     record = db.get_declaration(db_conn, declaration_id)
     assert record is not None
     return record.status
+
+
+def _make_order(db_conn, order_number: str = "7001") -> int:
+    row = ExtractedRow(
+        order_number=order_number, order_date=date(2026, 9, 2), requested_by="MARIA LOPEZ",
+        plate_type="CARRO PARTICULAR",
+    )
+    return db.insert_order(db_conn, row=row, customer_id=None, created_by=None)
+
+
+def _approved(db_conn) -> int:
+    declaration_id = _submit(db_conn, _input(declarant=_owner(name="ANA APROBADA"),
+                                             cards=[_card(plate_number="AAA111", transit_license="L-A")]))
+    assert _status(db_conn, declaration_id) == "approved"
+    return declaration_id
+
+
+def _attend(db_conn, declaration_id: int, order_number: str = "7001") -> int:
+    order_id = _make_order(db_conn, order_number)
+    db.set_declaration_production_order(db_conn, declaration_id, order_id)
+    return order_id
 
 
 def _section(html: str, number: int) -> str:
@@ -597,6 +619,97 @@ class TestReject:
         resp = authenticated_client.post(f"{_detail(9999)}/reject", data={"note": "x"})
         assert resp.status_code == 302
         assert resp.headers["Location"].endswith(LIST_URL)
+
+
+class TestCreateOrder:
+    """The "Crear pedido" step: any role that sees the screen can start the
+    order of an approved, not-yet-attended declaration."""
+
+    @pytest.mark.parametrize("client_fixture", ["authenticated_client", "punto_venta_client"])
+    def test_button_for_approved_unattended_for_both_roles(self, request, db_conn, client_fixture):
+        client = request.getfixturevalue(client_fixture)
+        declaration_id = _approved(db_conn)
+        html = client.get(_detail(declaration_id)).data.decode()
+        assert "Crear pedido" in html
+        assert f'href="/ingest?declaration_id={declaration_id}"' in html
+        assert "Atendida" not in html
+
+    def test_no_button_for_pending_but_explains_why(self, authenticated_client, db_conn):
+        html = authenticated_client.get(_detail(_pending_recent(db_conn))).data.decode()
+        assert "Crear pedido" not in html and "declaration_id=" not in html
+        assert "cuando un administrador apruebe" in html
+
+    def test_no_button_for_rejected(self, authenticated_client, db_conn):
+        pending_id = _pending_recent(db_conn)
+        decl.reject_declaration(db_conn, pending_id, 1, "no")
+        html = authenticated_client.get(_detail(pending_id)).data.decode()
+        assert "Crear pedido" not in html and "declaration_id=" not in html
+        assert "cuando un administrador apruebe" not in html
+
+    @pytest.mark.parametrize("client_fixture", ["authenticated_client", "punto_venta_client"])
+    def test_attended_shows_badge_and_order_link_without_button(self, request, db_conn, client_fixture):
+        client = request.getfixturevalue(client_fixture)
+        declaration_id = _approved(db_conn)
+        order_id = _attend(db_conn, declaration_id, "7001")
+        html = client.get(_detail(declaration_id)).data.decode()
+        assert "Atendida" in html
+        assert f'href="/records/{order_id}"' in html and ">7001<" in html
+        assert "Crear pedido" not in html
+
+    def test_pending_page_keeps_approve_and_reject_forms(self, authenticated_client, db_conn):
+        pending_id = _pending_recent(db_conn)
+        html = authenticated_client.get(_detail(pending_id)).data.decode()
+        assert 'id="approve-form"' in html
+        assert f"/declaraciones/{pending_id}/reject" in html
+
+    def test_failed_approval_rerender_has_no_button(self, authenticated_client, db_conn):
+        pending_id = _pending_recent(db_conn)
+        resp = authenticated_client.post(f"{_detail(pending_id)}/reject", data={"note": ""})
+        assert resp.status_code == 400
+        html = resp.data.decode()
+        assert "Crear pedido" not in html and 'class="error"' in html
+
+    def test_list_shows_attended_state_next_to_status(self, authenticated_client, db_conn):
+        to_attend = _approved(db_conn)
+        done = _submit(db_conn, _input(declarant=_owner(name="BETO ATENDIDO"),
+                                       cards=[_card(plate_number="BBB222", transit_license="L-B")]))
+        _attend(db_conn, done)
+        html = authenticated_client.get(f"{LIST_URL}?status=approved").data.decode()
+        rows = html[html.index("<tbody>"):].split("<tr>")
+        by_name = {name: next(r for r in rows if name in r) for name in ("ANA APROBADA", "BETO ATENDIDO")}
+        assert "Por atender" in by_name["ANA APROBADA"] and "Atendida" not in by_name["ANA APROBADA"]
+        assert "Atendida" in by_name["BETO ATENDIDO"] and "Por atender" not in by_name["BETO ATENDIDO"]
+        assert to_attend != done
+
+    def test_list_pending_rows_have_neither_state(self, authenticated_client, db_conn):
+        _pending_recent(db_conn)
+        html = authenticated_client.get(LIST_URL).data.decode()
+        row = html[html.index("<tbody>"):]
+        assert "Por atender" not in row and "Atendida" not in row
+
+    def test_attended_filter(self, authenticated_client, db_conn):
+        _approved(db_conn)
+        done = _submit(db_conn, _input(declarant=_owner(name="BETO ATENDIDO"),
+                                       cards=[_card(plate_number="BBB222", transit_license="L-B")]))
+        _attend(db_conn, done)
+        todo = authenticated_client.get(f"{LIST_URL}?status=approved&attended=no").data.decode()
+        yes = authenticated_client.get(f"{LIST_URL}?status=approved&attended=yes").data.decode()
+        everything = authenticated_client.get(f"{LIST_URL}?status=approved&attended=all").data.decode()
+        assert "ANA APROBADA" in todo and "BETO ATENDIDO" not in todo
+        assert "BETO ATENDIDO" in yes and "ANA APROBADA" not in yes
+        assert "ANA APROBADA" in everything and "BETO ATENDIDO" in everything
+
+    def test_attended_filter_is_kept_by_the_tabs_and_selected(self, authenticated_client, db_conn):
+        _approved(db_conn)
+        html = authenticated_client.get(f"{LIST_URL}?status=approved&attended=no&q=ANA").data.decode()
+        assert '<option value="no" selected>Por atender</option>' in html
+        assert "attended=no" in html
+        assert 'name="status" value="approved"' in html
+
+    def test_unknown_attended_value_means_no_filter(self, authenticated_client, db_conn):
+        _approved(db_conn)
+        resp = authenticated_client.get(f"{LIST_URL}?status=approved&attended=bogus")
+        assert resp.status_code == 200 and "ANA APROBADA" in resp.data.decode()
 
 
 class TestRoles:
