@@ -61,6 +61,7 @@ class DeclarationRecord:
     user_agent: str | None
     accepted_terms_at: datetime | None
     declarant_signature_path: str | None
+    production_order_id: int | None    # the order that attended it; NULL = not attended yet
 
 
 @dataclass
@@ -89,7 +90,7 @@ class DeclarationCardRecord:
 _SELECT_COLUMNS = (
     "id, created_at, acting_as, gestor_id, status, review_flags, reviewed_by, "
     "reviewed_at, review_note, submitted_data, notarized_pdf_path, submitter_ip, "
-    "user_agent, accepted_terms_at, declarant_signature_path"
+    "user_agent, accepted_terms_at, declarant_signature_path, production_order_id"
 )
 
 _CARD_SELECT_COLUMNS = (
@@ -308,4 +309,17 @@ def set_declaration_card_links(
         cur.execute(
             "UPDATE declaration_cards SET customer_id = %s, ownership_card_id = %s WHERE id = %s",
             (customer_id, ownership_card_id, declaration_card_id),
+        )
+
+
+def set_declaration_production_order(
+    conn: psycopg.Connection[DictRow], declaration_id: int, production_order_id: int | None,
+) -> None:
+    """Mark a declaration as attended by an order (or clear it with None).
+    Does not check the declaration's status -- the caller (the /ingest save)
+    only passes approved declarations."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE declarations SET production_order_id = %s WHERE id = %s",
+            (production_order_id, declaration_id),
         )

@@ -134,7 +134,7 @@ CREATE TABLE ownership_cards (
 CREATE INDEX ownership_cards_customer_id_idx ON ownership_cards (customer_id);
 
 -- Sworn declarations submitted through the public form (see
--- app/migrations/0007_declarations.sql, 0009_declaration_cards.sql and
+-- app/migrations/0007_declarations.sql, 0009_declaration_cards.sql, 0010 and
 -- docs/DATABASE.md). ONE declarant (who signs once) and many ownership cards
 -- (declaration_cards below). While pending_review, gestor_id and the cards'
 -- customer_id / ownership_card_id are NULL and submitted_data is the only copy.
@@ -153,8 +153,10 @@ CREATE TABLE declarations (
     submitter_ip TEXT,
     user_agent TEXT,
     accepted_terms_at TIMESTAMP,
-    declarant_signature_path TEXT
+    declarant_signature_path TEXT,
+    production_order_id INTEGER REFERENCES production_orders(id) ON DELETE SET NULL   -- the order that attended it (0010); NULL = not attended yet
 );
+CREATE INDEX declarations_production_order_id_idx ON declarations (production_order_id);
 CREATE INDEX declarations_status_idx ON declarations (status);
 CREATE INDEX declarations_submitter_ip_created_at_idx ON declarations (submitter_ip, created_at);
 
