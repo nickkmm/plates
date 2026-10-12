@@ -41,10 +41,12 @@
   <h1>Registrar producción de placas</h1>
   <p><a href="{{ url_for('ingest.ingest_pdf') }}" class="btn-link add">Subir PDF</a></p>
 
-  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}
+    {% if attended_order %}<a class="ver-btn" href="{{ url_for('records.record_detail', order_id=attended_order.id) }}" target="_blank">ver pedido</a>{% endif %}
+  </div>{% endif %}
   {% if notices %}
   <div class="notice">
-    <strong>Revisá esto antes de guardar — los datos vienen del PDF, todavía no se guardó nada.</strong>
+    <strong>{{ notices_title or 'Revisá esto antes de guardar — los datos vienen del PDF, todavía no se guardó nada.' }}</strong>
     <ul>{% for n in notices %}<li>{{ n }}</li>{% endfor %}</ul>
   </div>
   {% endif %}
@@ -103,6 +105,9 @@
       <li>Se reemplazó{% if summary.orders_replaced > 1 %}n{% endif %} {{ summary.orders_replaced }} orden(es) existente(s) con este N° ({{ summary.plates_deleted }} placa(s) vieja(s) eliminada(s)) por esta orden nueva.</li>
       {% endif %}
     </ul>
+    {% if attended_declaration_id %}
+    <p>La <a href="{{ url_for('declarations.declaration_detail', declaration_id=attended_declaration_id) }}">declaración #{{ attended_declaration_id }}</a> quedó marcada como atendida por esta orden.</p>
+    {% endif %}
     {% if summary.possible_duplicates %}<p class="muted">Revisá los duplicados en <a href="{{ url_for('review.review') }}">Revisión</a>.</p>{% endif %}
     {% if summary.review_notes %}
     <ul>{% for n in summary.review_notes %}<li class="muted">{{ n }}</li>{% endfor %}</ul>
@@ -121,6 +126,10 @@
   <script id="customersData" type="application/json">{{ customers | tojson }}</script>
 
   <form method="post" action="{{ url_for('ingest.ingest') }}">
+    {% if declaration_id %}
+    <input type="hidden" name="declaration_id" value="{{ declaration_id }}">
+    <p class="muted">Al guardar, la <a href="{{ url_for('declarations.declaration_detail', declaration_id=declaration_id) }}" target="_blank">declaración #{{ declaration_id }}</a> quedará marcada como atendida por esta orden. Las placas de sus tarjetas de propiedad no se bloquean como duplicadas (reposición).</p>
+    {% endif %}
     <fieldset>
       <legend>Datos de la orden</legend>
       <div class="header">

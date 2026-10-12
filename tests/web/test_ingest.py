@@ -19,6 +19,16 @@ import pytest
 from psycopg.rows import tuple_row
 
 from app.core import db
+from app.core import declarations as decl
+from tests.core.test_declarations import (
+    TODAY,
+    _card,
+    _fabricate,
+    _gcard,
+    _gestor_input,
+    _input,
+    _reviewer_id,
+)
 from tests.web._helpers import _insert_order, make_row
 
 
@@ -782,4 +792,285 @@ class TestIngestStickyRoundTrip:
         with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '6800'")
             assert cur.fetchone()[0] == 1  # second post was NOT saved
+
+
+# --- orders created from a declaration (/ingest?declaration_id=N) ----------
+
+def _two_card_declaration(db_conn, *, gestor: bool = False) -> int:
+    """An auto-approved declaration with two ownership cards: a CARRO
+    PARTICULAR (ABC123, 2 plates, DETERIORO) and a MOTO PARTICULAR (KWD91G)."""
+    specs = [
+        ("ABC123", "LIC-1", {"reason": "DETERIORO", "plate_quantity": 2, "vehicle_brand": "MAZDA"}),
+        ("KWD91G", "LIC-2", {"reason": "PÉRDIDA", "vehicle_type": "MOTO PARTICULAR",
+                             "vehicle_brand": "HONDA"}),
+    ]
+    if gestor:
+        inp = _gestor_input(cards=[_gcard(plate, licence, **kw) for plate, licence, kw in specs])
+    else:
+        inp = _input(cards=[_card(plate_number=plate, transit_license=licence, **kw)
+                            for plate, licence, kw in specs])
+    result = decl.submit_declaration(db_conn, inp, today=TODAY)
+    assert result.status == "approved"
+    return result.declaration_id
+
+
+def _declaration_form(declaration_id: int | None, **overrides) -> dict:
+    """The POST body the pre-filled form would send for _two_card_declaration."""
+    data: dict = {
+        "order_number": "7000", "order_date": "2026-01-01", "requested_by": "MARIA LOPEZ",
+        "payment_method": "EFECTIVO",
+        "line_type": ["placa", "placa"], "plate_type": ["CARRO PARTICULAR", "MOTO PARTICULAR"],
+        "plate_number": ["ABC123", "KWD91G"], "plate_to": ["", ""], "quantity": ["2", "1"],
+        "city": ["CALI", ""],
+    }
+    if declaration_id is not None:
+        data["declaration_id"] = str(declaration_id)
+    data.update(overrides)
+    return data
+
+
+def _production_order_id(db_conn, declaration_id: int) -> int | None:
+    declaration = db.get_declaration(db_conn, declaration_id)
+    assert declaration is not None
+    return declaration.production_order_id
+
+
+def _order_ids(db_conn, order_number: str) -> list[int]:
+    return [o.id for o in db.find_orders_by_number(db_conn, order_number)]
+
+
+def _hidden(declaration_id: int) -> str:
+    return f'<input type="hidden" name="declaration_id" value="{declaration_id}">'
+
+
+class TestIngestFromDeclaration:
+    def test_get_prefills_header_customer_and_one_line_per_card(self, authenticated_client, db_conn):
+        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("180000"), "t")
+        declaration_id = _two_card_declaration(db_conn)
+
+        resp = authenticated_client.get(f"/ingest?declaration_id={declaration_id}")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert f"declaración #{declaration_id}" in html
+        assert "todavía no se guardó nada" in html
+        assert _hidden(declaration_id) in html
+        # header: customer record of the declarant, order number / payment blank
+        assert 'value="MARIA LOPEZ"' in html
+        assert 'name="order_number" value=""' in html
+        assert 'value="1020304050"' in html and 'value="3001112233"' in html
+        assert 'value="maria@example.com"' in html and 'value="CRA 1 # 2-3"' in html
+        assert 'value="CENTRO"' in html and 'value="MEDELLÍN"' in html
+        assert '<option value="" selected>— elegí —</option>' in html
+        # lines, in card order
+        assert html.index('value="ABC123"') < html.index('value="KWD91G"')
+        assert '<option value="CARRO PARTICULAR" selected>' in html
+        assert '<option value="MOTO PARTICULAR" selected>' in html
+        assert '<option value="DETERIORO" selected>' in html
+        assert '<option value="PÉRDIDA" selected>' in html
+        assert 'name="quantity" value="2"' in html
+        assert 'value="MAZDA"' in html and 'value="HONDA"' in html
+        assert 'name="unit_price" step="1" min="0" value="180000' in html  # CARRO tariff
+        assert html.count('name="unit_price" step="1" min="0" value=""') == 1  # MOTO: no tariff
+        assert 'name="city" list="cities" value=""' in html
+        # CARRO PARTICULAR is city-specific -> notice on line 1 only
+        assert "Completá la ciudad de la(s) línea(s) 1:" in html
+
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM production_orders")
+            assert cur.fetchone()[0] == 0  # the GET saved nothing
+
+    def test_get_for_a_gestor_declaration_uses_the_gestor_customer(self, authenticated_client, db_conn):
+        declaration_id = _two_card_declaration(db_conn, gestor=True)
+        html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
+        assert 'value="GESTORIA SUR"' in html
+        assert 'value="900123456"' in html
+        assert '<option value="GESTOR" selected>' in html
+        assert 'name="requested_by" id="requestedBy" list="requesters" value="GESTORIA SUR"' in html
+
+    def test_unknown_or_malformed_id_is_404(self, authenticated_client, clean_db):
+        assert authenticated_client.get("/ingest?declaration_id=999999").status_code == 404
+        assert authenticated_client.get("/ingest?declaration_id=abc").status_code == 404
+        assert authenticated_client.get("/ingest?declaration_id=99999999999999").status_code == 404
+
+    def test_pending_declaration_renders_the_plain_form_with_an_error(self, authenticated_client, db_conn):
+        _fabricate(db_conn, "ABC123", date(2026, 9, 1))
+        declaration_id = decl.submit_declaration(db_conn, _input(), today=TODAY).declaration_id
+        resp = authenticated_client.get(f"/ingest?declaration_id={declaration_id}")
+        html = resp.data.decode()
+        assert resp.status_code == 200
+        assert "pendiente de revisión" in html
+        assert 'name="declaration_id"' not in html
+        assert 'value="ABC123"' not in html
+
+    def test_rejected_declaration_renders_the_plain_form_with_an_error(self, authenticated_client, db_conn):
+        _fabricate(db_conn, "ABC123", date(2026, 9, 1))
+        declaration_id = decl.submit_declaration(db_conn, _input(), today=TODAY).declaration_id
+        decl.reject_declaration(db_conn, declaration_id, _reviewer_id(db_conn), "no corresponde")
+        html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
+        assert "fue rechazada" in html
+        assert 'name="declaration_id"' not in html
+
+    def test_attended_declaration_says_which_order_and_links_it(self, authenticated_client, db_conn):
+        declaration_id = _two_card_declaration(db_conn)
+        order_id = _insert_order(db_conn, order_number="5555", order_date=date(2026, 1, 1),
+                                 requested_by="MARIA LOPEZ")
+        db.set_declaration_production_order(db_conn, declaration_id, order_id)
+        html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
+        assert f"declaración #{declaration_id} ya fue atendida por la orden 5555" in html
+        assert f'href="/records/{order_id}"' in html
+        assert 'name="declaration_id"' not in html
+        assert 'value="ABC123"' not in html
+
+    def test_plain_get_has_no_declaration_field(self, authenticated_client, clean_db):
+        html = authenticated_client.get("/ingest").data.decode()
+        assert 'name="declaration_id"' not in html
+
+    def test_post_saves_the_order_and_marks_the_declaration_attended(self, authenticated_client, db_conn):
+        declaration_id = _two_card_declaration(db_conn)
+        resp = authenticated_client.post("/ingest", data=_declaration_form(declaration_id))
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "Registrado" in html
+        assert f"declaración #{declaration_id}" in html and "quedó marcada como atendida" in html
+        assert 'name="declaration_id"' not in html  # blank form again
+        order_ids = _order_ids(db_conn, "7000")
+        assert len(order_ids) == 1
+        assert _production_order_id(db_conn, declaration_id) == order_ids[0]
+
+    def test_declaration_plates_that_already_exist_are_not_blocked(self, authenticated_client, db_conn):
+        declaration_id = _two_card_declaration(db_conn)
+        _fabricate(db_conn, "ABC123", date(2025, 1, 1))
+        resp = authenticated_client.post("/ingest", data=_declaration_form(declaration_id))
+        html = resp.data.decode()
+        assert "Registrado" in html
+        assert "ya existen" not in html
+        assert _production_order_id(db_conn, declaration_id) is not None
+
+    def test_a_declaration_plate_typed_twice_still_blocks(self, authenticated_client, db_conn):
+        declaration_id = _two_card_declaration(db_conn)
+        data = _declaration_form(declaration_id, plate_number=["ABC123", "ABC123"],
+                                 plate_type=["CARRO PARTICULAR", "CARRO PARTICULAR"], city=["CALI", "CALI"])
+        html = authenticated_client.post("/ingest", data=data).data.decode()
+        assert "ya existen" in html
+        assert _order_ids(db_conn, "7000") == []
+        assert _production_order_id(db_conn, declaration_id) is None
+
+    def test_other_duplicate_plates_still_block_and_keep_the_declaration_id(
+        self, authenticated_client, db_conn,
+    ):
+        declaration_id = _two_card_declaration(db_conn)
+        _fabricate(db_conn, "ABC123", date(2025, 1, 1))   # exempt: the declaration's own plate
+        _fabricate(db_conn, "ZZZ999", date(2025, 1, 1))   # not part of the declaration
+        data = _declaration_form(
+            declaration_id, plate_number=["ABC123", "ZZZ999"],
+            plate_type=["CARRO PARTICULAR", "CARRO PARTICULAR"], city=["CALI", "CALI"],
+        )
+        html = authenticated_client.post("/ingest", data=data).data.decode()
+        assert "ya existen" in html
+        assert "<strong>ZZZ999</strong>" in html
+        assert "<strong>ABC123</strong>" not in html
+        # the sticky data (and the hidden field) survive the warning page
+        assert _hidden(declaration_id) in html
+        assert 'value="7000"' in html
+        assert _order_ids(db_conn, "7000") == []
+        assert _production_order_id(db_conn, declaration_id) is None
+
+        # confirming the remaining duplicate saves and links
+        data["confirm_duplicate"] = "1"
+        authenticated_client.post("/ingest", data=data)
+        assert _production_order_id(db_conn, declaration_id) == _order_ids(db_conn, "7000")[0]
+
+    def test_duplicate_order_number_warning_keeps_the_declaration_id(self, authenticated_client, db_conn):
+        declaration_id = _two_card_declaration(db_conn)
+        _insert_order(db_conn, order_number="7000", order_date=date(2026, 1, 1), requested_by="OTRO")
+        html = authenticated_client.post("/ingest", data=_declaration_form(declaration_id)).data.decode()
+        assert "ya existe" in html
+        assert _hidden(declaration_id) in html
+        assert _production_order_id(db_conn, declaration_id) is None
+
+    def test_confirm_order_duplicate_links_the_new_order_not_the_old_one(
+        self, authenticated_client, db_conn,
+    ):
+        declaration_id = _two_card_declaration(db_conn)
+        old_id = _insert_order(db_conn, order_number="7000", order_date=date(2026, 1, 1),
+                               requested_by="OTRO")
+        authenticated_client.post(
+            "/ingest", data=_declaration_form(declaration_id, confirm_order_duplicate="1"),
+        )
+        linked = _production_order_id(db_conn, declaration_id)
+        assert linked is not None and linked != old_id
+        assert sorted(_order_ids(db_conn, "7000")) == sorted([old_id, linked])
+
+    def test_replace_path_links_the_replacement_order(self, authenticated_client, db_conn):
+        declaration_id = _two_card_declaration(db_conn)
+        old_id = _insert_order(db_conn, order_number="7000", order_date=date(2026, 1, 1),
+                               requested_by="OTRO")
+        resp = authenticated_client.post(
+            "/ingest", data=_declaration_form(declaration_id, replace_order="1"),
+        )
+        assert "quedó marcada como atendida" in resp.data.decode()
+        order_ids = _order_ids(db_conn, "7000")
+        assert len(order_ids) == 1 and order_ids[0] != old_id
+        assert _production_order_id(db_conn, declaration_id) == order_ids[0]
+
+    @pytest.mark.parametrize("setup", ["unknown", "pending", "rejected", "attended"])
+    def test_post_refuses_a_declaration_that_is_not_usable(self, authenticated_client, db_conn, setup):
+        if setup == "unknown":
+            declaration_id = 987654
+        elif setup == "attended":
+            declaration_id = _two_card_declaration(db_conn)
+            other = _insert_order(db_conn, order_number="5555", order_date=date(2026, 1, 1),
+                                  requested_by="MARIA LOPEZ")
+            db.set_declaration_production_order(db_conn, declaration_id, other)
+        else:
+            _fabricate(db_conn, "ABC123", date(2026, 9, 1))
+            declaration_id = decl.submit_declaration(db_conn, _input(), today=TODAY).declaration_id
+            if setup == "rejected":
+                decl.reject_declaration(db_conn, declaration_id, _reviewer_id(db_conn), "no")
+
+        resp = authenticated_client.post("/ingest", data=_declaration_form(declaration_id))
+        html = resp.data.decode()
+        assert resp.status_code == 200
+        assert "Registrado" not in html
+        assert 'class="error"' in html
+        assert 'value="7000"' in html  # what was typed is given back
+        assert _order_ids(db_conn, "7000") == []
+
+    def test_a_validation_error_keeps_the_form_and_the_hidden_field(self, authenticated_client, db_conn):
+        declaration_id = _two_card_declaration(db_conn)
+        resp = authenticated_client.post(
+            "/ingest", data=_declaration_form(declaration_id, payment_method=""),
+        )
+        html = resp.data.decode()
+        assert "forma de pago" in html
+        assert _hidden(declaration_id) in html
+        assert 'value="ABC123"' in html and 'value="KWD91G"' in html
+        assert _production_order_id(db_conn, declaration_id) is None
+
+    def test_post_without_declaration_id_is_unchanged(self, authenticated_client, db_conn):
+        declaration_id = _two_card_declaration(db_conn)
+        _fabricate(db_conn, "ABC123", date(2025, 1, 1))
+        html = authenticated_client.post("/ingest", data=_declaration_form(None)).data.decode()
+        assert "ya existen" in html  # no exemption without the declaration
+        assert "quedó marcada como atendida" not in html
+        assert 'name="declaration_id"' not in html
+        assert _production_order_id(db_conn, declaration_id) is None
+
+        ok = authenticated_client.post("/ingest", data=_declaration_form(None, confirm_duplicate="1"))
+        assert "Registrado" in ok.data.decode()
+        assert _production_order_id(db_conn, declaration_id) is None
+
+    def test_a_reprinted_plate_is_still_flagged_for_the_review_queue(self, authenticated_client, db_conn):
+        """Documented behaviour: the exemption only lifts the pre-save block;
+        process_rows still marks the reprint is_possible_duplicate."""
+        declaration_id = _two_card_declaration(db_conn)
+        _fabricate(db_conn, "ABC123", date(2025, 1, 1))
+        html = authenticated_client.post("/ingest", data=_declaration_form(declaration_id)).data.decode()
+        assert "Posibles duplicados: 1" in html
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "SELECT count(*) FROM plates p JOIN production_orders o ON o.id = p.order_id "
+                "WHERE o.order_number = '7000' AND p.is_possible_duplicate"
+            )
+            assert cur.fetchone()[0] == 1
 
