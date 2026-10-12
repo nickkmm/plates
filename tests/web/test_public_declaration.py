@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import io
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -64,19 +65,6 @@ def _card(i: int = 0, **overrides) -> dict:
     return {f"card_{i}_{k}": v for k, v in data.items() if v is not None}
 
 
-def _owner(i: int, name: str = "Maria Lopez", relation: str = "DUEÑO", **overrides) -> dict:
-    """The per-card owner fields (only read when the declarant is a GESTOR)."""
-    person = {
-        "name": name, "document_type": "CÉDULA", "document_number": "1020304050",
-        "address": "CRA 1 # 2-3", "neighborhood": "CENTRO", "municipality": "PALMIRA",
-        "phone": "3001112233", "email": "maria@example.com",
-    }
-    person.update(overrides)
-    data = {f"card_{i}_owner_{k}": v for k, v in person.items()}
-    data[f"card_{i}_owner_relation"] = relation
-    return data
-
-
 def _form(*cards: dict, **overrides) -> dict:
     """An owner/possessor submission: one declarant and the given card blocks
     (default: one card, index 0)."""
@@ -101,22 +89,14 @@ def _form(*cards: dict, **overrides) -> dict:
     return {k: v for k, v in data.items() if v is not None}
 
 
-def _gestor_form(*cards: dict, **overrides) -> dict:
-    """A gestor submission; by default two cards (indices 0 and 1) with different owners."""
-    if not cards:
-        cards = (
-            {**_card(0, plate_number="ABC123", transit_license="L-1"), **_owner(0, "Maria Lopez")},
-            {**_card(1, plate_number="DEF45G", transit_license="L-2", vehicle_type="MOTO PARTICULAR"),
-             **_owner(1, "Pedro Ruiz", "POSEEDOR", document_number="555666777")},
-        )
-    base = {
-        "acting_as": "GESTOR", "declarant_name": "Juan Gestor", "declarant_document_type": "NIT",
-        "declarant_document_number": "900111222", "declarant_address": "CALLE 5",
-        "declarant_neighborhood": "CENTRO", "declarant_municipality": "CALI",
-        "declarant_phone": "3109998877",
-    }
-    base.update(overrides)
-    return _form(*cards, **base)
+def _two_cards_form(**overrides) -> dict:
+    """One person declaring two ownership cards of different types (a car and a
+    motorcycle, indices 0 and 1) with a single signature."""
+    return _form(
+        _card(0, plate_number="ABC123", transit_license="L-1"),
+        _card(1, plate_number="DEF45G", transit_license="L-2", vehicle_type="MOTO PARTICULAR"),
+        **overrides,
+    )
 
 
 def _files(directory: Path) -> list[Path]:
@@ -302,8 +282,8 @@ class TestParsing:
     def test_owner_declarant_with_one_card(self, client, stub):
         resp = post(client, _form(
             _card(0, plate_quantity="2", vehicle_type="CARRO PARTICULAR"),
-            # owner fields posted by a stale page must be ignored for PROPIETARIO
-            **_owner(0, "Otro Dueno"),
+            # per-card owner fields (a stale page, or a hand-made post) are never read
+            card_0_owner_name="Otro Dueno", card_0_owner_relation="DUEÑO",
         ), ip="7.7.7.7")
         assert resp.status_code == 200
         assert "Recibimos tu declaración" in resp.get_data(as_text=True)
@@ -322,18 +302,36 @@ class TestParsing:
         assert card.owner is None and card.owner_relation == ""
         assert stub.submitted == [inp]
 
-    def test_gestor_with_several_cards_and_owners_in_index_order(self, client, stub):
-        resp = post(client, _gestor_form())
+    def test_possessor_with_two_cards_of_different_types_in_index_order(self, client, stub):
+        resp = post(client, _two_cards_form(acting_as="POSEEDOR"))
         assert resp.status_code == 200
         inp = stub.inp
-        assert inp.acting_as == "GESTOR" and inp.declarant.name == "Juan Gestor"
+        assert inp.acting_as == "POSEEDOR" and inp.declarant.name == "Maria Lopez"
         assert [c.plate_number for c in inp.cards] == ["ABC123", "DEF45G"]
         first, second = inp.cards
-        assert first.owner is not None and first.owner.name == "Maria Lopez"
-        assert first.owner_relation == "DUEÑO"
-        assert second.owner is not None and second.owner.name == "Pedro Ruiz"
-        assert second.owner.document_number == "555666777" and second.owner_relation == "POSEEDOR"
-        assert second.vehicle_type == "MOTO PARTICULAR"
+        assert (first.vehicle_type, second.vehicle_type) == ("CARRO PARTICULAR", "MOTO PARTICULAR")
+        assert all(c.owner is None and c.owner_relation == "" for c in inp.cards)
+        assert stub.submitted == [inp]
+
+    @pytest.mark.parametrize("acting_as", ["GESTOR", "gestor", " Gestor "])
+    def test_gestor_posted_by_hand_is_an_ordinary_validation_error(self, client, stub, enabled, acting_as):
+        resp = post(client, _two_cards_form(acting_as=acting_as))
+        html = resp.get_data(as_text=True)
+        assert resp.status_code == 400
+        assert "solo para personas que declaran por sí mismas" in html
+        assert stub.validated == [] and stub.submitted == []
+        assert _files(enabled) == []  # not even the signature was stored
+        _assert_security_headers(resp)
+        # the form is redrawn with what was typed, a fresh token and no gestor option
+        assert 'value="ABC123"' in html and 'value="DEF45G"' in html and "Maria Lopez" in html
+        assert not re.search(r'name="acting_as"[^>]* checked', html)
+        assert 'value="GESTOR"' not in html and "data:image/png" not in html
+
+    def test_gestor_posted_by_hand_does_not_depend_on_the_rest_of_the_input(self, client, stub):
+        resp = post(client, _form(acting_as="GESTOR", declarant_name=""))
+        assert resp.status_code == 400
+        assert "solo para personas que declaran por sí mismas" in resp.get_data(as_text=True)
+        assert stub.validated == [] and stub.submitted == []
 
     def test_sparse_indices_are_read_in_numeric_order(self, client, stub):
         cards = [_card(i, plate_number=f"AAA{i:03d}") for i in (12, 2, 7, 0)]
@@ -409,7 +407,7 @@ class TestParsing:
 
 class TestFiles:
     def test_signature_is_stored_once_and_named_on_the_input(self, client, stub, enabled):
-        post(client, _gestor_form())
+        post(client, _two_cards_form())
         assert len(_files(enabled)) == 1  # ONE signature for every card
         name = stub.inp.signature_file
         assert name is not None and (enabled / name).read_bytes() == PNG
@@ -472,18 +470,17 @@ class TestFiles:
 class TestStickyRerender:
     def test_every_card_block_is_redrawn_with_what_was_typed(self, client, stub):
         stub.validate_errors = ["Falta la licencia de tránsito de la tarjeta 2."]
-        resp = post(client, _gestor_form(
-            {**_card(0, plate_number="ABC123"), **_owner(0, "Maria Lopez")},
-            {**_card(3, plate_number="DEF456", reason="PÉRDIDA", vehicle_type="MOTO PARTICULAR"),
-             **_owner(3, "Pedro Ruiz", "POSEEDOR")},
-            {**_card(5, plate_number="GHI789", vehicle_brand="RENAULT"), **_owner(5, "Ana Gomez")},
+        resp = post(client, _form(
+            _card(0, plate_number="ABC123"),
+            _card(3, plate_number="DEF456", reason="PÉRDIDA", vehicle_type="MOTO PARTICULAR"),
+            _card(5, plate_number="GHI789", vehicle_brand="RENAULT"),
+            acting_as="POSEEDOR",
         ))
         html = resp.get_data(as_text=True)
         assert resp.status_code == 400
         assert "Falta la licencia de tránsito de la tarjeta 2." in html
         for needle in ('value="ABC123"', 'value="DEF456"', 'value="GHI789"', 'value="RENAULT"',
-                       'value="Maria Lopez"', 'value="Pedro Ruiz"', 'value="Ana Gomez"',
-                       'value="Juan Gestor"'):
+                       'value="Maria Lopez"'):
             assert needle in html, needle
         assert html.count('class="card-block"') == 3 + 1  # three live blocks + the template
         for i in (0, 3, 5):
@@ -494,7 +491,7 @@ class TestStickyRerender:
         assert 'id="notarizedWrap" hidden' not in html  # one card is a PÉRDIDA
         assert '<output id="totalPlates" aria-live="polite">3</output>' in html.replace("\n", "")
 
-    def test_owner_submission_rerenders_without_owner_values(self, client, stub):
+    def test_acting_as_is_kept_on_rerender(self, client, stub):
         stub.validate_errors = ["x"]
         resp = post(client, _form(_card(0)))
         html = resp.get_data(as_text=True)
@@ -540,7 +537,7 @@ class TestSizeLimits:
         big = _data_url(PNG + b"\x01" * (190 * 1024))  # ~253 KB as base64
         assert len(big) > 250_000
         pdf = PDF + b"y" * (1024 * 1024)
-        resp = post(client, _gestor_form(signature=big, notarized_pdf=(_bytes_io(pdf), "n.pdf")))
+        resp = post(client, _two_cards_form(signature=big, notarized_pdf=(_bytes_io(pdf), "n.pdf")))
         assert resp.status_code == 200  # (cards default to DETERIORO: pdf discarded)
         assert len(_files(enabled)) == 1
 
@@ -585,21 +582,27 @@ class TestEndToEnd:
         assert row["status"] == "approved" and row["submitter_ip"] == "7.7.7.7"
         assert len(_files(enabled)) == 1
 
-    def test_gestor_with_two_cards_creates_both_owners_and_both_cards(self, client, enabled, db_conn):
-        resp = post(client, _gestor_form())
+    def test_person_with_two_cards_of_different_types_gets_one_customer_and_both_cards(
+        self, client, enabled, db_conn,
+    ):
+        resp = post(client, _two_cards_form(acting_as="POSEEDOR"))
         assert resp.status_code == 200
-        gestor = db.get_customer_by_name(db_conn, "Juan Gestor")
-        maria = db.get_customer_by_name(db_conn, "Maria Lopez")
-        pedro = db.get_customer_by_name(db_conn, "Pedro Ruiz")
-        assert gestor is not None and gestor.type == "GESTOR"
-        assert maria is not None and maria.type == "CLIENTE" and maria.document_relation == "DUEÑO"
-        assert pedro is not None and pedro.type == "CLIENTE" and pedro.document_relation == "POSEEDOR"
-        assert len(db.list_ownership_cards_for_customer(db_conn, maria.id)) == 1
-        assert len(db.list_ownership_cards_for_customer(db_conn, pedro.id)) == 1
+        customer = db.get_customer_by_name(db_conn, "Maria Lopez")
+        assert customer is not None and customer.type == "CLIENTE" and customer.document_relation == "POSEEDOR"
+        cards = db.list_ownership_cards_for_customer(db_conn, customer.id)
+        assert sorted(c.plate_number for c in cards) == ["ABC123", "DEF45G"]
+        assert _count(db_conn, "declarations") == 1
         assert len(_files(enabled)) == 1  # one signature for the whole declaration
 
-    def test_owner_fields_are_ignored_unless_gestor(self, client, enabled, db_conn):
-        post(client, _form(_card(0), **_owner(0, "Otro Dueno")))
+    def test_gestor_posted_by_hand_is_rejected_without_touching_the_db(self, client, enabled, db_conn):
+        resp = post(client, _two_cards_form(acting_as="GESTOR", declarant_name="Juan Gestor"))
+        assert resp.status_code == 400
+        assert "solo para personas que declaran por sí mismas" in resp.get_data(as_text=True)
+        assert db.get_customer_by_name(db_conn, "Juan Gestor") is None
+        assert _count(db_conn, "declarations") == 0 and _files(enabled) == []
+
+    def test_owner_fields_are_never_read(self, client, enabled, db_conn):
+        post(client, _form(_card(0), card_0_owner_name="Otro Dueno", card_0_owner_relation="POSEEDOR"))
         assert db.get_customer_by_name(db_conn, "Otro Dueno") is None
         owner = db.get_customer_by_name(db_conn, "Maria Lopez")
         assert owner is not None and owner.document_relation == "DUEÑO"  # PROPIETARIO
