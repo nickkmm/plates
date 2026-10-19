@@ -389,7 +389,10 @@ declaraciones): un `UPDATE` simple.
 juramentada** enviada por el formulario público. Una declaración tiene **un
 solo declarante** (quien la firma, una sola vez, para todo lo declarado) y
 **una o más tarjetas de propiedad** (tabla `declaration_cards`, abajo; máximo
-`MAX_CARDS` = 30). Mientras está en `pending_review` no se crea ni se modifica
+`MAX_CARDS` = 30). **Todas las declaraciones se guardan en `pending_review`**
+(con o sin alertas): el punto de venta las revisa y, al aprobarlas
+(`approve_declaration`), se crean el cliente y las tarjetas de propiedad.
+Mientras está en `pending_review` no se crea ni se modifica
 nada en `customers` ni en `ownership_cards`: `submitted_data` es el **único**
 lugar donde vive la declaración completa (y la evidencia legal).
 
@@ -435,8 +438,8 @@ anterior (una sola tarjeta).
 ella (`ON DELETE CASCADE`). Si el declarante actúa como `PROPIETARIO` /
 `POSEEDOR`, todas las tarjetas son suyas; si actúa como `GESTOR`, cada tarjeta
 trae su propio dueño (`owner_data`). Las reglas de alerta se evalúan **por
-tarjeta**: si una sola tiene alguna alerta, **toda** la declaración queda en
-`pending_review` y no se crea nada.
+tarjeta** y solo sirven para avisarle al revisor: toda declaración queda en
+`pending_review` y no se crea nada hasta que el punto de venta la aprueba.
 
 | Columna | Tipo | Constraint/Default | Nota |
 |---|---|---|---|
@@ -458,8 +461,9 @@ tarjeta**: si una sola tiene alguna alerta, **toda** la declaración queda en
 `declaration_id`), `declaration_cards_ownership_card_id_idx` y
 `declaration_cards_customer_id_idx`.
 
-**Alertas (`review_flags`)** — cualquiera de ellas deja la declaración en
-`pending_review`:
+**Alertas (`review_flags`)** — le indican al revisor qué mirar (la declaración
+queda en `pending_review` con o sin alertas; sin alertas, `review_flags` queda
+vacío). Al aprobar se vuelven a verificar:
 
 | Alerta | Cuándo |
 |---|---|

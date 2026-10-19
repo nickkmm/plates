@@ -27,10 +27,11 @@ import psycopg.errors
 import pytest
 
 from app.core import db
-from app.core.declarations import MAX_CARDS, DeclarationInput, SubmitResult
+from app.core.declarations import MAX_CARDS, DeclarationInput, SubmitResult, approve_declaration
 from app.web import antispam
 from app.web.app import app as flask_app
 from app.web.blueprints import public_declaration as pd
+from tests.conftest import TEST_USERNAME
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 PDF = b"%PDF-1.4\n" + b"x" * 200
@@ -151,7 +152,7 @@ def stub(enabled, monkeypatch) -> Stub:
         st.submitted.append(inp)
         if st.submit_error is not None:
             raise st.submit_error
-        return SubmitResult(declaration_id=1, status="approved", flags=[])
+        return SubmitResult(declaration_id=1, status="pending_review", flags=[])
 
     monkeypatch.setattr(pd, "validate_declaration", fake_validate)
     monkeypatch.setattr(pd, "submit_declaration", fake_submit)
@@ -511,7 +512,7 @@ class TestSubmitRetry:
             calls.append(1)
             if len(calls) == 1:
                 raise psycopg.errors.UniqueViolation("race")
-            return SubmitResult(declaration_id=1, status="approved", flags=[])
+            return SubmitResult(declaration_id=1, status="pending_review", flags=[])
 
         monkeypatch.setattr(pd, "submit_declaration", flaky)
         resp = post(client, _form())
@@ -524,16 +525,18 @@ class TestSubmitRetry:
         assert resp.status_code == 500
         assert _files(enabled) == []
 
-    def test_pending_and_approved_get_the_identical_page(self, client, stub, monkeypatch):
-        approved = post(client, _form()).get_data(as_text=True)
+    def test_flagged_and_unflagged_declarations_get_the_identical_page(self, client, stub, monkeypatch):
+        """Every declaration is stored pending, with or without flags; the page
+        never reveals which (nor any status)."""
+        clean = post(client, _form()).get_data(as_text=True)
         monkeypatch.setattr(
             pd, "submit_declaration",
             lambda conn, inp: SubmitResult(declaration_id=2, status="pending_review", flags=["plate_made_recently"]),
         )
-        pending = post(client, _form()).get_data(as_text=True)
-        assert pending == approved
-        for word in ("pending", "conflicto", "alerta", "recientemente", "bandera"):
-            assert word not in pending.lower()
+        flagged = post(client, _form()).get_data(as_text=True)
+        assert flagged == clean
+        for word in ("pending", "approved", "aprobad", "conflicto", "alerta", "recientemente", "bandera"):
+            assert word not in flagged.lower()
 
 
 class TestSizeLimits:
@@ -559,35 +562,59 @@ class TestSizeLimits:
         assert resp.status_code != 413
 
 
+def _only_declaration_id(db_conn) -> int:
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT id FROM declarations")
+        (row,) = cur.fetchall()
+    return row["id"]
+
+
+def _approve(db_conn, declaration_id: int) -> None:
+    """What the point of sale does from the review screen (through the core)."""
+    user = db.get_user_by_username(db_conn, TEST_USERNAME)
+    assert user is not None
+    approve_declaration(db_conn, declaration_id, user.id)
+
+
 class TestEndToEnd:
     """Full submissions into the database. These need the rewritten core
     (`validate_declaration` / `submit_declaration`) and schema of the backend
     branch; they cannot pass on the form branch alone."""
 
-    def test_owner_with_one_card_auto_approves(self, client, enabled, db_conn):
+    def test_owner_with_one_card_is_stored_pending_and_creates_nothing(self, client, enabled, db_conn):
         resp = post(client, _form(), ip="7.7.7.7")
         assert resp.status_code == 200
         assert "Recibimos tu declaración" in resp.get_data(as_text=True)
         _assert_security_headers(resp)
-        customer = db.get_customer_by_name(db_conn, "Maria Lopez")
-        assert customer is not None and customer.type == "CLIENTE"
-        assert len(db.list_ownership_cards_for_customer(db_conn, customer.id)) == 1
         with db_conn.cursor() as cur:
             cur.execute("SELECT * FROM declarations")
             row = cur.fetchone()
-        assert row["status"] == "approved" and row["submitter_ip"] == "7.7.7.7"
+        assert row["status"] == "pending_review" and row["review_flags"] == []
+        assert row["submitter_ip"] == "7.7.7.7"
+        # Nothing is created until the point of sale approves the declaration.
+        assert db.get_customer_by_name(db_conn, "Maria Lopez") is None
+        assert _count(db_conn, "customers") == 0 and _count(db_conn, "ownership_cards") == 0
         assert len(_files(enabled)) == 1
+        # ... and approving it afterwards creates the customer and the card.
+        _approve(db_conn, row["id"])
+        customer = db.get_customer_by_name(db_conn, "Maria Lopez")
+        assert customer is not None and customer.type == "CLIENTE"
+        assert len(db.list_ownership_cards_for_customer(db_conn, customer.id)) == 1
 
     def test_person_with_two_cards_of_different_types_gets_one_customer_and_both_cards(
         self, client, enabled, db_conn,
     ):
         resp = post(client, _two_cards_form(acting_as="POSEEDOR"))
         assert resp.status_code == 200
+        assert _count(db_conn, "declarations") == 1
+        assert db.get_customer_by_name(db_conn, "Maria Lopez") is None   # pending: nothing created
+        assert _count(db_conn, "ownership_cards") == 0
+        _approve(db_conn, _only_declaration_id(db_conn))
         customer = db.get_customer_by_name(db_conn, "Maria Lopez")
         assert customer is not None and customer.type == "CLIENTE" and customer.document_relation == "POSEEDOR"
         cards = db.list_ownership_cards_for_customer(db_conn, customer.id)
         assert sorted(c.plate_number for c in cards) == ["ABC123", "DEF45G"]
-        assert _count(db_conn, "declarations") == 1
+        assert _count(db_conn, "customers") == 1
         assert len(_files(enabled)) == 1  # one signature for the whole declaration
 
     def test_gestor_posted_by_hand_is_rejected_without_touching_the_db(self, client, enabled, db_conn):
@@ -599,6 +626,8 @@ class TestEndToEnd:
 
     def test_owner_fields_are_never_read(self, client, enabled, db_conn):
         post(client, _form(_card(0), card_0_owner_name="Otro Dueno", card_0_owner_relation="POSEEDOR"))
+        assert db.get_customer_by_name(db_conn, "Otro Dueno") is None
+        _approve(db_conn, _only_declaration_id(db_conn))
         assert db.get_customer_by_name(db_conn, "Otro Dueno") is None
         owner = db.get_customer_by_name(db_conn, "Maria Lopez")
         assert owner is not None and owner.document_relation == "DUEÑO"  # PROPIETARIO
@@ -654,3 +683,8 @@ class TestEndToEnd:
             row = cur.fetchone()
         assert row["status"] == "pending_review"
         assert "plate_made_recently" in row["review_flags"]
+        with db_conn.cursor() as cur:   # the unflagged one is just as pending (empty flags)
+            cur.execute("SELECT status, review_flags FROM declarations ORDER BY id LIMIT 1")
+            first = cur.fetchone()
+        assert (first["status"], first["review_flags"]) == ("pending_review", [])
+        assert _count(db_conn, "customers") == 0 and _count(db_conn, "ownership_cards") == 0

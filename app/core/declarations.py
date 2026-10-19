@@ -18,17 +18,19 @@ notarized and brings it back), so no card reason requires a file.
 Decision rules for `submit_declaration` (all decided by the owner of the
 project, see the declarations plan), applied PER CARD:
 
-* Any review flag on ANY card -> the WHOLE declaration is stored
-  `pending_review`; NOTHING else is created (no customer, no gestor, no
-  ownership card) and every link stays NULL. `submitted_data` is then the only
-  complete copy of what was declared. `declarations.review_flags` is the union
-  of the cards' flags; each card keeps its own flags.
-* No flag anywhere -> stored `approved`; the CLIENTE owners (and the GESTOR, if
-  any) are created only if absent -- existing ones are linked and NEVER
-  modified; the same owner repeated across cards is ONE customer (customers
-  are identified by their canonical name) -- and each ownership card is
-  created (`new`) or linked untouched (`same_card`), all in the same
-  transaction.
+* EVERY submitted declaration is stored `pending_review`, with or without
+  flags; submitting creates NOTHING (no customer, no gestor, no ownership
+  card) and every link stays NULL. `submitted_data` is then the only complete
+  copy of what was declared. `declarations.review_flags` is the union of the
+  cards' flags (empty for a clean declaration); each card keeps its own flags.
+  The flags only tell the reviewer what to look at.
+* `approve_declaration` (point-of-sale review) is what creates the CLIENTE
+  owners (and the GESTOR, if any) only if absent -- existing ones are linked
+  and NEVER modified; the same owner repeated across cards is ONE customer
+  (customers are identified by their canonical name) -- and each ownership
+  card is created (`new`) or linked untouched (`same_card`), all in the same
+  transaction. It re-checks every conflict at approval time, so one that
+  appeared after submission raises ValueError and changes nothing.
 
 Flags: PLATE_MADE_RECENTLY (made < 6 calendar months ago), CARD_OTHER_OWNER,
 CARD_DATA_MISMATCH (licence/plate that do not match each other) and
@@ -556,7 +558,7 @@ def approve_declaration(
 ) -> None:
     """Approve a `pending_review` declaration: create/link the customers and
     the ownership cards of EVERY card from the stored declaration (same
-    creation rules as auto-approval, plus the explicit-admin cases below) and
+    creation rules for every declaration, plus the explicit-admin cases below) and
     mark it approved.
 
     `reassign_card_ids` are `declaration_cards.id` values (NOT

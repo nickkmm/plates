@@ -246,17 +246,53 @@ class TestValidate:
         assert decl.validate_declaration(_input(cards=[card])) == []
 
 
-# ------------------------------------------------------------ submit: approved
+# --------------------------------------------- submit (always pending) + approve
 
-class TestSubmitAutoApproved:
-    def test_brand_new_client_and_card(self, db_conn):
-        result = decl.submit_declaration(db_conn, _input(), today=TODAY)
-        assert result.status == "approved" and result.flags == []
-        record = db.get_declaration(db_conn, result.declaration_id)
-        assert record is not None
-        assert record.status == "approved"
+def _submit_pending(db_conn, inp: DeclarationInput | None = None, *,
+                    flags: list[str] | None = None, today: date = TODAY) -> int:
+    """Submit and check the contract of EVERY submission: it is stored
+    `pending_review` with the computed flags and creates nothing (no customer, no
+    ownership card, no links). Returns the declaration id."""
+    customers_before = _count(db_conn, "customers")
+    cards_before = _count(db_conn, "ownership_cards")
+    result = decl.submit_declaration(db_conn, inp or _input(), today=today)
+    assert result.status == "pending_review"
+    assert result.flags == (flags or [])
+    record = db.get_declaration(db_conn, result.declaration_id)
+    assert record is not None
+    assert record.status == "pending_review"
+    assert record.review_flags == (flags or [])
+    assert record.gestor_id is None
+    assert (record.reviewed_by, record.reviewed_at) == (None, None)
+    rows = _cards_of(db_conn, result.declaration_id)
+    assert rows
+    assert all(r.customer_id is None and r.ownership_card_id is None for r in rows)
+    assert _count(db_conn, "customers") == customers_before
+    assert _count(db_conn, "ownership_cards") == cards_before
+    return result.declaration_id
+
+
+def _approve(db_conn, declaration_id: int, **kw) -> db.DeclarationRecord:
+    decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn), **kw)
+    record = db.get_declaration(db_conn, declaration_id)
+    assert record is not None and record.status == "approved"
+    return record
+
+
+class TestSubmitThenApprove:
+    def test_clean_declaration_is_pending_with_no_flags_and_creates_nothing(self, db_conn):
+        declaration_id = _submit_pending(db_conn)
+        record = db.get_declaration(db_conn, declaration_id)
+        assert record.status == "pending_review"
         assert record.review_flags == []
-        (row,) = _cards_of(db_conn, result.declaration_id)
+        assert _count(db_conn, "customers") == 0
+        assert _count(db_conn, "ownership_cards") == 0
+
+    def test_brand_new_client_and_card(self, db_conn):
+        declaration_id = _submit_pending(db_conn)
+        record = _approve(db_conn, declaration_id)
+        assert record.review_flags == []
+        (row,) = _cards_of(db_conn, declaration_id)
         owner = db.get_customer(db_conn, row.customer_id)
         assert owner is not None
         assert owner.type == "CLIENTE"
@@ -278,11 +314,19 @@ class TestSubmitAutoApproved:
         assert record.declarant_signature_path == "sig.png"
         assert record.accepted_terms_at is not None
 
+    def test_approving_a_clean_declaration_does_not_need_a_note(self, db_conn):
+        declaration_id = _submit_pending(db_conn)
+        reviewer = _reviewer_id(db_conn)
+        decl.approve_declaration(db_conn, declaration_id, reviewer)
+        record = db.get_declaration(db_conn, declaration_id)
+        assert (record.status, record.reviewed_by, record.review_note) == ("approved", reviewer, None)
+        assert record.reviewed_at is not None
+
     def test_card_row_stores_the_declared_card(self, db_conn):
         card = _card(plate_number="abc 123", transit_license=" lic-001 ", plate_quantity=2,
                      reason="deterioro", engine_number=" ", vehicle_type="carro particular")
-        result = decl.submit_declaration(db_conn, _input(cards=[card]), today=TODAY)
-        (row,) = _cards_of(db_conn, result.declaration_id)
+        declaration_id = _submit_pending(db_conn, _input(cards=[card]))
+        (row,) = _cards_of(db_conn, declaration_id)
         assert (row.position, row.reason, row.plate_quantity) == (0, "DETERIORO", 2)
         assert (row.plate_number, row.transit_license) == ("ABC123", "LIC-001")
         assert (row.engine_number, row.chassis_number) == (None, "CHA1")
@@ -295,8 +339,8 @@ class TestSubmitAutoApproved:
     def test_submitted_data_has_the_canonical_shape(self, db_conn):
         inp = _input(cards=[_card(), _card(plate_number="DEF456", transit_license="L2", reason="PÉRDIDA",
                                            plate_quantity=2)])
-        result = decl.submit_declaration(db_conn, inp, today=TODAY)
-        data = db.get_declaration(db_conn, result.declaration_id).submitted_data
+        declaration_id = _submit_pending(db_conn, inp)
+        data = db.get_declaration(db_conn, declaration_id).submitted_data
         assert set(data) == {"acting_as", "declarant", "cards", "raw"}
         assert data["acting_as"] == "PROPIETARIO"
         assert data["declarant"]["name"] == "MARIA LOPEZ"
@@ -308,21 +352,23 @@ class TestSubmitAutoApproved:
         assert data["raw"] == {"form": "raw"}
 
     def test_raw_is_omitted_when_the_caller_gave_none(self, db_conn):
-        result = decl.submit_declaration(db_conn, _input(submitted_data={}), today=TODAY)
-        assert "raw" not in db.get_declaration(db_conn, result.declaration_id).submitted_data
+        declaration_id = _submit_pending(db_conn, _input(submitted_data={}))
+        assert "raw" not in db.get_declaration(db_conn, declaration_id).submitted_data
 
     def test_poseedor_maps_to_document_relation(self, db_conn):
-        result = decl.submit_declaration(db_conn, _input(acting_as="POSEEDOR"), today=TODAY)
-        (row,) = _cards_of(db_conn, result.declaration_id)
+        declaration_id = _submit_pending(db_conn, _input(acting_as="POSEEDOR"))
+        (row,) = _cards_of(db_conn, declaration_id)
         assert row.owner_relation == "POSEEDOR"
+        _approve(db_conn, declaration_id)
+        (row,) = _cards_of(db_conn, declaration_id)
         assert db.get_customer(db_conn, row.customer_id).document_relation == "POSEEDOR"
 
     def test_several_cards_of_the_declarant_share_one_customer(self, db_conn):
         cards = [_card(), _card(plate_number="DEF456", transit_license="L2", plate_quantity=2),
                  _card(plate_number="923NAA", transit_license="L3", vehicle_type="MOTO CARRO PARTICULAR")]
-        result = decl.submit_declaration(db_conn, _input(cards=cards), today=TODAY)
-        assert result.status == "approved"
-        rows = _cards_of(db_conn, result.declaration_id)
+        declaration_id = _submit_pending(db_conn, _input(cards=cards))
+        _approve(db_conn, declaration_id)
+        rows = _cards_of(db_conn, declaration_id)
         assert [r.position for r in rows] == [0, 1, 2]
         assert len({r.customer_id for r in rows}) == 1
         assert len({r.ownership_card_id for r in rows}) == 3
@@ -331,13 +377,23 @@ class TestSubmitAutoApproved:
         assert len(db.list_ownership_cards_for_customer(db_conn, rows[0].customer_id)) == 3
 
     def test_existing_client_with_a_second_card(self, db_conn):
-        decl.submit_declaration(db_conn, _input(), today=TODAY)
+        _approve(db_conn, _submit_pending(db_conn))
         second = _input(cards=[_card(plate_number="DEF456", transit_license="LIC-002")])
-        result = decl.submit_declaration(db_conn, second, today=TODAY)
-        assert result.status == "approved"
-        (row,) = _cards_of(db_conn, result.declaration_id)
+        declaration_id = _submit_pending(db_conn, second)
+        _approve(db_conn, declaration_id)
+        (row,) = _cards_of(db_conn, declaration_id)
         assert len(db.list_ownership_cards_for_customer(db_conn, row.customer_id)) == 2
         assert _count(db_conn, "customers") == 1
+
+    def test_two_pending_declarations_of_the_same_new_owner_resolve_to_one_customer(self, db_conn):
+        first = _submit_pending(db_conn)
+        second = _submit_pending(db_conn, _input(cards=[_card(plate_number="DEF456", transit_license="L2")]))
+        assert _count(db_conn, "customers") == 0   # both waiting, nothing created yet
+        _approve(db_conn, first)
+        _approve(db_conn, second)
+        assert _count(db_conn, "customers") == 1
+        assert _count(db_conn, "ownership_cards") == 2
+        assert _cards_of(db_conn, first)[0].customer_id == _cards_of(db_conn, second)[0].customer_id
 
     def test_same_client_same_card_after_six_months_links_existing_card_untouched(self, db_conn):
         client_id = _existing_client(db_conn)
@@ -345,47 +401,46 @@ class TestSubmitAutoApproved:
             db_conn, client_id, transit_license="LIC-001", plate_number="ABC123",
             engine_number="OLD-ENGINE", vehicle_brand="OLD-BRAND")
         _fabricate(db_conn, "ABC123", date(2026, 4, 1))
-        result = decl.submit_declaration(db_conn, _input(), today=TODAY)
-        assert result.status == "approved"
-        (row,) = _cards_of(db_conn, result.declaration_id)
+        declaration_id = _submit_pending(db_conn)
+        record = _approve(db_conn, declaration_id)
+        (row,) = _cards_of(db_conn, declaration_id)
         assert (row.customer_id, row.ownership_card_id) == (client_id, card_id)
         card = db.get_ownership_card(db_conn, card_id)
         assert (card.engine_number, card.vehicle_brand) == ("OLD-ENGINE", "OLD-BRAND")
         assert _count(db_conn, "ownership_cards") == 1
         # Secondary data that differs only lives in the declaration copy.
-        record = db.get_declaration(db_conn, result.declaration_id)
         assert record.submitted_data["cards"][0]["engine_number"] == "ENG1"
 
     def test_existing_client_is_linked_never_modified(self, db_conn):
         client_id = _existing_client(db_conn)
         before = db.get_customer(db_conn, client_id)
-        result = decl.submit_declaration(db_conn, _input(), today=TODAY)
-        assert _cards_of(db_conn, result.declaration_id)[0].customer_id == client_id
-        assert db.get_customer(db_conn, client_id) == before
+        declaration_id = _submit_pending(db_conn)
+        assert db.get_customer(db_conn, client_id) == before   # untouched by the submission
+        _approve(db_conn, declaration_id)
+        assert _cards_of(db_conn, declaration_id)[0].customer_id == client_id
+        assert db.get_customer(db_conn, client_id) == before   # nor by the approval
 
     def test_exactly_six_months_is_not_recent(self, db_conn):
         _fabricate(db_conn, "ABC123", date(2026, 4, 5))   # + 6 months == TODAY
-        result = decl.submit_declaration(db_conn, _input(), today=TODAY)
-        assert result.status == "approved"
+        _approve(db_conn, _submit_pending(db_conn))
 
     def test_voided_plate_ignored_by_six_month_rule(self, db_conn):
         _fabricate(db_conn, "ABC123", date(2026, 9, 1), is_voided=True)
-        assert decl.submit_declaration(db_conn, _input(), today=TODAY).status == "approved"
+        _submit_pending(db_conn)
 
     def test_annulled_plate_ignored_by_six_month_rule(self, db_conn):
         _fabricate(db_conn, "ABC123", date(2026, 9, 1), is_plate_annulled=True)
-        assert decl.submit_declaration(db_conn, _input(), today=TODAY).status == "approved"
+        _submit_pending(db_conn)
 
     def test_gestor_declarant_is_the_gestor_customer_and_owner_relation_used(self, db_conn):
         inp = _gestor_input(cards=[_gcard(relation="POSEEDOR")])
-        result = decl.submit_declaration(db_conn, inp, today=TODAY)
-        assert result.status == "approved"
-        record = db.get_declaration(db_conn, result.declaration_id)
+        declaration_id = _submit_pending(db_conn, inp)
+        record = _approve(db_conn, declaration_id)
         gestor = db.get_customer(db_conn, record.gestor_id)
         assert gestor is not None
         assert (gestor.type, gestor.document_type, gestor.document_number) == ("GESTOR", "NIT", "900123456")
         assert gestor.document_relation is None
-        (row,) = _cards_of(db_conn, result.declaration_id)
+        (row,) = _cards_of(db_conn, declaration_id)
         owner = db.get_customer(db_conn, row.customer_id)
         assert (owner.type, owner.document_relation) == ("CLIENTE", "POSEEDOR")
         assert owner.id != gestor.id
@@ -399,11 +454,9 @@ class TestSubmitAutoApproved:
         cards = [_gcard("ABC123", "L1", owner=_owner()),
                  _gcard("DEF456", "L2", owner=luis, relation="POSEEDOR", plate_quantity=2),
                  _gcard("GHI789", "L3", owner=_owner(), reason="PÉRDIDA")]
-        result = decl.submit_declaration(db_conn, _gestor_input(cards=cards),
-                                         today=TODAY)
-        assert (result.status, result.flags) == ("approved", [])
-        record = db.get_declaration(db_conn, result.declaration_id)
-        rows = _cards_of(db_conn, result.declaration_id)
+        declaration_id = _submit_pending(db_conn, _gestor_input(cards=cards))
+        record = _approve(db_conn, declaration_id)
+        rows = _cards_of(db_conn, declaration_id)
         names = [db.get_customer(db_conn, r.customer_id).name for r in rows]
         assert names == ["MARIA LOPEZ", "LUIS PEREZ", "MARIA LOPEZ"]
         # The repeated owner is ONE customer; gestor + 2 owners = 3 customers.
@@ -422,16 +475,45 @@ class TestSubmitAutoApproved:
     def test_existing_gestor_linked_unmodified(self, db_conn):
         gestor_id = _existing_client(db_conn, "GESTORIA SUR", "GESTOR")
         before = db.get_customer(db_conn, gestor_id)
-        result = decl.submit_declaration(db_conn, _gestor_input(), today=TODAY)
-        assert result.status == "approved"
-        assert db.get_declaration(db_conn, result.declaration_id).gestor_id == gestor_id
+        declaration_id = _submit_pending(db_conn, _gestor_input())
+        record = _approve(db_conn, declaration_id)
+        assert record.gestor_id == gestor_id
         assert db.get_customer(db_conn, gestor_id) == before
 
     def test_default_today_is_used_when_omitted(self, db_conn):
-        assert decl.submit_declaration(db_conn, _input()).status == "approved"
+        result = decl.submit_declaration(db_conn, _input())
+        assert (result.status, result.flags) == ("pending_review", [])
+
+    # --- a conflict that appears AFTER submission is caught at approval ---
+
+    def test_approving_after_a_customer_conflict_appeared_raises_and_changes_nothing(self, db_conn):
+        declaration_id = _submit_pending(db_conn)     # clean at submit time: no flags
+        _existing_client(db_conn, type_="EMPRESA")    # ... conflict created afterwards
+        customers_before = _count(db_conn, "customers")
+        with pytest.raises(ValueError, match="EMPRESA"):
+            decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
+        record = db.get_declaration(db_conn, declaration_id)
+        assert (record.status, record.reviewed_by) == ("pending_review", None)
+        assert record.review_flags == []
+        assert _count(db_conn, "customers") == customers_before
+        assert _count(db_conn, "ownership_cards") == 0
+        assert all(r.customer_id is None and r.ownership_card_id is None
+                   for r in _cards_of(db_conn, declaration_id))
+
+    def test_approving_after_the_card_went_to_another_owner_raises_and_changes_nothing(self, db_conn):
+        declaration_id = _submit_pending(db_conn)
+        other = _existing_client(db_conn, "PEDRO RUIZ")
+        card_id = db.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123")
+        with pytest.raises(ValueError, match="otro cliente"):
+            decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
+        assert db.get_declaration(db_conn, declaration_id).status == "pending_review"
+        assert db.get_ownership_card(db_conn, card_id).customer_id == other
+        assert _count(db_conn, "customers") == 1   # only PEDRO RUIZ
+        assert _count(db_conn, "ownership_cards") == 1
+        assert all(r.customer_id is None for r in _cards_of(db_conn, declaration_id))
 
 
-# ------------------------------------------------------------- submit: pending
+# ------------------------------------------------- submit: with conflicts (flags)
 
 class TestSubmitPending:
     def _assert_nothing_created(self, db_conn, result, flags):
@@ -513,13 +595,15 @@ class TestSubmitPending:
         db.resolve_or_create_customer(
             db_conn, "MARIA LOPEZ", type="CLIENTE", document_number="1.020.304.050",
         )
-        result = decl.submit_declaration(db_conn, _input(), today=TODAY)
-        assert (result.status, result.flags) == ("approved", [])
+        declaration_id = _submit_pending(db_conn)   # no flag, creates nothing
+        _approve(db_conn, declaration_id)
+        assert _count(db_conn, "customers") == 1    # the existing one was linked
 
     def test_existing_owner_without_a_document_number_is_not_a_mismatch(self, db_conn):
-        _existing_client(db_conn)
-        result = decl.submit_declaration(db_conn, _input(), today=TODAY)
-        assert (result.status, result.flags) == ("approved", [])
+        client_id = _existing_client(db_conn)
+        declaration_id = _submit_pending(db_conn)   # no flag, creates nothing
+        _approve(db_conn, declaration_id)
+        assert _cards_of(db_conn, declaration_id)[0].customer_id == client_id
 
     def test_existing_gestor_with_a_different_document_number(self, db_conn):
         db.resolve_or_create_customer(db_conn, "GESTORIA SUR", type="GESTOR", document_number="111")
@@ -790,7 +874,8 @@ class TestApprove:
         assert _count(db_conn, "ownership_cards") == 1
 
     def test_only_from_pending_review(self, db_conn):
-        approved = decl.submit_declaration(db_conn, _input(), today=TODAY).declaration_id
+        approved = _submit_pending(db_conn)
+        _approve(db_conn, approved)
         with pytest.raises(ValueError, match="pendiente"):
             decl.approve_declaration(db_conn, approved, _reviewer_id(db_conn))
         rejected = _pending(db_conn, _input(cards=[_card(plate_number="DEF456", transit_license="L2")]))
@@ -823,12 +908,20 @@ class TestReject:
         with pytest.raises(ValueError, match="nota"):
             decl.reject_declaration(db_conn, declaration_id, _reviewer_id(db_conn), "  ")
 
+    def test_rejects_a_clean_declaration_too_and_creates_nothing(self, db_conn):
+        declaration_id = _submit_pending(db_conn)
+        decl.reject_declaration(db_conn, declaration_id, _reviewer_id(db_conn), "no")
+        assert db.get_declaration(db_conn, declaration_id).status == "rejected"
+        assert _count(db_conn, "customers") == 0
+        assert _count(db_conn, "ownership_cards") == 0
+
     def test_only_from_pending_review(self, db_conn):
-        approved = decl.submit_declaration(db_conn, _input(), today=TODAY).declaration_id
+        approved = _submit_pending(db_conn)
+        _approve(db_conn, approved)
         with pytest.raises(ValueError, match="pendiente"):
             decl.reject_declaration(db_conn, approved, _reviewer_id(db_conn), "no")
 
 
 def test_submit_result_is_a_plain_dataclass_replace_friendly():
-    result = decl.SubmitResult(1, "approved", [])
-    assert replace(result, status="pending_review").status == "pending_review"
+    result = decl.SubmitResult(1, "pending_review", [])
+    assert replace(result, status="rejected").status == "rejected"
