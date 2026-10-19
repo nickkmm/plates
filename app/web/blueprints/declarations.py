@@ -3,27 +3,37 @@
 The public form (/declaracion) stores a declaration: ONE declarant (who signs
 once) and 1..N ownership cards ("tarjetas de propiedad"), each with its own
 reason, plate quantity, owner and review flags. When ANY card hits a conflict
-the whole declaration is held as `pending_review`. This screen is where staff
-read what was declared, see per card the real context behind each flag
-(previous owner, last fabrication date, ...) and, for admins, approve or
-reject the declaration as a whole.
+the whole declaration is held as `pending_review`. This screen is where the
+point of sale (the customer fills the form, staff only reviews) reads what was
+declared, sees per card the real context behind each flag (previous owner, last
+fabrication date, ...) and approves, rejects or reassigns the declaration as a
+whole.
 
-Access: listing, detail and file download are @pos_allowed (admin +
-point_of_sale -- the counter needs them); approve/reject are @login_required
-(admin only). The read-only 'production' role gets 403 on everything here: it
-handles identity documents and signatures. The flags context (previous owner,
-fabrication dates) is shown ONLY here, never to the anonymous submitter.
+Access: EVERY route is @pos_allowed (admin + point_of_sale); `reviewed_by`
+records the acting session user. The read-only 'production' role gets 403 on
+everything here: it handles identity documents and signatures. The flags
+context (previous owner, fabrication dates) is shown ONLY here, never to the
+anonymous submitter.
 
 An approved declaration that no order has attended yet (production_order_id
 NULL) shows a "Crear pedido" button on the detail page that opens
-/ingest?declaration_id=N (the /ingest save marks it attended). The button is
-for everyone who can see the screen; only approve/reject stay admin-only.
+/ingest?declaration_id=N (the /ingest save marks it attended).
+
+Notarization: when an approved declaration has at least one PÉRDIDA card, the
+client must have it notarized first. Staff download the generated PDF
+(GET .../pdf), hand it to the client and, when the client comes back with it
+authenticated, mark it received (POST .../notarized; .../notarized/undo
+reverts). Until then the "Crear pedido" button is replaced by a note and
+/ingest refuses the declaration (see ingest._check_declaration). Pure-DETERIORO
+declarations are never gated.
 """
 
 from __future__ import annotations
 
+import io
 import re
-from datetime import date
+import unicodedata
+from datetime import date, datetime
 from typing import Any
 
 import psycopg
@@ -49,12 +59,16 @@ from app.core.db.declarations import (
     FLAG_CUSTOMER_DOCUMENT_MISMATCH,
     FLAG_CUSTOMER_TYPE_MISMATCH,
     FLAG_PLATE_MADE_RECENTLY,
+    REASON_DETERIORATION,
+    REASON_LOSS,
     STATUS_APPROVED,
     STATUS_PENDING_REVIEW,
     STATUS_REJECTED,
+    requires_notarization,
 )
+from app.core.declaration_pdf import build_declaration_pdf
 from app.core.normalize import clean_plate, normalize_requested_by
-from app.web.auth import login_required, pos_allowed
+from app.web.auth import pos_allowed
 from app.web.uploads import UploadError, resolve_upload_path
 
 bp = Blueprint("declarations", __name__)
@@ -77,6 +91,13 @@ ATTENDED_FILTERS = (
     ("all", "Todas", None),
     ("no", "Por atender", False),
     ("yes", "Atendidas", True),
+)
+# Reason filter: (query value, label, db.list_declarations(reason=...)). Any
+# card of the declaration having that reason matches.
+REASON_FILTERS = (
+    ("all", "Todos", None),
+    ("loss", "Pérdida", REASON_LOSS),
+    ("deterioration", "Deterioro", REASON_DETERIORATION),
 )
 FLAG_LABELS = {
     FLAG_PLATE_MADE_RECENTLY: "Placa reciente",
@@ -104,26 +125,44 @@ def _declarant(declaration: db.DeclarationRecord) -> dict[str, Any]:
     return declaration.submitted_data.get("declarant") or {}
 
 
+def _ascii_lower(value: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", value.strip().lower()) if not unicodedata.combining(c)
+    )
+
+
+def _reason_filter(raw: str | None) -> str:
+    """The `reason` query value -> one of REASON_FILTERS' keys ("all" when
+    missing or unknown). The stored words (PÉRDIDA / DETERIORO) work too."""
+    aliases = {"perdida": "loss", "deterioro": "deterioration"}
+    key = _ascii_lower(raw or "")
+    key = aliases.get(key, key)
+    return key if key in {value for value, _, _ in REASON_FILTERS} else "all"
+
+
+def _reasons_text(cards: list[db.DeclarationCardRecord]) -> str:
+    """"2 pérdida · 1 deterioro": cards per reason, PÉRDIDA first (it is the
+    one that needs the notary)."""
+    counts: dict[str, int] = {}
+    for card in cards:
+        counts[card.reason] = counts.get(card.reason, 0) + 1
+    ordered = sorted(counts.items(), key=lambda item: (item[0] != REASON_LOSS, item[0]))
+    return " · ".join(f"{count} {reason.lower()}" for reason, count in ordered)
+
+
 def _summarize(cards: list[db.DeclarationCardRecord]) -> dict[str, Any]:
     """What the list shows for a declaration's cards: counts, total plates, a
-    compact "ABC123 · DEF45G +3" and the reasons ("DETERIORO" or, when they
-    differ, "DETERIORO 2 · PÉRDIDA 1")."""
+    compact "ABC123 · DEF45G +3" and the reasons ("2 pérdida · 1 deterioro")."""
     plates = [card.plate_number for card in cards]
     shown = " · ".join(plates[:SUMMARY_PLATES])
     if len(plates) > SUMMARY_PLATES:
         shown += f" +{len(plates) - SUMMARY_PLATES}"
-    reasons: dict[str, int] = {}
-    for card in cards:
-        reasons[card.reason] = reasons.get(card.reason, 0) + 1
-    reason_text = (
-        next(iter(reasons)) if len(reasons) == 1
-        else " · ".join(f"{reason} {count}" for reason, count in reasons.items())
-    )
     return {
         "card_count": len(cards),
         "plate_total": sum(card.plate_quantity for card in cards),
         "plates": shown or "—",
-        "reasons": reason_text or "—",
+        "reasons": _reasons_text(cards) or "—",
+        "has_loss": requires_notarization(cards),
         "flagged_numbers": [card.position + 1 for card in cards if card.review_flags],
     }
 
@@ -242,6 +281,11 @@ def _render_detail(
         attended_order: dict[str, Any] | None = None
         if declaration.production_order_id is not None:
             attended_order, _plates = db.order_detail(conn, declaration.production_order_id)
+        needs_notary = declaration.status == STATUS_APPROVED and requires_notarization(card_records)
+        received_user = (
+            db.get_user_by_id(conn, declaration.notarized_received_by)
+            if declaration.notarized_received_by is not None else None
+        )
         cards: list[dict[str, Any]] = []
         for card in card_records:
             cards.append({
@@ -261,6 +305,9 @@ def _render_detail(
         flag_labels=FLAG_LABELS, status_labels=STATUS_LABELS,
         error=error, pending_status=STATUS_PENDING_REVIEW, reassign_ids=reassign_ids,
         attended_order=attended_order, approved_status=STATUS_APPROVED,
+        needs_notary=needs_notary, notary_received=declaration.notarized_received_at is not None,
+        notary_received_by=received_user.username if received_user else None,
+        loss_reason=REASON_LOSS,
     )
     return (page, 400) if error else page
 
@@ -275,23 +322,32 @@ def declarations():
     attended_filter = request.args.get("attended") or "all"
     if attended_filter not in attended_values:
         attended_filter = "all"
+    reason_values = {value: reason for value, _, reason in REASON_FILTERS}
+    reason_filter = _reason_filter(request.args.get("reason"))
     query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
         records = db.list_declarations(
             conn, status=None if status_filter == "all" else status_filter, query=query or None,
-            attended=attended_values[attended_filter],
+            attended=attended_values[attended_filter], reason=reason_values[reason_filter],
         )
         pending_count = len(db.list_declarations(conn, status=STATUS_PENDING_REVIEW))
         cards_by_declaration = db.list_cards_for_declarations(conn, [d.id for d in records])
-    rows = [
-        {"d": d, "declarant": _declarant(d), "summary": _summarize(cards_by_declaration[d.id])}
-        for d in records
-    ]
+    rows = []
+    for d in records:
+        summary = _summarize(cards_by_declaration[d.id])
+        rows.append({
+            "d": d, "declarant": _declarant(d), "summary": summary,
+            "notary": (
+                None if not (d.status == STATUS_APPROVED and summary["has_loss"])
+                else "received" if d.notarized_received_at is not None else "missing"
+            ),
+        })
     return render_template(
         "declarations.html", rows=rows, query=query, status_filter=status_filter,
         filters=FILTERS, pending_count=pending_count, flag_labels=FLAG_LABELS,
         status_labels=STATUS_LABELS, attended_filter=attended_filter,
         attended_filters=ATTENDED_FILTERS, approved_status=STATUS_APPROVED,
+        reason_filter=reason_filter, reason_filters=REASON_FILTERS,
     )
 
 
@@ -367,12 +423,94 @@ def _decide(declaration_id: int, decision: str):
 
 
 @bp.post("/declaraciones/<int:declaration_id>/approve")
-@login_required
+@pos_allowed
 def declaration_approve(declaration_id: int):
     return _decide(declaration_id, "approve")
 
 
 @bp.post("/declaraciones/<int:declaration_id>/reject")
-@login_required
+@pos_allowed
 def declaration_reject(declaration_id: int):
     return _decide(declaration_id, "reject")
+
+
+def _read_signature(declaration: db.DeclarationRecord) -> bytes | None:
+    """The declarant's signature PNG, read the same safe way as the file
+    download (stored name -> resolve_upload_path); None when there is none or
+    the file is missing/unreadable."""
+    if not declaration.declarant_signature_path:
+        return None
+    try:
+        path = resolve_upload_path(declaration.declarant_signature_path)
+        return path.read_bytes() if path.is_file() else None
+    except (UploadError, OSError):
+        return None
+
+
+@bp.get("/declaraciones/<int:declaration_id>/pdf")
+@pos_allowed
+def declaration_pdf(declaration_id: int):
+    """The sworn declaration as a PDF to print and hand to the client for
+    notarization. Only for APPROVED declarations with a PÉRDIDA card."""
+    with db.get_conn() as conn:
+        declaration = db.get_declaration(conn, declaration_id)
+        cards = db.list_declaration_cards(conn, declaration_id) if declaration else []
+    if declaration is None:
+        abort(404, "La declaración no existe.")
+    if declaration.status != STATUS_APPROVED:
+        abort(404, "El PDF para autenticación solo está disponible para declaraciones aprobadas.")
+    if not requires_notarization(cards):
+        abort(404, "Esta declaración no tiene tarjetas por pérdida: no requiere autenticación notarial.")
+    pdf = build_declaration_pdf(
+        declaration=declaration, cards=cards, signature_png=_read_signature(declaration),
+        issued_at=datetime.now(),
+    )
+    response = send_file(
+        io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True,
+        download_name=f"declaracion-{declaration_id}.pdf",
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _set_notarized(declaration_id: int, *, received: bool):
+    """Shared mark/undo flow. Unknown id -> list; an ineligible declaration
+    (not approved, no PÉRDIDA card, or -- for the undo -- already attended by
+    an order) -> detail with a message (400, nothing changed)."""
+    user_id = session["user_id"]
+    error = None
+    with db.get_conn() as conn:
+        declaration = db.get_declaration(conn, declaration_id)
+        if declaration is None:
+            return redirect(url_for("declarations.declarations"))
+        cards = db.list_declaration_cards(conn, declaration_id)
+        if declaration.status != STATUS_APPROVED or not requires_notarization(cards):
+            error = "Solo las declaraciones aprobadas con tarjetas por pérdida requieren autenticación notarial."
+        elif not received and declaration.production_order_id is not None:
+            error = "No se puede deshacer: esta declaración ya fue atendida por un pedido."
+        elif received != (declaration.notarized_received_at is not None):
+            # Marking twice keeps the first stamp (who/when it really arrived).
+            db.set_declaration_notarized_received(
+                conn, declaration_id, received_by=user_id, received=received,
+            )
+            conn.commit()
+            current_app.logger.info(
+                "declaration notarized: user=%s declaration_id=%s received=%s",
+                session.get("user"), declaration_id, received,
+            )
+    if error:
+        return _render_detail(declaration_id, error=error)
+    return redirect(url_for("declarations.declaration_detail", declaration_id=declaration_id))
+
+
+@bp.post("/declaraciones/<int:declaration_id>/notarized")
+@pos_allowed
+def declaration_notarized(declaration_id: int):
+    return _set_notarized(declaration_id, received=True)
+
+
+@bp.post("/declaraciones/<int:declaration_id>/notarized/undo")
+@pos_allowed
+def declaration_notarized_undo(declaration_id: int):
+    return _set_notarized(declaration_id, received=False)

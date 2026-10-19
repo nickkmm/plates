@@ -34,6 +34,11 @@ STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 STATUSES = (STATUS_PENDING_REVIEW, STATUS_APPROVED, STATUS_REJECTED)
 
+# declaration_cards.reason values (the Spanish business terms, stored as data;
+# normalize.DECLARATION_REASONS is the form's source of truth).
+REASON_LOSS = "PÉRDIDA"
+REASON_DETERIORATION = "DETERIORO"
+
 # review_flags values (computed by app/core/declarations.py).
 FLAG_PLATE_MADE_RECENTLY = "plate_made_recently"
 FLAG_CARD_OTHER_OWNER = "card_other_owner"
@@ -209,16 +214,26 @@ def list_cards_for_declarations(
     return grouped
 
 
+def requires_notarization(cards: Collection[DeclarationCardRecord]) -> bool:
+    """True when ANY card of the declaration is a PÉRDIDA: the declarant must
+    then have the declaration notarized before the order can be created.
+    Pure-DETERIORO declarations never need it."""
+    return any(card.reason == REASON_LOSS for card in cards)
+
+
 def list_declarations(
     conn: psycopg.Connection[DictRow], *, status: str | None = None, query: str | None = None,
-    attended: bool | None = None,
+    attended: bool | None = None, reason: str | None = None,
 ) -> list[DeclarationRecord]:
     """Declarations, `pending_review` first and then newest first.
 
     `status` filters by exact status. `attended` filters by whether an order
     already attended the declaration (`production_order_id`): None = no filter,
     True = IS NOT NULL, False = IS NULL (it does not look at the status, so
-    False also includes pending/rejected ones; combine it with `status`). `query` is a case-insensitive substring
+    False also includes pending/rejected ones; combine it with `status`).
+    `reason` keeps the declarations with AT LEAST ONE card of that reason
+    (e.g. REASON_LOSS / REASON_DETERIORATION; a mixed declaration matches
+    both). `query` is a case-insensitive substring
     match against the declarant's name / document number (declared inside
     `submitted_data`, plus the linked gestor customer) and, on ANY of the
     declaration's cards, the plate, transit licence, declared owner name /
@@ -234,6 +249,12 @@ def list_declarations(
         params.append(status)
     if attended is not None:
         where.append("d.production_order_id IS NOT NULL" if attended else "d.production_order_id IS NULL")
+    if reason is not None:
+        where.append(
+            "EXISTS (SELECT 1 FROM declaration_cards rc "
+            "WHERE rc.declaration_id = d.id AND rc.reason = %s)"
+        )
+        params.append(reason)
     if query and query.strip():
         escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped}%"

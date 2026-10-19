@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from flask import Blueprint, abort, current_app, render_template, request, session
 
 from app.core import db
-from app.core.db.declarations import STATUS_APPROVED, STATUS_PENDING_REVIEW
+from app.core.db.declarations import STATUS_APPROVED, STATUS_PENDING_REVIEW, requires_notarization
 from app.core.declarations import ACTING_AS_GESTOR
 from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
 from app.core.models import ExtractedRow
@@ -337,7 +337,8 @@ class _DeclarationCheck:
 
     `declaration` is None only when the id does not exist. `error` (Spanish,
     shown to the person) is set whenever it cannot be used -- unknown,
-    pending, rejected or already attended; for the attended case
+    pending, rejected, already attended or (PÉRDIDA cards) still waiting for
+    the notarized copy; for the attended case
     `attended_order` is the order that attended it so the page can link it.
     """
 
@@ -349,7 +350,8 @@ class _DeclarationCheck:
 
 def _check_declaration(conn, declaration_id: int | None) -> _DeclarationCheck:
     """Re-read the declaration and decide if it is usable: it must exist, be
-    `approved` and not yet attended (production_order_id NULL). Used by the
+    `approved`, not yet attended (production_order_id NULL) and, when any card
+    is a PÉRDIDA, have its notarized copy received. Used by the
     GET prefill AND, again, by POST /ingest -- the server never trusts the
     hidden input."""
     declaration = db.get_declaration(conn, declaration_id) if declaration_id else None
@@ -373,7 +375,17 @@ def _check_declaration(conn, declaration_id: int | None) -> _DeclarationCheck:
             error=f"{label} ya fue atendida por la orden {order_number}.",
             attended_order={"id": declaration.production_order_id, "order_number": order_number},
         )
-    return _DeclarationCheck(declaration, cards=db.list_declaration_cards(conn, declaration.id))
+    cards = db.list_declaration_cards(conn, declaration.id)
+    if requires_notarization(cards) and declaration.notarized_received_at is None:
+        # PÉRDIDA: the client must bring the notarized copy back first.
+        return _DeclarationCheck(
+            declaration,
+            error=(
+                f"{label} tiene tarjetas por pérdida y falta la autenticación notarial: "
+                "marcá la autenticación como recibida en la declaración antes de crear la orden."
+            ),
+        )
+    return _DeclarationCheck(declaration, cards=cards)
 
 
 def _declaration_customer(conn, declaration: db.DeclarationRecord,
