@@ -62,6 +62,8 @@ class DeclarationRecord:
     accepted_terms_at: datetime | None
     declarant_signature_path: str | None
     production_order_id: int | None    # the order that attended it; NULL = not attended yet
+    notarized_received_at: datetime | None   # staff got the notarized copy back; NULL = not yet
+    notarized_received_by: int | None
 
 
 @dataclass
@@ -90,7 +92,8 @@ class DeclarationCardRecord:
 _SELECT_COLUMNS = (
     "id, created_at, acting_as, gestor_id, status, review_flags, reviewed_by, "
     "reviewed_at, review_note, submitted_data, notarized_pdf_path, submitter_ip, "
-    "user_agent, accepted_terms_at, declarant_signature_path, production_order_id"
+    "user_agent, accepted_terms_at, declarant_signature_path, production_order_id, "
+    "notarized_received_at, notarized_received_by"
 )
 
 _CARD_SELECT_COLUMNS = (
@@ -329,3 +332,25 @@ def set_declaration_production_order(
             "UPDATE declarations SET production_order_id = %s WHERE id = %s",
             (production_order_id, declaration_id),
         )
+
+
+def set_declaration_notarized_received(
+    conn: psycopg.Connection[DictRow], declaration_id: int, *, received_by: int | None,
+    received: bool = True,
+) -> None:
+    """Record (received=True, stamped now()) or clear (received=False) that the
+    notarized copy of a PÉRDIDA declaration came back to the counter. Does not
+    check the status or the reasons -- the web layer decides when it applies."""
+    with conn.cursor() as cur:
+        if received:
+            cur.execute(
+                "UPDATE declarations SET notarized_received_at = now(), notarized_received_by = %s "
+                "WHERE id = %s",
+                (received_by, declaration_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE declarations SET notarized_received_at = NULL, notarized_received_by = NULL "
+                "WHERE id = %s",
+                (declaration_id,),
+            )

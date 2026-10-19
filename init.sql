@@ -154,7 +154,9 @@ CREATE TABLE declarations (
     user_agent TEXT,
     accepted_terms_at TIMESTAMP,
     declarant_signature_path TEXT,
-    production_order_id INTEGER REFERENCES production_orders(id) ON DELETE SET NULL   -- the order that attended it (0010); NULL = not attended yet
+    production_order_id INTEGER REFERENCES production_orders(id) ON DELETE SET NULL,  -- the order that attended it (0010); NULL = not attended yet
+    notarized_received_at TIMESTAMP,        -- 0011: staff got the notarized copy back (PÉRDIDA declarations); NULL = not yet
+    notarized_received_by INTEGER REFERENCES users(id)
 );
 CREATE INDEX declarations_production_order_id_idx ON declarations (production_order_id);
 CREATE INDEX declarations_status_idx ON declarations (status);

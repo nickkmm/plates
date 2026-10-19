@@ -89,6 +89,7 @@ from app.core.db.declarations import (
     list_declaration_cards,
     list_declarations,
     set_declaration_card_links,
+    set_declaration_notarized_received,
     set_declaration_production_order,
     set_declaration_review,
 )
@@ -207,6 +208,7 @@ __all__ = [
     "search_orders_by_number",
     "search_plates_by_number",
     "set_declaration_card_links",
+    "set_declaration_notarized_received",
     "set_declaration_production_order",
     "set_declaration_review",
     "set_price",
