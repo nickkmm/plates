@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from dataclasses import fields, replace
+from dataclasses import replace
 from datetime import date, datetime
 
 import pytest
@@ -86,7 +86,7 @@ def _three_cards_one_flagged(db_conn) -> int:
         _gcard("DEF456", "L2", owner=_luis(), relation="POSEEDOR", reason="PÉRDIDA", plate_quantity=2),
         _gcard("GHI789", "L3", plate_quantity=1),
     ]
-    declaration_id = _submit(db_conn, _gestor_input(cards=cards, notarized_pdf_file="n.pdf"))
+    declaration_id = _submit(db_conn, _gestor_input(cards=cards))
     record = db.get_declaration(db_conn, declaration_id)
     assert record is not None and record.status == "pending_review"
     return declaration_id
@@ -145,9 +145,17 @@ def _with_files(db_conn, uploads) -> tuple[int, dict[str, str]]:
     }
     inp = replace(
         _gestor_input(cards=[_gcard(reason="PÉRDIDA")]),
-        signature_file=names["signature"], notarized_pdf_file=names["notarized_pdf"],
+        signature_file=names["signature"],
     )
-    return _submit(db_conn, inp), names
+    declaration_id = _submit(db_conn, inp)
+    # The public form no longer takes a notarized PDF; the column stays for legacy
+    # rows, so write it straight through to keep covering that download kind.
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "UPDATE declarations SET notarized_pdf_path = %s WHERE id = %s",
+            (names["notarized_pdf"], declaration_id),
+        )
+    return declaration_id, names
 
 
 class TestList:
@@ -808,19 +816,12 @@ class TestRoles:
         assert "/login" in resp.headers["Location"]
 
 
-def _notary_kw() -> dict:
-    """notarized_pdf_file="n.pdf" while the core still demands it for PÉRDIDA
-    (the field goes away with the generated-PDF flow)."""
-    names = {f.name for f in fields(decl.DeclarationInput)}
-    return {"notarized_pdf_file": "n.pdf"} if "notarized_pdf_file" in names else {}
-
-
 def _loss_approved(db_conn, name: str = "LUISA PERDIDA", plate: str = "LLL111", **input_kw) -> int:
     """An auto-approved declaration whose only card is a PÉRDIDA."""
     declaration_id = _submit(db_conn, _input(
         declarant=_owner(name=name),
         cards=[_card(plate_number=plate, transit_license=f"L-{plate}", reason="PÉRDIDA")],
-        **_notary_kw(), **input_kw,
+        **input_kw,
     ))
     assert _status(db_conn, declaration_id) == "approved"
     return declaration_id
@@ -1027,7 +1028,7 @@ class TestNotarizationDetail:
 
     def test_mixed_declaration_is_gated(self, authenticated_client, db_conn):
         declaration_id = _submit(db_conn, _gestor_input(
-            cards=[_gcard("ABC123", "L1"), _gcard("DEF456", "L2", reason="PÉRDIDA")], **_notary_kw(),
+            cards=[_gcard("ABC123", "L1"), _gcard("DEF456", "L2", reason="PÉRDIDA")],
         ))
         assert _status(db_conn, declaration_id) == "approved"
         html = authenticated_client.get(_detail(declaration_id)).data.decode()
