@@ -9,6 +9,7 @@ import psycopg
 import pytest
 
 from app.core import db
+from app.core.db.declarations import requires_notarization
 from tests.conftest import TEST_USERNAME
 
 _DECLARANT = {"name": "ANA", "document_number": "123"}
@@ -290,3 +291,90 @@ class TestSetDeclarationReview:
         assert record.reviewed_at is not None
         assert record.review_note == "ok"
         assert record.gestor_id == gestor_id
+
+
+class TestListByReason:
+    def test_reason_matches_declarations_with_at_least_one_card_of_it(self, db_conn):
+        loss_only = _insert(db_conn, status="approved")
+        _insert_card(db_conn, loss_only, 0, reason="PÉRDIDA")
+        deterioration_only = _insert(db_conn, status="approved")
+        _insert_card(db_conn, deterioration_only, 0, reason="DETERIORO")
+        mixed = _insert(db_conn, status="pending_review")
+        _insert_card(db_conn, mixed, 0, reason="DETERIORO")
+        _insert_card(db_conn, mixed, 1, reason="PÉRDIDA")
+        no_cards = _insert(db_conn, status="approved")
+
+        assert {d.id for d in db.list_declarations(db_conn)} == {loss_only, deterioration_only, mixed, no_cards}
+        assert {d.id for d in db.list_declarations(db_conn, reason="PÉRDIDA")} == {loss_only, mixed}
+        assert {d.id for d in db.list_declarations(db_conn, reason="DETERIORO")} == {deterioration_only, mixed}
+        assert db.list_declarations(db_conn, reason="OTRO") == []
+
+    def test_a_mixed_declaration_is_listed_once(self, db_conn):
+        mixed = _insert(db_conn)
+        for position in range(3):
+            _insert_card(db_conn, mixed, position, reason="PÉRDIDA")
+        assert [d.id for d in db.list_declarations(db_conn, reason="PÉRDIDA")] == [mixed]
+
+    def test_reason_combines_with_status_attended_and_query(self, db_conn):
+        approved = _insert(db_conn, status="approved", submitted_data={"declarant": {"name": "ANA"}})
+        _insert_card(db_conn, approved, 0, reason="PÉRDIDA", plate_number="AAA111")
+        pending = _insert(db_conn, status="pending_review", submitted_data={"declarant": {"name": "BETO"}})
+        _insert_card(db_conn, pending, 0, reason="PÉRDIDA", plate_number="BBB222")
+        other = _insert(db_conn, status="approved", submitted_data={"declarant": {"name": "CARLA"}})
+        _insert_card(db_conn, other, 0, reason="DETERIORO", plate_number="CCC333")
+
+        assert [d.id for d in db.list_declarations(db_conn, reason="PÉRDIDA", status="approved")] == [approved]
+        assert [d.id for d in db.list_declarations(db_conn, reason="PÉRDIDA", query="bbb")] == [pending]
+        assert db.list_declarations(db_conn, reason="PÉRDIDA", query="carla") == []
+        assert [d.id for d in db.list_declarations(db_conn, reason="PÉRDIDA", attended=False, status="approved")] == [approved]
+        assert db.list_declarations(db_conn, reason="PÉRDIDA", attended=True) == []
+
+
+class TestRequiresNotarization:
+    @staticmethod
+    def _card(reason: str) -> db.DeclarationCardRecord:
+        return db.DeclarationCardRecord(
+            id=1, declaration_id=1, position=0, reason=reason, plate_quantity=1, plate_number="ABC123",
+            transit_license="L", engine_number=None, chassis_number=None, vehicle_type=None,
+            registered_in=None, vehicle_brand=None, owner_relation=None, owner_data={},
+            customer_id=None, ownership_card_id=None, review_flags=[],
+        )
+
+    def test_any_loss_card_requires_it(self):
+
+
+        assert requires_notarization([self._card("PÉRDIDA")])
+        assert requires_notarization([self._card("DETERIORO"), self._card("PÉRDIDA")])
+
+    def test_deterioration_only_or_no_cards_does_not(self):
+
+
+        assert not requires_notarization([self._card("DETERIORO"), self._card("DETERIORO")])
+        assert not requires_notarization([])
+
+
+class TestSetNotarizedReceived:
+    def test_marks_with_user_and_time_and_clears(self, db_conn):
+        user = db.get_user_by_username(db_conn, TEST_USERNAME)
+        assert user is not None
+        declaration_id = _insert(db_conn, status="approved")
+        record = db.get_declaration(db_conn, declaration_id)
+        assert record is not None
+        assert record.notarized_received_at is None and record.notarized_received_by is None
+
+        db.set_declaration_notarized_received(db_conn, declaration_id, received_by=user.id)
+        record = db.get_declaration(db_conn, declaration_id)
+        assert record is not None
+        assert record.notarized_received_at is not None and record.notarized_received_by == user.id
+
+        db.set_declaration_notarized_received(db_conn, declaration_id, received_by=None, received=False)
+        record = db.get_declaration(db_conn, declaration_id)
+        assert record is not None
+        assert record.notarized_received_at is None and record.notarized_received_by is None
+
+    def test_only_touches_its_own_declaration(self, db_conn):
+        mine = _insert(db_conn, status="approved")
+        other = _insert(db_conn, status="approved")
+        db.set_declaration_notarized_received(db_conn, mine, received_by=None)
+        record = db.get_declaration(db_conn, other)
+        assert record is not None and record.notarized_received_at is None

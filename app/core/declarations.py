@@ -10,8 +10,10 @@ propiedad"), each stored as a `declaration_cards` row with its own reason
 (DETERIORO / PÉRDIDA), plate quantity, owner and review flags. If the declarant
 acts as PROPIETARIO / POSEEDOR every card belongs to the declarant; if it acts
 as GESTOR the declarant is the GESTOR customer (`declarations.gestor_id`) and
-EACH card has its own owner (a CLIENTE). The notarized PDF is one per
-declaration and is required when ANY card's reason is PÉRDIDA.
+EACH card has its own owner (a CLIENTE). Nothing is uploaded with a
+declaration other than the signature: for a PÉRDIDA the notarization happens
+offline (staff hand the client the declaration as a PDF, the client gets it
+notarized and brings it back), so no card reason requires a file.
 
 Decision rules for `submit_declaration` (all decided by the owner of the
 project, see the declarations plan), applied PER CARD:
@@ -149,7 +151,6 @@ class DeclarationInput:
     declarant: PersonInput = field(default_factory=PersonInput)
     cards: list[OwnershipCardInput] = field(default_factory=list)
     signature_file: str | None = None   # stored file name of the declarant's signature PNG
-    notarized_pdf_file: str | None = None   # required when ANY card's reason is PÉRDIDA
     submitter_ip: str | None = None
     user_agent: str | None = None
     accepted_terms: bool = False
@@ -266,10 +267,6 @@ def validate_declaration(inp: DeclarationInput) -> list[str]:
                 else:
                     seen_licenses[key] = number
             errors += [f"Tarjeta {number}: {message}" for message in card_errors]
-
-        if any(normalize_choice(c.reason, DECLARATION_REASONS) == LOSS_REASON for c in inp.cards) \
-                and _blank(inp.notarized_pdf_file):
-            errors.append("Para pérdida debe adjuntar el PDF de la declaración notariada.")
 
     if _blank(inp.signature_file):
         errors.append("Falta la firma del declarante.")
@@ -502,7 +499,6 @@ def submit_declaration(
         "acting_as": acting_as,
         "submitted_data": _build_submitted_data(inp),
         "declarant_signature_path": inp.signature_file,
-        "notarized_pdf_path": inp.notarized_pdf_file,
         "submitter_ip": inp.submitter_ip,
         "user_agent": inp.user_agent,
         "accepted_terms_at": datetime.now() if inp.accepted_terms else None,

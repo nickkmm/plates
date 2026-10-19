@@ -32,6 +32,18 @@
     .badge.rejected { background:#fdecec; color:#900; }
     .badge.flag { background:#fdecec; color:#900; }
     .badge.attended { background:#e6f0fb; color:#0b5cad; }
+    .badge.reason { font-weight:600; font-size:.82rem; }
+    .badge.reason.loss { background:#c33; color:#fff; }
+    .badge.reason.deterioration { background:#e6f0fb; color:#0b5cad; }
+    .notary { border:2px solid #c33; border-radius:10px; padding:.9rem 1rem; margin-bottom:1.2rem; background:#fff5f5; }
+    .notary.done { border-color:#1a9c5b; background:#f1faf5; }
+    .notary h2 { margin:0 0 .4rem; font-size:1.05rem; }
+    .notary p { margin:.3rem 0 .6rem; font-size:.93rem; }
+    .notary .row { display:flex; gap:.7rem; flex-wrap:wrap; align-items:center; }
+    .notary form { margin:0; }
+    a.pdf { background:#0b6bcb; color:#fff; font-size:.95rem; }
+    .mark { background:#1a9c5b; color:#fff; }
+    .undo { background:#eee; color:#444; }
     .next { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; background:#e8f6ee; border:1px solid #1a9c5b; border-radius:10px; padding:.9rem 1rem; margin-bottom:1.2rem; }
     .next.done { background:#e6f0fb; border-color:#0b6bcb; }
     .next.waiting { background:#f6f6f6; border-color:#ccc; }
@@ -83,6 +95,10 @@
     <p><strong>Atendida.</strong> Con esta declaración se creó el pedido
       {% if attended_order %}<a href="{{ url_for('records.record_detail', order_id=d.production_order_id) }}">{{ attended_order.order_number }}</a>{% else %}<a href="{{ url_for('records.record_detail', order_id=d.production_order_id) }}">#{{ d.production_order_id }}</a>{% endif %}.</p>
   </div>
+  {% elif d.status == approved_status and needs_notary and not notary_received %}
+  <div class="next waiting" id="create-order">
+    <p><strong>Declaración aprobada.</strong> Falta la autenticación notarial: el pedido se podrá crear cuando el cliente entregue la declaración autenticada y se marque como recibida (ver «Autenticación notarial» abajo).</p>
+  </div>
   {% elif d.status == approved_status %}
   <div class="next" id="create-order">
     <p><strong>Declaración aprobada.</strong> Falta registrar el pedido de las placas declaradas.</p>
@@ -90,7 +106,34 @@
   </div>
   {% elif d.status == pending_status %}
   <div class="next waiting">
-    <p class="muted">El pedido se podrá crear cuando un administrador apruebe esta declaración.</p>
+    <p class="muted">El pedido se podrá crear cuando el punto de venta apruebe esta declaración.</p>
+  </div>
+  {% endif %}
+
+  {% if needs_notary %}
+  <div class="notary{{ ' done' if notary_received }}" id="notarization">
+    <h2>Autenticación notarial</h2>
+    {% if notary_received %}
+    <p><strong>Autenticación recibida</strong> el {{ d.notarized_received_at.strftime('%d/%m/%Y %H:%M') }}{% if notary_received_by %} (registrada por {{ notary_received_by }}){% endif %}.</p>
+    {% else %}
+    <p><strong>Pendiente.</strong> Esta declaración tiene tarjetas por pérdida y debe autenticarse en una notaría antes de crear el pedido.
+      Descargue el PDF, entréguelo al cliente y, cuando el cliente regrese con la declaración autenticada, márquela como recibida.</p>
+    {% endif %}
+    <div class="row">
+      <a class="back pdf" href="{{ url_for('declarations.declaration_pdf', declaration_id=d.id) }}">Descargar PDF para autenticación</a>
+      {% if notary_received %}
+      {% if not d.production_order_id %}
+      <form method="post" action="{{ url_for('declarations.declaration_notarized_undo', declaration_id=d.id) }}">
+        <button type="submit" class="undo">Deshacer</button>
+      </form>
+      {% endif %}
+      {% else %}
+      <form method="post" action="{{ url_for('declarations.declaration_notarized', declaration_id=d.id) }}">
+        <button type="submit" class="mark">Marcar autenticación recibida</button>
+      </form>
+      {% endif %}
+    </div>
+    <p class="muted">El PDF se imprime y se entrega al cliente para que lo autentique en una notaría.</p>
   </div>
   {% endif %}
 
@@ -158,7 +201,7 @@
     {% endif %}
 
     <dl>
-      <dt>Motivo</dt><dd>{{ card.reason }}</dd>
+      <dt>Motivo</dt><dd><span class="badge reason {{ 'loss' if card.reason == loss_reason else 'deterioration' }}">{{ card.reason }}</span></dd>
       <dt>Cantidad de placas</dt><dd>{{ card.plate_quantity }}</dd>
       <dt>Placa</dt><dd>{{ card.plate_number or '—' }}</dd>
       <dt>Licencia de tránsito</dt><dd>{{ card.transit_license or '—' }}</dd>
@@ -184,7 +227,7 @@
     </dl>
     {% endif %}
 
-    {% if c.can_reassign and is_admin %}
+    {% if c.can_reassign %}
     <label class="reassign">
       <input type="checkbox" name="reassign_{{ card.id }}" form="approve-form"{{ ' checked' if card.id in reassign_ids }}>
       Reasignar esta tarjeta: moverla del cliente actual al propietario declarado
@@ -202,7 +245,7 @@
       {% if d.review_note %}<dt>Nota</dt><dd>{{ d.review_note }}</dd>{% endif %}
     </dl>
   </fieldset>
-  {% elif is_admin %}
+  {% else %}
   <div class="reviews">
     <fieldset>
       <legend>Aprobar</legend>
@@ -221,8 +264,6 @@
       </form>
     </fieldset>
   </div>
-  {% else %}
-  <p class="muted">Solo un administrador puede aprobar o rechazar esta declaración.</p>
   {% endif %}
 
   <p><a class="back" href="{{ url_for('declarations.declarations') }}">← Volver a Declaraciones</a></p>

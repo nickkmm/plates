@@ -34,6 +34,11 @@ STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 STATUSES = (STATUS_PENDING_REVIEW, STATUS_APPROVED, STATUS_REJECTED)
 
+# declaration_cards.reason values (the Spanish business terms, stored as data;
+# normalize.DECLARATION_REASONS is the form's source of truth).
+REASON_LOSS = "PÉRDIDA"
+REASON_DETERIORATION = "DETERIORO"
+
 # review_flags values (computed by app/core/declarations.py).
 FLAG_PLATE_MADE_RECENTLY = "plate_made_recently"
 FLAG_CARD_OTHER_OWNER = "card_other_owner"
@@ -62,6 +67,8 @@ class DeclarationRecord:
     accepted_terms_at: datetime | None
     declarant_signature_path: str | None
     production_order_id: int | None    # the order that attended it; NULL = not attended yet
+    notarized_received_at: datetime | None   # staff got the notarized copy back; NULL = not yet
+    notarized_received_by: int | None
 
 
 @dataclass
@@ -90,7 +97,8 @@ class DeclarationCardRecord:
 _SELECT_COLUMNS = (
     "id, created_at, acting_as, gestor_id, status, review_flags, reviewed_by, "
     "reviewed_at, review_note, submitted_data, notarized_pdf_path, submitter_ip, "
-    "user_agent, accepted_terms_at, declarant_signature_path, production_order_id"
+    "user_agent, accepted_terms_at, declarant_signature_path, production_order_id, "
+    "notarized_received_at, notarized_received_by"
 )
 
 _CARD_SELECT_COLUMNS = (
@@ -206,16 +214,26 @@ def list_cards_for_declarations(
     return grouped
 
 
+def requires_notarization(cards: Collection[DeclarationCardRecord]) -> bool:
+    """True when ANY card of the declaration is a PÉRDIDA: the declarant must
+    then have the declaration notarized before the order can be created.
+    Pure-DETERIORO declarations never need it."""
+    return any(card.reason == REASON_LOSS for card in cards)
+
+
 def list_declarations(
     conn: psycopg.Connection[DictRow], *, status: str | None = None, query: str | None = None,
-    attended: bool | None = None,
+    attended: bool | None = None, reason: str | None = None,
 ) -> list[DeclarationRecord]:
     """Declarations, `pending_review` first and then newest first.
 
     `status` filters by exact status. `attended` filters by whether an order
     already attended the declaration (`production_order_id`): None = no filter,
     True = IS NOT NULL, False = IS NULL (it does not look at the status, so
-    False also includes pending/rejected ones; combine it with `status`). `query` is a case-insensitive substring
+    False also includes pending/rejected ones; combine it with `status`).
+    `reason` keeps the declarations with AT LEAST ONE card of that reason
+    (e.g. REASON_LOSS / REASON_DETERIORATION; a mixed declaration matches
+    both). `query` is a case-insensitive substring
     match against the declarant's name / document number (declared inside
     `submitted_data`, plus the linked gestor customer) and, on ANY of the
     declaration's cards, the plate, transit licence, declared owner name /
@@ -231,6 +249,12 @@ def list_declarations(
         params.append(status)
     if attended is not None:
         where.append("d.production_order_id IS NOT NULL" if attended else "d.production_order_id IS NULL")
+    if reason is not None:
+        where.append(
+            "EXISTS (SELECT 1 FROM declaration_cards rc "
+            "WHERE rc.declaration_id = d.id AND rc.reason = %s)"
+        )
+        params.append(reason)
     if query and query.strip():
         escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped}%"
@@ -329,3 +353,25 @@ def set_declaration_production_order(
             "UPDATE declarations SET production_order_id = %s WHERE id = %s",
             (production_order_id, declaration_id),
         )
+
+
+def set_declaration_notarized_received(
+    conn: psycopg.Connection[DictRow], declaration_id: int, *, received_by: int | None,
+    received: bool = True,
+) -> None:
+    """Record (received=True, stamped now()) or clear (received=False) that the
+    notarized copy of a PÉRDIDA declaration came back to the counter. Does not
+    check the status or the reasons -- the web layer decides when it applies."""
+    with conn.cursor() as cur:
+        if received:
+            cur.execute(
+                "UPDATE declarations SET notarized_received_at = now(), notarized_received_by = %s "
+                "WHERE id = %s",
+                (received_by, declaration_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE declarations SET notarized_received_at = NULL, notarized_received_by = NULL "
+                "WHERE id = %s",
+                (declaration_id,),
+            )

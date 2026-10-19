@@ -44,7 +44,8 @@ services:
       DB_HOST: plates-db-1
       DB_PORT: "5432"
       # Files uploaded through the public declaration form (notarized PDFs,
-      # signatures). NOT covered by pg_dump backups.
+      # signatures). Not part of pg_dump: scripts/backup_plates.sh archives this
+      # volume every night (see docs/BACKUPS.md).
       UPLOADS_DIR: /srv/uploads
     volumes:
       - plates_uploads:/srv/uploads
