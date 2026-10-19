@@ -4,10 +4,11 @@ A declaration is one sworn declaration ("declaración juramentada") submitted
 through the public form: ONE declarant (the person who signs, once) and one or
 more ownership cards ("tarjetas de propiedad"), each a `declaration_cards` row
 with its own reason, plate quantity, owner and review flags. This module is
-only the data layer; the decision rules (flags, auto-approval, review) live in
+only the data layer; the decision rules (flags, review/approval) live in
 app/core/declarations.py.
 
-While a declaration is `pending_review`, `declarations.gestor_id` and every
+Every declaration starts `pending_review` (flags or not). While it is,
+`declarations.gestor_id` and every
 card's customer_id / ownership_card_id are NULL and `submitted_data` (JSONB)
 is the ONLY complete copy of what was declared -- nothing was created in
 customers / ownership_cards. `declarations.review_flags` is the union of the
