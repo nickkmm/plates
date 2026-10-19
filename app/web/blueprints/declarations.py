@@ -2,12 +2,16 @@
 
 The public form (/declaracion) stores a declaration: ONE declarant (who signs
 once) and 1..N ownership cards ("tarjetas de propiedad"), each with its own
-reason, plate quantity, owner and review flags. When ANY card hits a conflict
-the whole declaration is held as `pending_review`. This screen is where the
-point of sale (the customer fills the form, staff only reviews) reads what was
-declared, sees per card the real context behind each flag (previous owner, last
-fabrication date, ...) and approves, rejects or reassigns the declaration as a
-whole.
+reason, plate quantity, owner and review flags. EVERY declaration is stored as
+`pending_review` (flags or not) and creates nothing until approved. This screen
+is where the point of sale (the customer fills the form, staff only reviews)
+reads what was declared, sees per card the real context behind each flag
+(previous owner, last fabrication date, ...) and approves, rejects or reassigns
+the declaration as a whole.
+
+Each declaration shows ONE status badge, its derived stage
+(db.declaration_stage): Por revisar / Falta autenticación / Lista para pedido /
+Atendida / Rechazada. The list's tabs (`?stage=`) filter by that stage.
 
 Access: EVERY route is @pos_allowed (admin + point_of_sale); `reviewed_by`
 records the acting session user. The read-only 'production' role gets 403 on
@@ -61,9 +65,14 @@ from app.core.db.declarations import (
     FLAG_PLATE_MADE_RECENTLY,
     REASON_DETERIORATION,
     REASON_LOSS,
+    STAGE_ATTENDED,
+    STAGE_AWAITING_NOTARIZATION,
+    STAGE_READY,
+    STAGE_REJECTED,
+    STAGE_TO_REVIEW,
     STATUS_APPROVED,
     STATUS_PENDING_REVIEW,
-    STATUS_REJECTED,
+    declaration_stage,
     requires_notarization,
 )
 from app.core.declaration_pdf import build_declaration_pdf
@@ -73,24 +82,23 @@ from app.web.uploads import UploadError, resolve_upload_path
 
 bp = Blueprint("declarations", __name__)
 
-STATUS_LABELS = {
-    STATUS_PENDING_REVIEW: "Pendiente",
-    STATUS_APPROVED: "Aprobada",
-    STATUS_REJECTED: "Rechazada",
+# The single status badge of a declaration (see db.declaration_stage).
+STAGE_LABELS = {
+    STAGE_TO_REVIEW: "Por revisar",
+    STAGE_AWAITING_NOTARIZATION: "Falta autenticación",
+    STAGE_READY: "Lista para pedido",
+    STAGE_ATTENDED: "Atendida",
+    STAGE_REJECTED: "Rechazada",
 }
-# Filter tabs: (query value, label). "all" means no status filter.
-FILTERS = (
-    (STATUS_PENDING_REVIEW, "Pendientes"),
-    (STATUS_APPROVED, "Aprobadas"),
-    (STATUS_REJECTED, "Rechazadas"),
-    ("all", "Todas"),
-)
-# Attended filter: (query value, label, db.list_declarations(attended=...)).
-# "Atendida" = an order was created from the declaration (production_order_id).
-ATTENDED_FILTERS = (
+# Stage tabs: (query value, label, db.list_declarations(stage=...)). "all" = no
+# stage filter; the default tab is the first one (the work queue).
+STAGE_FILTERS = (
+    (STAGE_TO_REVIEW, "Por revisar", STAGE_TO_REVIEW),
+    (STAGE_AWAITING_NOTARIZATION, "Falta autenticación", STAGE_AWAITING_NOTARIZATION),
+    (STAGE_READY, "Lista para pedido", STAGE_READY),
+    (STAGE_ATTENDED, "Atendidas", STAGE_ATTENDED),
+    (STAGE_REJECTED, "Rechazadas", STAGE_REJECTED),
     ("all", "Todas", None),
-    ("no", "Por atender", False),
-    ("yes", "Atendidas", True),
 )
 # Reason filter: (query value, label, db.list_declarations(reason=...)). Any
 # card of the declaration having that reason matches.
@@ -278,6 +286,7 @@ def _render_detail(
         gestor = db.get_customer(conn, declaration.gestor_id) if declaration.gestor_id else None
         card_records = db.list_declaration_cards(conn, declaration_id)
         pending = declaration.status == STATUS_PENDING_REVIEW
+        stage = declaration_stage(declaration, card_records)
         attended_order: dict[str, Any] | None = None
         if declaration.production_order_id is not None:
             attended_order, _plates = db.order_detail(conn, declaration.production_order_id)
@@ -302,9 +311,9 @@ def _render_detail(
         "declaration_detail.html", d=declaration, declarant=_declarant(declaration), gestor=gestor,
         cards=cards, flagged_cards=[c for c in cards if c["record"].review_flags],
         plate_total=sum(c["record"].plate_quantity for c in cards),
-        flag_labels=FLAG_LABELS, status_labels=STATUS_LABELS,
+        flag_labels=FLAG_LABELS, stage=stage, stage_labels=STAGE_LABELS,
         error=error, pending_status=STATUS_PENDING_REVIEW, reassign_ids=reassign_ids,
-        attended_order=attended_order, approved_status=STATUS_APPROVED,
+        attended_order=attended_order,
         needs_notary=needs_notary, notary_received=declaration.notarized_received_at is not None,
         notary_received_by=received_user.username if received_user else None,
         loss_reason=REASON_LOSS,
@@ -315,38 +324,31 @@ def _render_detail(
 @bp.get("/declaraciones")
 @pos_allowed
 def declarations():
-    status_filter = request.args.get("status") or STATUS_PENDING_REVIEW
-    if status_filter not in {value for value, _ in FILTERS}:
-        status_filter = STATUS_PENDING_REVIEW
-    attended_values = {value: flag for value, _, flag in ATTENDED_FILTERS}
-    attended_filter = request.args.get("attended") or "all"
-    if attended_filter not in attended_values:
-        attended_filter = "all"
+    stage_values = {value: stage for value, _, stage in STAGE_FILTERS}
+    stage_filter = request.args.get("stage") or STAGE_TO_REVIEW
+    if stage_filter not in stage_values:
+        stage_filter = STAGE_TO_REVIEW
     reason_values = {value: reason for value, _, reason in REASON_FILTERS}
     reason_filter = _reason_filter(request.args.get("reason"))
     query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
         records = db.list_declarations(
-            conn, status=None if status_filter == "all" else status_filter, query=query or None,
-            attended=attended_values[attended_filter], reason=reason_values[reason_filter],
+            conn, stage=stage_values[stage_filter], query=query or None,
+            reason=reason_values[reason_filter],
         )
-        pending_count = len(db.list_declarations(conn, status=STATUS_PENDING_REVIEW))
+        pending_count = len(db.list_declarations(conn, stage=STAGE_TO_REVIEW))
         cards_by_declaration = db.list_cards_for_declarations(conn, [d.id for d in records])
     rows = []
     for d in records:
-        summary = _summarize(cards_by_declaration[d.id])
+        cards = cards_by_declaration[d.id]
         rows.append({
-            "d": d, "declarant": _declarant(d), "summary": summary,
-            "notary": (
-                None if not (d.status == STATUS_APPROVED and summary["has_loss"])
-                else "received" if d.notarized_received_at is not None else "missing"
-            ),
+            "d": d, "declarant": _declarant(d), "summary": _summarize(cards),
+            "stage": declaration_stage(d, cards),
         })
     return render_template(
-        "declarations.html", rows=rows, query=query, status_filter=status_filter,
-        filters=FILTERS, pending_count=pending_count, flag_labels=FLAG_LABELS,
-        status_labels=STATUS_LABELS, attended_filter=attended_filter,
-        attended_filters=ATTENDED_FILTERS, approved_status=STATUS_APPROVED,
+        "declarations.html", rows=rows, query=query, stage_filter=stage_filter,
+        stage_filters=STAGE_FILTERS, pending_count=pending_count, flag_labels=FLAG_LABELS,
+        stage_labels=STAGE_LABELS,
         reason_filter=reason_filter, reason_filters=REASON_FILTERS,
     )
 
