@@ -796,8 +796,17 @@ class TestIngestStickyRoundTrip:
 
 # --- orders created from a declaration (/ingest?declaration_id=N) ----------
 
+def _approved_declaration(db_conn, inp) -> int:
+    """Submit `inp` (always stored as pending_review) and have the point of
+    sale approve it, which creates/links the customers and ownership cards."""
+    declaration_id = decl.submit_declaration(db_conn, inp, today=TODAY).declaration_id
+    decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
+    assert db.get_declaration(db_conn, declaration_id).status == "approved"
+    return declaration_id
+
+
 def _two_card_declaration(db_conn, *, gestor: bool = False, notarized: bool = True) -> int:
-    """An auto-approved declaration with two ownership cards: a CARRO
+    """An approved declaration with two ownership cards: a CARRO
     PARTICULAR (ABC123, 2 plates, DETERIORO) and a MOTO PARTICULAR (KWD91G,
     PÉRDIDA). The PÉRDIDA card gates the order behind the notarized copy, so
     by default it is already marked received (`notarized=False` leaves it
@@ -812,11 +821,10 @@ def _two_card_declaration(db_conn, *, gestor: bool = False, notarized: bool = Tr
     else:
         inp = _input(cards=[_card(plate_number=plate, transit_license=licence, **kw)
                             for plate, licence, kw in specs])
-    result = decl.submit_declaration(db_conn, inp, today=TODAY)
-    assert result.status == "approved"
+    declaration_id = _approved_declaration(db_conn, inp)
     if notarized:
-        db.set_declaration_notarized_received(db_conn, result.declaration_id, received_by=None)
-    return result.declaration_id
+        db.set_declaration_notarized_received(db_conn, declaration_id, received_by=None)
+    return declaration_id
 
 
 def _declaration_form(declaration_id: int | None, **overrides) -> dict:
@@ -898,7 +906,7 @@ class TestIngestFromDeclaration:
         assert authenticated_client.get("/ingest?declaration_id=99999999999999").status_code == 404
 
     def test_pending_declaration_renders_the_plain_form_with_an_error(self, authenticated_client, db_conn):
-        _fabricate(db_conn, "ABC123", date(2026, 9, 1))
+        # a clean declaration is pending too: nothing is approved until staff do it
         declaration_id = decl.submit_declaration(db_conn, _input(), today=TODAY).declaration_id
         resp = authenticated_client.get(f"/ingest?declaration_id={declaration_id}")
         html = resp.data.decode()
@@ -907,8 +915,28 @@ class TestIngestFromDeclaration:
         assert 'name="declaration_id"' not in html
         assert 'value="ABC123"' not in html
 
+    def test_a_never_approved_declaration_is_refused_by_get_and_post(self, authenticated_client, db_conn):
+        """As submitted (no flags, nothing wrong with it) a declaration stays
+        pending_review: /ingest must refuse it until the point of sale approves."""
+        result = decl.submit_declaration(db_conn, _input(), today=TODAY)
+        assert result.status == "pending_review" and result.flags == []
+        declaration_id = result.declaration_id
+
+        get_html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
+        assert "pendiente de revisión" in get_html
+        assert 'name="declaration_id"' not in get_html
+        assert 'value="ABC123"' not in get_html
+
+        resp = authenticated_client.post("/ingest", data=_declaration_form(declaration_id))
+        post_html = resp.data.decode()
+        assert resp.status_code == 200
+        assert "pendiente de revisión" in post_html
+        assert "Registrado" not in post_html
+        assert 'value="7000"' in post_html
+        assert _order_ids(db_conn, "7000") == []
+        assert _production_order_id(db_conn, declaration_id) is None
+
     def test_rejected_declaration_renders_the_plain_form_with_an_error(self, authenticated_client, db_conn):
-        _fabricate(db_conn, "ABC123", date(2026, 9, 1))
         declaration_id = decl.submit_declaration(db_conn, _input(), today=TODAY).declaration_id
         decl.reject_declaration(db_conn, declaration_id, _reviewer_id(db_conn), "no corresponde")
         html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
@@ -966,12 +994,11 @@ class TestIngestFromDeclaration:
         assert _production_order_id(db_conn, declaration_id) is None
 
     def test_deterioration_only_declaration_is_never_gated(self, authenticated_client, db_conn):
-        result = decl.submit_declaration(
-            db_conn, _input(cards=[_card(plate_number="ABC123", transit_license="LIC-1")]), today=TODAY,
+        declaration_id = _approved_declaration(
+            db_conn, _input(cards=[_card(plate_number="ABC123", transit_license="LIC-1")]),
         )
-        assert result.status == "approved"
-        html = authenticated_client.get(f"/ingest?declaration_id={result.declaration_id}").data.decode()
-        assert _hidden(result.declaration_id) in html
+        html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
+        assert _hidden(declaration_id) in html
         assert "autenticación notarial" not in html
 
     def test_plain_get_has_no_declaration_field(self, authenticated_client, clean_db):
@@ -1076,7 +1103,6 @@ class TestIngestFromDeclaration:
                                   requested_by="MARIA LOPEZ")
             db.set_declaration_production_order(db_conn, declaration_id, other)
         else:
-            _fabricate(db_conn, "ABC123", date(2026, 9, 1))
             declaration_id = decl.submit_declaration(db_conn, _input(), today=TODAY).declaration_id
             if setup == "rejected":
                 decl.reject_declaration(db_conn, declaration_id, _reviewer_id(db_conn), "no")
