@@ -412,9 +412,12 @@ placas `is_voided` o `is_plate_annulled`; `None` si nunca se fabricó.
 Lógica de negocio sin Flask; recibe `conn` y nunca hace commit/rollback.
 
 Modelo de entrada: `DeclarationInput(acting_as, declarant: PersonInput, cards:
-list[OwnershipCardInput], signature_file, notarized_pdf_file, ...)`. Hay **un
+list[OwnershipCardInput], signature_file, ...)`. Hay **un
 solo declarante** (el propietario/poseedor mismo, o un gestor) y **una sola
-firma**, que cubre todas las tarjetas. Cada `OwnershipCardInput` trae sus
+firma**, que cubre todas las tarjetas. **No se sube ningún PDF con la
+declaración**: para una pérdida, el personal entrega la declaración como PDF,
+el cliente la autentica en una notaría y la trae de vuelta (flujo fuera del
+formulario), así que ningún motivo exige un archivo. Cada `OwnershipCardInput` trae sus
 campos de tarjeta, su `reason` (`DETERIORO` / `PÉRDIDA`), su `plate_quantity`
 (1..`normalize.max_plates_per_card`: 2 para carros, 1 para los demás; el total se
 deriva sumando) y, solo si el declarante es `GESTOR`, su propio `owner`
@@ -424,7 +427,7 @@ tarjetas por declaración.
 
 | Función | Qué hace |
 |---|---|
-| `validate_declaration(inp)` | Lista de errores en español (vacía = válida): declarante, firma única y términos siempre; 1..`MAX_CARDS` tarjetas; por tarjeta (con prefijo `Tarjeta N: `): obligatorios, vocabulario con `normalize_choice`, placa con `validate_plate`, cantidad de placas dentro del rango del tipo, dueño y relación si es gestor; placa o licencia repetida dentro del envío; el PDF notariado es obligatorio si **alguna** tarjeta es por pérdida. |
+| `validate_declaration(inp)` | Lista de errores en español (vacía = válida): declarante, firma única y términos siempre; 1..`MAX_CARDS` tarjetas; por tarjeta (con prefijo `Tarjeta N: `): obligatorios, vocabulario con `normalize_choice`, placa con `validate_plate`, cantidad de placas dentro del rango del tipo, dueño y relación si es gestor; placa o licencia repetida dentro del envío. Una pérdida no exige ningún archivo. |
 | `submit_declaration(conn, inp, *, today=None)` | Aplica las reglas de abajo y devuelve `SubmitResult(declaration_id, status, flags)`. `today` por defecto es la fecha de Bogotá. |
 | `approve_declaration(conn, id, reviewer_user_id, *, reassign_card_ids=(), note=None)` | Solo desde `pending_review`. Crea/enlaza el gestor (si lo hay) y, por **cada** tarjeta, su dueño y su tarjeta de propiedad. `reassign_card_ids` son ids de `declaration_cards` cuya tarjeta existente es de otro cliente y se puede mover. Un cliente existente con tipo `NULL` pasa al tipo esperado; con otro tipo, `ValueError`. Tarjeta de otro dueño sin estar en `reassign_card_ids`: `ValueError`; licencia/placa que no cuadran: siempre `ValueError`. Todo es verificado **antes** de escribir (todo o nada); los mensajes nombran la tarjeta y su placa. |
 | `reject_declaration(conn, id, reviewer_user_id, note)` | Marca `rejected` (nota obligatoria); no crea nada. |

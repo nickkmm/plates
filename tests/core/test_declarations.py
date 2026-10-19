@@ -160,13 +160,14 @@ class TestValidate:
         assert any(e.startswith("Tarjeta 2:") and "motivo" in e for e in errors)
         assert not any(e.startswith("Tarjeta 1:") for e in errors)
 
-    def test_loss_in_any_card_requires_the_single_notarized_pdf(self):
+    def test_loss_in_any_card_requires_no_file(self):
         cards = [_card(), _card(plate_number="DEF456", transit_license="L2", reason="PÉRDIDA")]
-        assert any("PDF" in e for e in decl.validate_declaration(_input(cards=cards)))
-        assert decl.validate_declaration(_input(cards=cards, notarized_pdf_file="n.pdf")) == []
+        assert decl.validate_declaration(_input(cards=cards)) == []
 
-    def test_deterioro_only_does_not_require_pdf(self):
-        assert decl.validate_declaration(_input(notarized_pdf_file=None)) == []
+    def test_declaration_input_has_no_notarized_pdf_field(self):
+        assert not hasattr(decl.DeclarationInput(), "notarized_pdf_file")
+        with pytest.raises(TypeError):
+            decl.DeclarationInput(notarized_pdf_file="n.pdf")  # type: ignore[call-arg]
 
     @pytest.mark.parametrize("qty", [0, -1])
     def test_quantity_at_least_one(self, qty):
@@ -293,7 +294,7 @@ class TestSubmitAutoApproved:
 
     def test_submitted_data_has_the_canonical_shape(self, db_conn):
         inp = _input(cards=[_card(), _card(plate_number="DEF456", transit_license="L2", reason="PÉRDIDA",
-                                           plate_quantity=2)], notarized_pdf_file="n.pdf")
+                                           plate_quantity=2)])
         result = decl.submit_declaration(db_conn, inp, today=TODAY)
         data = db.get_declaration(db_conn, result.declaration_id).submitted_data
         assert set(data) == {"acting_as", "declarant", "cards", "raw"}
@@ -398,7 +399,7 @@ class TestSubmitAutoApproved:
         cards = [_gcard("ABC123", "L1", owner=_owner()),
                  _gcard("DEF456", "L2", owner=luis, relation="POSEEDOR", plate_quantity=2),
                  _gcard("GHI789", "L3", owner=_owner(), reason="PÉRDIDA")]
-        result = decl.submit_declaration(db_conn, _gestor_input(cards=cards, notarized_pdf_file="n.pdf"),
+        result = decl.submit_declaration(db_conn, _gestor_input(cards=cards),
                                          today=TODAY)
         assert (result.status, result.flags) == ("approved", [])
         record = db.get_declaration(db_conn, result.declaration_id)
@@ -416,7 +417,7 @@ class TestSubmitAutoApproved:
         assert [r.plate_quantity for r in rows] == [1, 2, 1]
         assert record.gestor_id is not None
         assert db.get_customer(db_conn, record.gestor_id).type == "GESTOR"
-        assert record.notarized_pdf_path == "n.pdf"
+        assert record.notarized_pdf_path is None
 
     def test_existing_gestor_linked_unmodified(self, db_conn):
         gestor_id = _existing_client(db_conn, "GESTORIA SUR", "GESTOR")
@@ -531,12 +532,12 @@ class TestSubmitPending:
         result = decl.submit_declaration(db_conn, _input(), today=TODAY)
         assert sorted(result.flags) == sorted([decl.PLATE_MADE_RECENTLY, decl.CUSTOMER_TYPE_MISMATCH])
 
-    def test_pending_files_are_kept(self, db_conn):
+    def test_pending_signature_is_kept_and_no_pdf_is_recorded(self, db_conn):
         _fabricate(db_conn, "ABC123", date(2026, 9, 1))
-        inp = _input(cards=[_card(reason="PÉRDIDA")], notarized_pdf_file="n.pdf")
+        inp = _input(cards=[_card(reason="PÉRDIDA")])
         result = decl.submit_declaration(db_conn, inp, today=TODAY)
         record = db.get_declaration(db_conn, result.declaration_id)
-        assert (record.declarant_signature_path, record.notarized_pdf_path) == ("sig.png", "n.pdf")
+        assert (record.declarant_signature_path, record.notarized_pdf_path) == ("sig.png", None)
         assert _cards_of(db_conn, result.declaration_id)[0].reason == "PÉRDIDA"
 
     # --- several cards: one flagged card holds the whole declaration ---
