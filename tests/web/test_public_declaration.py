@@ -601,6 +601,13 @@ class TestEndToEnd:
         assert customer is not None and customer.type == "CLIENTE"
         assert len(db.list_ownership_cards_for_customer(db_conn, customer.id)) == 1
 
+    def test_a_name_with_digits_is_rejected_before_anything_is_stored(self, client, enabled, db_conn):
+        resp = post(client, _form(declarant_name="Maria Jose Prueba E2E"))
+        assert resp.status_code == 400
+        assert "El nombre del declarante no puede contener números." in resp.get_data(as_text=True)
+        assert _count(db_conn, "declarations") == 0
+        assert _files(enabled) == []   # the already-saved signature is removed again
+
     def test_person_with_two_cards_of_different_types_gets_one_customer_and_both_cards(
         self, client, enabled, db_conn,
     ):

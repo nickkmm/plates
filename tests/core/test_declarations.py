@@ -124,6 +124,15 @@ class TestValidate:
         errors = decl.validate_declaration(_input(declarant=_owner(**{field: "  "})))
         assert any(label in e and "declarante" in e for e in errors)
 
+    @pytest.mark.parametrize("name", ["Maria Jose Prueba E2E", "J0SE PEREZ", "9 ESTRELLAS SAS"])
+    def test_declarant_name_cannot_contain_digits(self, name):
+        errors = decl.validate_declaration(_input(declarant=_owner(name=name)))
+        assert errors == ["El nombre del declarante no puede contener números."]
+
+    def test_gestor_card_owner_name_cannot_contain_digits(self):
+        errors = decl.validate_declaration(_gestor_input(cards=[_gcard(owner=_owner(name="LUIS 2DO"))]))
+        assert any("El nombre del propietario/poseedor no puede contener números" in e for e in errors)
+
     def test_declarant_document_type_must_be_in_vocabulary(self):
         errors = decl.validate_declaration(_input(declarant=_owner(document_type="PASAPORTE")))
         assert any("tipo de documento" in e for e in errors)

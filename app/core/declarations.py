@@ -184,6 +184,10 @@ def _validate_person(person: PersonInput, label: str) -> list[str]:
     for value, what in required:
         if _blank(value):
             errors.append(f"Falta {what} {label}.")
+    # Same rule as /ingest's "Solicitado por": a name with digits looks like a
+    # plate and staff could not create the order for this customer afterwards.
+    if any(ch.isdigit() for ch in person.name):
+        errors.append(f"El nombre {label} no puede contener números.")
     if _blank(person.document_type):
         errors.append(f"Falta el tipo de documento {label}.")
     elif normalize_choice(person.document_type, DOCUMENT_TYPES) is None:
