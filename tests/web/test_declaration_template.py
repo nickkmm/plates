@@ -340,3 +340,8 @@ def test_received_page_is_generic():
     low = html.lower()
     for word in ("aprobad", "conflicto", "rechazad", "duplicad", "revisión manual"):
         assert word not in low, word
+
+
+def test_the_name_input_refuses_digits_in_the_browser():
+    html = render()
+    assert 'name="declarant_name"' in html and 'pattern="[^0-9]*"' in html

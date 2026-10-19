@@ -66,7 +66,7 @@
 {# The declarant block. `p` is the field-name prefix ("declarant"). #}
 {% macro person(p) %}
   <label class="field">Nombre completo
-    <input type="text" name="{{ p }}_name" value="{{ f.get(p ~ '_name', '') }}" autocomplete="name" maxlength="200" required>
+    <input type="text" name="{{ p }}_name" value="{{ f.get(p ~ '_name', '') }}" autocomplete="name" maxlength="200" pattern="[^0-9]*" title="El nombre no puede contener números." required>
   </label>
   <div class="row2">
     <label class="field">Tipo de documento
