@@ -504,40 +504,15 @@ def submit_declaration(
         "accepted_terms_at": datetime.now() if inp.accepted_terms else None,
     }
 
-    if flags:
-        declaration_id = db.insert_declaration(
-            conn, status=STATUS_PENDING_REVIEW, review_flags=flags, **common,
-        )
-        for plan in plans:
-            _insert_card_row(conn, declaration_id, plan)
-        return SubmitResult(declaration_id, STATUS_PENDING_REVIEW, flags)
-
-    gestor_id: int | None = None
-    if acting_as == ACTING_AS_GESTOR:
-        gestor_id = (
-            existing_gestor.id if existing_gestor
-            else _create_customer(conn, inp.declarant, GESTOR_TYPE)
-        )
-    links: list[tuple[int, int]] = []   # (owner customer id, ownership card id) per plan
-    for plan in plans:
-        # An existing owner is linked as-is; otherwise created (or, when the same
-        # new owner appears on several cards, resolved to the one already created).
-        owner_id = (
-            plan.existing_owner.id if plan.existing_owner
-            else _create_customer(conn, plan.owner, OWNER_TYPE, plan.relation)
-        )
-        if plan.lookup.status == db.CARD_STATUS_SAME_CARD:
-            assert plan.lookup.by_transit_license is not None
-            card_id = plan.lookup.by_transit_license.id          # linked, never modified
-        else:
-            card_id = _create_card(conn, owner_id, plan.card)
-        links.append((owner_id, card_id))
+    # Every declaration waits for the point of sale to review and approve it
+    # (approve_declaration creates/links the customers and ownership cards).
+    # `flags` only tell the reviewer what to look at; submitting creates nothing.
     declaration_id = db.insert_declaration(
-        conn, status=STATUS_APPROVED, review_flags=[], gestor_id=gestor_id, **common,
+        conn, status=STATUS_PENDING_REVIEW, review_flags=flags, **common,
     )
-    for plan, (owner_id, card_id) in zip(plans, links, strict=True):
-        _insert_card_row(conn, declaration_id, plan, customer_id=owner_id, ownership_card_id=card_id)
-    return SubmitResult(declaration_id, STATUS_APPROVED, [])
+    for plan in plans:
+        _insert_card_row(conn, declaration_id, plan)
+    return SubmitResult(declaration_id, STATUS_PENDING_REVIEW, flags)
 
 
 # --- staff review -----------------------------------------------------------
