@@ -177,7 +177,7 @@ class TestPuntoVentaRole:
             "payment_method": "EFECTIVO",
             "order_number": "7000", "order_date": "2026-01-01", "requested_by": "PEDRO",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
-            "plate_number": ["PTV100"], "plate_to": [""], "quantity": ["1"], "city": [""],
+            "plate_number": ["PTV100"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         assert resp.status_code == 200
         assert b"Registrado" in resp.data

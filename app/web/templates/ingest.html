@@ -224,7 +224,7 @@
               </select>
             </td>
             <td>
-              <select name="plate_type" required onchange="updateHint(this); prefillPrice(this);">
+              <select name="plate_type" required onchange="updateHint(this); prefillPrice(this); prefillCity(this);">
                 {# Sin tipo (el PDF no marcó ninguna casilla): opción vacía + `required`
                    obligan a elegirlo, en vez de dejar pasar el primero de la lista. #}
                 {% if not line.plate_type %}<option value="" selected>— elegí el tipo —</option>{% endif %}
@@ -233,7 +233,7 @@
             </td>
             <td><input type="text" name="plate_number" class="plate-num" value="{{ line.plate_number or '' }}" {% if line.line_type in ['reposicion','anulada_orden'] %}readonly style="background:#f0f0f0"{% endif %}></td>
             <td><input type="text" name="plate_to" class="plate-num" value="{{ line.plate_to or '' }}" {% if line.line_type!='rango' %}readonly style="background:#f0f0f0"{% endif %}></td>
-            <td><input type="text" name="city" list="cities" value="{{ line.city or '' }}"></td>
+            <td><input type="text" name="city" list="cities" value="{{ line.city or '' }}" {% if line.line_type != 'anulada_orden' %}required{% endif %} oninput="this.dataset.auto=''"></td>
             <td><input type="number" name="quantity" value="{{ line.quantity or 1 }}" min="0" required></td>
             <td>
               <select name="reason">
@@ -264,13 +264,13 @@
             </select>
           </td>
           <td>
-            <select name="plate_type" required onchange="updateHint(this); prefillPrice(this);">
+            <select name="plate_type" required onchange="updateHint(this); prefillPrice(this); prefillCity(this);">
               {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
             </select>
           </td>
           <td><input type="text" name="plate_number" class="plate-num"></td>
           <td><input type="text" name="plate_to" class="plate-num" readonly style="background:#f0f0f0"></td>
-          <td><input type="text" name="city" list="cities"></td>
+          <td><input type="text" name="city" list="cities" required oninput="this.dataset.auto=''"></td>
           <td><input type="number" name="quantity" value="1" min="0" required></td>
           <td>
             <select name="reason">
@@ -327,6 +327,20 @@
       if (price === undefined) return;
       typeSel.closest('tr').querySelector('input[name="unit_price"]').value = price;
     }
+    // La ciudad es obligatoria en cada línea (salvo "Orden anulada"). Solo CARRO
+    // PARTICULAR / CARRO PÚBLICO dependen de una ciudad: ahí se deja en blanco para
+    // que la persona la elija; los demás tipos son nacionales y se sugiere COLOMBIA
+    // (editable). Un valor sugerido se marca (data-auto) para poder quitarlo si la
+    // persona cambia luego a un tipo que sí exige elegir ciudad.
+    const CITY_SPECIFIC = ['CARRO PARTICULAR', 'CARRO PÚBLICO'];
+    function prefillCity(typeSel) {
+      const city = typeSel.closest('tr').querySelector('input[name="city"]');
+      if (CITY_SPECIFIC.includes(typeSel.value)) {
+        if (city.dataset.auto) { city.value = ''; city.dataset.auto = ''; }
+      } else if (!city.value.trim() && typeSel.value) {
+        city.value = 'COLOMBIA'; city.dataset.auto = '1';
+      }
+    }
     // Habilita "Desde" (placa) y "Hasta" según el tipo. readonly (no disabled)
     // para que el campo igual se envíe y no desalinee las columnas.
     function setRO(inp, ro) { inp.readOnly = ro; if (ro) inp.value=''; inp.style.background = ro ? '#f0f0f0' : ''; }
@@ -335,6 +349,7 @@
       const v = sel.value;
       setRO(tr.querySelector('input[name="plate_number"]'), v === 'reposicion' || v === 'anulada_orden');
       setRO(tr.querySelector('input[name="plate_to"]'), v !== 'rango');
+      tr.querySelector('input[name="city"]').required = v !== 'anulada_orden';
     }
     function addLine() {
       const tbody = document.getElementById('lines');
@@ -343,6 +358,7 @@
       tbody.appendChild(row);
       togglePlate(row.querySelector('select[name="line_type"]'));
       updateHint(row.querySelector('select[name="plate_type"]'));
+      prefillCity(row.querySelector('select[name="plate_type"]'));
     }
     function rmLine(btn) {
       const tbody = document.getElementById('lines');
@@ -468,6 +484,7 @@
       existing.forEach(row => {
         togglePlate(row.querySelector('select[name="line_type"]'));
         updateHint(row.querySelector('select[name="plate_type"]'));
+        prefillCity(row.querySelector('select[name="plate_type"]'));
       });
     });
   </script>

@@ -88,8 +88,9 @@ class TestIngestPostRoute:
             cur.execute("SELECT plate_number, city FROM plates ORDER BY id")
             assert cur.fetchall() == [("AAA111", "CALI"), ("BBB222", "PASTO")]
 
-    def test_blank_city_on_a_moto_line_is_saved_as_colombia(self, authenticated_client, clean_db):
-        """MOTO PARTICULAR is nationwide, so a blank Ciudad means COLOMBIA."""
+    def test_city_is_saved_per_line_including_colombia_for_nationwide_types(
+        self, authenticated_client, clean_db
+    ):
         authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3011", "order_date": "2026-01-01",
@@ -98,34 +99,74 @@ class TestIngestPostRoute:
             "plate_type": ["MOTO PARTICULAR", "CARRO PARTICULAR"],
             "plate_number": ["ABC12D", "BBB222"], "plate_to": ["", ""],
             "quantity": ["1", "1"],
-            "city": ["", ""],
+            "city": ["COLOMBIA", "BOGOTA"],
         })
         with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT plate_number, city FROM plates ORDER BY id")
-            # the carro line stays blank -- only nationwide types get the default
-            assert cur.fetchall() == [("ABC12D", "COLOMBIA"), ("BBB222", None)]
+            assert cur.fetchall() == [("ABC12D", "COLOMBIA"), ("BBB222", "BOGOTA")]
 
-    def test_lines_survive_a_post_that_omits_the_city_field_entirely(
+    @pytest.mark.parametrize("plate_type", ["MOTO PARTICULAR", "CARRO PARTICULAR", "REMOLQUE"])
+    @pytest.mark.parametrize("line_type", ["placa", "rango", "reposicion", "placa_anulada", "muestra"])
+    def test_a_blank_city_is_rejected_on_every_line_type_and_nothing_is_saved(
+        self, authenticated_client, clean_db, plate_type, line_type
+    ):
+        resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
+            "order_number": "3013", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "line_type": [line_type], "plate_type": [plate_type],
+            "plate_number": ["AAA111"], "plate_to": ["AAA112"], "quantity": ["1"],
+            "city": [""],
+        })
+        assert resp.status_code == 200
+        assert "Línea 1: elegí la ciudad" in resp.get_data(as_text=True)
+        with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE order_number = '3013'")
+            assert cur.fetchone()[0] == 0
+
+    def test_the_error_names_the_line_that_has_no_city(self, authenticated_client, clean_db):
+        resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
+            "order_number": "3014", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "line_type": ["placa", "placa"], "plate_type": ["CARRO PARTICULAR", "CARRO PARTICULAR"],
+            "plate_number": ["AAA111", "AAA112"], "plate_to": ["", ""], "quantity": ["1", "1"],
+            "city": ["CALI", "  "],
+        })
+        assert "Línea 2: elegí la ciudad" in resp.get_data(as_text=True)
+
+    def test_a_voided_order_line_does_not_need_a_city(self, authenticated_client, clean_db):
+        resp = authenticated_client.post("/ingest", data={
+            "payment_method": "OTROS",
+            "order_number": "3015", "order_date": "2026-01-01", "requested_by": "PEDRO",
+            "line_type": ["anulada_orden"], "plate_type": ["CARRO PARTICULAR"],
+            "plate_number": [""], "plate_to": [""], "quantity": ["0"], "city": [""],
+        })
+        assert b"Registrado" in resp.data
+
+    def test_a_post_that_omits_the_city_field_entirely_is_rejected(
         self, authenticated_client, clean_db
     ):
-        """City is optional, so a payload without it must still save the lines
-        (the per-line zips would otherwise silently truncate to nothing)."""
-        authenticated_client.post("/ingest", data={
+        resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3012", "order_date": "2026-01-01",
             "requested_by": "PEDRO",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["AAA111"], "plate_to": [""], "quantity": ["1"],
         })
+        assert "Línea 1: elegí la ciudad" in resp.get_data(as_text=True)
         with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
-            cur.execute("SELECT plate_number, city FROM plates")
-            assert cur.fetchall() == [("AAA111", None)]
+            cur.execute("SELECT count(*) FROM plates")
+            assert cur.fetchone()[0] == 0
+
+    def test_the_form_marks_every_city_input_as_required(self, authenticated_client, clean_db):
+        html = authenticated_client.get("/ingest").get_data(as_text=True)
+        assert 'name="city" list="cities" required' in html
+        assert "function prefillCity" in html
 
     def test_rango_line_type_inserts_desde_hasta(self, authenticated_client, clean_db):
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3001", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["rango"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["AAA100"], "plate_to": ["AAA105"], "quantity": ["6"],
         })
@@ -140,7 +181,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3002", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": [], "plate_type": [], "plate_number": [], "plate_to": [], "quantity": [],
         })
         assert resp.status_code == 200
@@ -154,7 +195,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3003", "order_date": "2026-01-01",
-            "requested_by": "PEDRO123", "city": "",
+            "requested_by": "PEDRO123", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
@@ -169,7 +210,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3004", "order_date": "2999-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
@@ -184,7 +225,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3005", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["rango"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["AAA100"], "plate_to": [""], "quantity": ["1"],
         })
@@ -201,7 +242,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3006", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["50"],
         })
@@ -220,7 +261,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3007", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["anulada_orden"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
@@ -237,7 +278,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3008", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["muestra"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
@@ -254,7 +295,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3009", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["placa_anulada"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["AAA200"], "plate_to": [""], "quantity": ["1"],
         })
@@ -272,7 +313,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3012", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["placa_anulada"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
@@ -290,7 +331,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3010", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["1"],
         })
@@ -308,7 +349,7 @@ class TestIngestPostRoute:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "3011", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": ["BOGOTA", "BOGOTA"],
             "line_type": ["placa", "placa"], "plate_type": ["", "CARRO PARTICULAR"],
             "plate_number": ["", "AAA300"], "plate_to": ["", ""], "quantity": ["1", "1"],
         })
@@ -328,14 +369,14 @@ class TestIngestDuplicateWarning:
         authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "4000", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["DUP001"], "plate_to": [""], "quantity": ["1"],
         })
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "4001", "order_date": "2026-01-02",
-            "requested_by": "MARIA", "city": "",
+            "requested_by": "MARIA", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["DUP001"], "plate_to": [""], "quantity": ["1"],
         })
@@ -352,14 +393,14 @@ class TestIngestDuplicateWarning:
         authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "4002", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["DUP002"], "plate_to": [""], "quantity": ["1"],
         })
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "4003", "order_date": "2026-01-02",
-            "requested_by": "MARIA", "city": "",
+            "requested_by": "MARIA", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["DUP002"], "plate_to": [""], "quantity": ["1"],
             "confirm_duplicate": "1",
@@ -380,7 +421,7 @@ class TestIngestDuplicateWarning:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "4004", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": ["BOGOTA", "BOGOTA"],
             "line_type": ["placa", "placa"], "plate_type": ["CARRO PARTICULAR", "CARRO PARTICULAR"],
             "plate_number": ["DUP003", "DUP003"], "plate_to": ["", ""], "quantity": ["1", "1"],
         })
@@ -409,14 +450,14 @@ class TestIngestOrderDuplicateWarning:
         authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "5000", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["50"],
         })
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "5000", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["WCY449"], "plate_to": [""], "quantity": ["1"],
         })
@@ -441,14 +482,14 @@ class TestIngestOrderDuplicateWarning:
         authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "5001", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["50"],
         })
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "5001", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["WCY450"], "plate_to": [""], "quantity": ["1"],
             "confirm_order_duplicate": "1",
@@ -471,14 +512,14 @@ class TestIngestOrderDuplicateWarning:
         authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "5002", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["reposicion"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": [""], "plate_to": [""], "quantity": ["50"],
         })
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "5002", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["WCY451"], "plate_to": [""], "quantity": ["1"],
             "replace_order": "1",
@@ -518,7 +559,7 @@ class TestIngestOrderDuplicateWarning:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "5003", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": ["BOGOTA", "BOGOTA"],
             "line_type": ["placa", "placa"],
             "plate_type": ["CARRO PARTICULAR", "CARRO PARTICULAR"],
             "plate_number": ["NEW100", "NEW101"], "plate_to": ["", ""], "quantity": ["1", "1"],
@@ -544,7 +585,7 @@ class TestIngestOrderDuplicateWarning:
         resp = authenticated_client.post("/ingest", data={
             "payment_method": "OTROS",
             "order_number": "5004", "order_date": "2026-01-01",
-            "requested_by": "PEDRO", "city": "",
+            "requested_by": "PEDRO", "city": "BOGOTA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
             "plate_number": ["FRE599"], "plate_to": [""], "quantity": ["1"],
         })
@@ -566,7 +607,7 @@ class TestIngestPaymentMethodRequired:
         resp = authenticated_client.post("/ingest", data={
             "order_number": "6500", "order_date": "2026-01-01", "requested_by": "PEDRO",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
-            "plate_number": ["PAY100"], "plate_to": [""], "quantity": ["1"], "city": [""],
+            "plate_number": ["PAY100"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         assert resp.status_code == 200
         assert b"forma de pago" in resp.data.lower()
@@ -580,7 +621,7 @@ class TestIngestPaymentMethodRequired:
             "payment_method": "OTROS",
             "order_number": "6501", "order_date": "2026-01-01", "requested_by": "PEDRO",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
-            "plate_number": ["PAY101"], "plate_to": [""], "quantity": ["1"], "city": [""],
+            "plate_number": ["PAY101"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         assert resp.status_code == 200
         assert b"Registrado" in resp.data
@@ -598,7 +639,7 @@ class TestIngestCustomerCapture:
             "customer_address": "CALLE 10 # 20-30", "customer_neighborhood": "CENTRO",
             "customer_municipality": "CALI",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
-            "plate_number": ["CUS100"], "plate_to": [""], "quantity": ["1"], "city": [""],
+            "plate_number": ["CUS100"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         with db.get_conn() as conn:
             customer = db.get_customer_by_name(conn, "CLIENTE UNO")
@@ -624,7 +665,7 @@ class TestIngestCustomerCapture:
             "customer_address": "AV 3", "customer_neighborhood": "NORTE",
             "customer_municipality": "PALMIRA",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
-            "plate_number": ["CUS104"], "plate_to": [""], "quantity": ["1"], "city": [""],
+            "plate_number": ["CUS104"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         with db.get_conn() as conn:
             customer = db.get_customer_by_name(conn, "GESTOR UNO")
@@ -647,7 +688,7 @@ class TestIngestCustomerCapture:
             "customer_type": "EMPRESA", "customer_document_type": "NIT",
             "customer_document_relation": "DUEÑO",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
-            "plate_number": ["CUS101"], "plate_to": [""], "quantity": ["1"], "city": [""],
+            "plate_number": ["CUS101"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         with db.get_conn() as conn:
             customer = db.get_customer_by_name(conn, "CLIENTE DOS")
@@ -666,7 +707,7 @@ class TestIngestCustomerCapture:
             "customer_document_relation": "POSEEDOR", "customer_address": "CALLE VIEJA",
             "customer_neighborhood": "BARRIO VIEJO", "customer_municipality": "CALI",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
-            "plate_number": ["CUS102"], "plate_to": [""], "quantity": ["1"], "city": [""],
+            "plate_number": ["CUS102"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         with db.get_conn() as conn:
             customer = db.get_customer_by_name(conn, "CLIENTE TRES")
@@ -689,7 +730,7 @@ class TestIngestCustomerCapture:
             "order_number": "6603", "order_date": "2026-01-01", "requested_by": "CLIENTE CUATRO",
             "customer_type": "CLIENTE", "customer_phone": "999",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
-            "plate_number": ["CUS103"], "plate_to": [""], "quantity": ["1"], "city": [""],
+            "plate_number": ["CUS103"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         with db.get_conn() as conn:
             customer = db.get_customer_by_name(conn, "CLIENTE CUATRO")
@@ -730,7 +771,7 @@ class TestIngestPlateLineFieldsPersist:
             "payment_method": "EFECTIVO",
             "order_number": "6700", "order_date": "2026-01-01", "requested_by": "PEDRO",
             "line_type": ["placa"], "plate_type": ["CARRO PARTICULAR"],
-            "plate_number": ["LIN100"], "plate_to": [""], "quantity": ["1"], "city": [""],
+            "plate_number": ["LIN100"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
             "reason": ["DETERIORO"], "vehicle_brand": ["TOYOTA"], "unit_price": ["180000"],
         })
         with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
@@ -834,7 +875,7 @@ def _declaration_form(declaration_id: int | None, **overrides) -> dict:
         "payment_method": "EFECTIVO",
         "line_type": ["placa", "placa"], "plate_type": ["CARRO PARTICULAR", "MOTO PARTICULAR"],
         "plate_number": ["ABC123", "KWD91G"], "plate_to": ["", ""], "quantity": ["2", "1"],
-        "city": ["CALI", ""],
+        "city": ["CALI", "COLOMBIA"],
     }
     if declaration_id is not None:
         data["declaration_id"] = str(declaration_id)
