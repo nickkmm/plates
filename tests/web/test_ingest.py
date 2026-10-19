@@ -796,9 +796,12 @@ class TestIngestStickyRoundTrip:
 
 # --- orders created from a declaration (/ingest?declaration_id=N) ----------
 
-def _two_card_declaration(db_conn, *, gestor: bool = False) -> int:
+def _two_card_declaration(db_conn, *, gestor: bool = False, notarized: bool = True) -> int:
     """An auto-approved declaration with two ownership cards: a CARRO
-    PARTICULAR (ABC123, 2 plates, DETERIORO) and a MOTO PARTICULAR (KWD91G)."""
+    PARTICULAR (ABC123, 2 plates, DETERIORO) and a MOTO PARTICULAR (KWD91G,
+    PÉRDIDA). The PÉRDIDA card gates the order behind the notarized copy, so
+    by default it is already marked received (`notarized=False` leaves it
+    pending, to test the gate)."""
     specs = [
         ("ABC123", "LIC-1", {"reason": "DETERIORO", "plate_quantity": 2, "vehicle_brand": "MAZDA"}),
         ("KWD91G", "LIC-2", {"reason": "PÉRDIDA", "vehicle_type": "MOTO PARTICULAR",
@@ -811,6 +814,8 @@ def _two_card_declaration(db_conn, *, gestor: bool = False) -> int:
                             for plate, licence, kw in specs])
     result = decl.submit_declaration(db_conn, inp, today=TODAY)
     assert result.status == "approved"
+    if notarized:
+        db.set_declaration_notarized_received(db_conn, result.declaration_id, received_by=None)
     return result.declaration_id
 
 
@@ -920,6 +925,54 @@ class TestIngestFromDeclaration:
         assert f'href="/records/{order_id}"' in html
         assert 'name="declaration_id"' not in html
         assert 'value="ABC123"' not in html
+
+    def test_loss_declaration_without_notarized_copy_renders_the_plain_form_with_an_error(
+        self, authenticated_client, db_conn,
+    ):
+        declaration_id = _two_card_declaration(db_conn, notarized=False)
+        resp = authenticated_client.get(f"/ingest?declaration_id={declaration_id}")
+        html = resp.data.decode()
+        assert resp.status_code == 200
+        assert "falta la autenticación notarial" in html
+        assert 'name="declaration_id"' not in html
+        assert 'value="ABC123"' not in html
+
+    def test_loss_declaration_is_usable_once_the_notarized_copy_is_received(
+        self, authenticated_client, db_conn,
+    ):
+        declaration_id = _two_card_declaration(db_conn, notarized=False)
+        db.set_declaration_notarized_received(db_conn, declaration_id, received_by=None)
+        html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
+        assert _hidden(declaration_id) in html
+        assert "falta la autenticación notarial" not in html
+
+    def test_loss_declaration_with_undone_notarization_is_refused_again(
+        self, authenticated_client, db_conn,
+    ):
+        declaration_id = _two_card_declaration(db_conn)
+        db.set_declaration_notarized_received(db_conn, declaration_id, received_by=None, received=False)
+        html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
+        assert "falta la autenticación notarial" in html and 'name="declaration_id"' not in html
+
+    def test_post_refuses_a_loss_declaration_without_notarized_copy(self, authenticated_client, db_conn):
+        declaration_id = _two_card_declaration(db_conn, notarized=False)
+        resp = authenticated_client.post("/ingest", data=_declaration_form(declaration_id))
+        html = resp.data.decode()
+        assert resp.status_code == 200
+        assert "Registrado" not in html
+        assert "falta la autenticación notarial" in html
+        assert 'value="7000"' in html  # what was typed is given back
+        assert _order_ids(db_conn, "7000") == []
+        assert _production_order_id(db_conn, declaration_id) is None
+
+    def test_deterioration_only_declaration_is_never_gated(self, authenticated_client, db_conn):
+        result = decl.submit_declaration(
+            db_conn, _input(cards=[_card(plate_number="ABC123", transit_license="LIC-1")]), today=TODAY,
+        )
+        assert result.status == "approved"
+        html = authenticated_client.get(f"/ingest?declaration_id={result.declaration_id}").data.decode()
+        assert _hidden(result.declaration_id) in html
+        assert "autenticación notarial" not in html
 
     def test_plain_get_has_no_declaration_field(self, authenticated_client, clean_db):
         html = authenticated_client.get("/ingest").data.decode()

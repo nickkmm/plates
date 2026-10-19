@@ -2,9 +2,14 @@
 
 A declaration is ONE declarant plus 1..N ownership cards; a flag on any card
 holds the whole declaration. Contract under test:
-- list/detail/file download are @pos_allowed (admin + point_of_sale); approve
-  and reject are admin-only; the read-only 'production' role gets 403 on
-  everything (it handles ID data); anonymous requests redirect to /login.
+- every route is @pos_allowed (admin + point_of_sale): the point of sale
+  reviews (approve / reject / reassign) and handles the notarization step; the
+  read-only 'production' role gets 403 on everything (it handles ID data);
+  anonymous requests redirect to /login.
+- PÉRDIDA vs DETERIORO: reason badge per card, "2 pérdida · 1 deterioro" in
+  the list, a reason filter; approved declarations with a PÉRDIDA card get a
+  PDF to download, an "Autenticación notarial" block and a gate on "Crear
+  pedido".
 - the list shows one row per declaration (declarant, card count, total
   plates, compact summary) and the search finds any card's data.
 - the detail page has one section per card and explains each card's flags
@@ -23,14 +28,15 @@ from __future__ import annotations
 
 import re
 import uuid
-from dataclasses import replace
-from datetime import date
+from dataclasses import fields, replace
+from datetime import date, datetime
 
 import pytest
 
 from app.core import db
 from app.core import declarations as decl
 from app.core.models import ExtractedRow
+from tests.conftest import PUNTO_VENTA_USERNAME, TEST_USERNAME
 from tests.core.test_declarations import (
     TODAY,
     _card,
@@ -186,7 +192,7 @@ class TestList:
         assert re.search(r'data-label="Tarjetas">3<', html)
         assert re.search(r'data-label="Placas">4<', html)   # 1 + 2 + 1, not 3
         assert "ABC123 · DEF456 +1" in html
-        assert "DETERIORO 2 · PÉRDIDA 1" in html            # mixed reasons are spelled out
+        assert "1 pérdida · 2 deterioro" in html            # mixed reasons are counted, PÉRDIDA first
         assert "Tarjeta de otro dueño" in html
         assert "en la tarjeta 2" in html                    # which card holds it
 
@@ -195,7 +201,7 @@ class TestList:
         html = authenticated_client.get(LIST_URL).data.decode()
         assert re.search(r'data-label="Tarjetas">1<', html)
         assert "ABC123<" in html and "+" not in html[html.index("<tbody>"):]
-        assert "DETERIORO" in html
+        assert "1 deterioro" in html
 
     @pytest.mark.parametrize("term", [
         "MARIA", "1020304050", "ABC123", "LIC-001",          # declarant / its cards
@@ -388,12 +394,20 @@ class TestDetail:
         html = authenticated_client.get(_detail(_pending_recent(db_conn))).data.decode()
         assert 'name="reassign_' not in html
 
-    def test_point_of_sale_sees_no_review_forms_nor_checkboxes(self, punto_venta_client, db_conn):
+    def test_point_of_sale_sees_review_forms_and_reassign_checkbox(self, punto_venta_client, db_conn):
         declaration_id = _three_cards_one_flagged(db_conn)
+        rows = _cards_of(db_conn, declaration_id)
         html = punto_venta_client.get(_detail(declaration_id)).data.decode()
-        assert "/approve" not in html and "/reject" not in html
-        assert 'name="reassign_' not in html
+        assert f"/declaraciones/{declaration_id}/approve" in html
+        assert f"/declaraciones/{declaration_id}/reject" in html
+        assert f'name="reassign_{rows[1].id}"' in html
         assert "a nombre de otro cliente" in html
+        assert "administrador" not in html
+
+    def test_point_of_sale_gets_no_links_to_the_admin_only_customer_screen(self, punto_venta_client, db_conn):
+        declaration_id = _submit(db_conn, _gestor_input(cards=[_gcard("ABC123", "L1")]))
+        html = punto_venta_client.get(_detail(declaration_id)).data.decode()
+        assert "Resultado de la revisión" in html
         assert "/customers/" not in html
 
     def test_point_of_sale_sees_flags_context(self, punto_venta_client, db_conn):
@@ -637,14 +651,15 @@ class TestCreateOrder:
     def test_no_button_for_pending_but_explains_why(self, authenticated_client, db_conn):
         html = authenticated_client.get(_detail(_pending_recent(db_conn))).data.decode()
         assert "Crear pedido" not in html and "declaration_id=" not in html
-        assert "cuando un administrador apruebe" in html
+        assert "cuando el punto de venta apruebe" in html
+        assert "administrador" not in html
 
     def test_no_button_for_rejected(self, authenticated_client, db_conn):
         pending_id = _pending_recent(db_conn)
         decl.reject_declaration(db_conn, pending_id, 1, "no")
         html = authenticated_client.get(_detail(pending_id)).data.decode()
         assert "Crear pedido" not in html and "declaration_id=" not in html
-        assert "cuando un administrador apruebe" not in html
+        assert "cuando el punto de venta apruebe" not in html
 
     @pytest.mark.parametrize("client_fixture", ["authenticated_client", "punto_venta_client"])
     def test_attended_shows_badge_and_order_link_without_button(self, request, db_conn, client_fixture):
@@ -725,22 +740,55 @@ class TestRoles:
         assert produccion_client.post(f"{base}/approve", data={}).status_code == 403
         assert produccion_client.post(f"{base}/reject", data={"note": "x"}).status_code == 403
 
-    def test_point_of_sale_reads_but_cannot_decide(self, punto_venta_client, db_conn, declaration_id):
+    def test_point_of_sale_reads_everything(self, punto_venta_client, declaration_id):
         base = _detail(declaration_id)
         assert punto_venta_client.get(LIST_URL).status_code == 200
         assert punto_venta_client.get(base).status_code == 200
         assert punto_venta_client.get(f"{base}/file/signature").status_code == 200
-        assert punto_venta_client.post(f"{base}/approve", data={}).status_code == 403
-        assert punto_venta_client.post(f"{base}/reject", data={"note": "x"}).status_code == 403
-        assert db.get_declaration(db_conn, declaration_id).status == "approved"  # type: ignore[union-attr]
+        assert punto_venta_client.get(f"{base}/pdf").status_code == 200
 
-    def test_point_of_sale_cannot_decide_on_a_pending_one(self, punto_venta_client, db_conn):
+    def test_point_of_sale_approves_with_reassign_and_is_recorded_as_reviewer(
+        self, punto_venta_client, db_conn,
+    ):
         pending_id = _three_cards_one_flagged(db_conn)
         rows = _cards_of(db_conn, pending_id)
-        data = {f"reassign_{rows[1].id}": "on"}
-        assert punto_venta_client.post(f"{_detail(pending_id)}/approve", data=data).status_code == 403
-        assert punto_venta_client.post(f"{_detail(pending_id)}/reject", data={"note": "x"}).status_code == 403
-        assert _status(db_conn, pending_id) == "pending_review"
+        data = {f"reassign_{rows[1].id}": "on", "note": "revisado en mostrador"}
+        resp = punto_venta_client.post(f"{_detail(pending_id)}/approve", data=data)
+        assert resp.status_code == 302
+        record = db.get_declaration(db_conn, pending_id)
+        assert record is not None and record.status == "approved"
+        pos_user = db.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
+        assert pos_user is not None and record.reviewed_by == pos_user.id
+        card = db.get_ownership_card(db_conn, _cards_of(db_conn, pending_id)[1].ownership_card_id)
+        assert card is not None and card.customer_id == _cards_of(db_conn, pending_id)[1].customer_id
+
+    def test_point_of_sale_rejects_and_is_recorded_as_reviewer(self, punto_venta_client, db_conn):
+        pending_id = _three_cards_one_flagged(db_conn)
+        resp = punto_venta_client.post(f"{_detail(pending_id)}/reject", data={"note": "datos falsos"})
+        assert resp.status_code == 302
+        record = db.get_declaration(db_conn, pending_id)
+        assert record is not None and record.status == "rejected"
+        pos_user = db.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
+        assert pos_user is not None and record.reviewed_by == pos_user.id
+
+    def test_point_of_sale_marks_notarized_received_and_undoes_it(self, punto_venta_client, db_conn, declaration_id):
+        resp = punto_venta_client.post(f"{_detail(declaration_id)}/notarized")
+        assert resp.status_code == 302
+        record = db.get_declaration(db_conn, declaration_id)
+        pos_user = db.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
+        assert record is not None and pos_user is not None
+        assert record.notarized_received_at is not None and record.notarized_received_by == pos_user.id
+        assert punto_venta_client.post(f"{_detail(declaration_id)}/notarized/undo").status_code == 302
+        record = db.get_declaration(db_conn, declaration_id)
+        assert record is not None and record.notarized_received_at is None
+
+    def test_production_gets_403_on_the_new_actions(self, produccion_client, db_conn, declaration_id):
+        base = _detail(declaration_id)
+        assert produccion_client.get(f"{base}/pdf").status_code == 403
+        assert produccion_client.post(f"{base}/notarized").status_code == 403
+        assert produccion_client.post(f"{base}/notarized/undo").status_code == 403
+        record = db.get_declaration(db_conn, declaration_id)
+        assert record is not None and record.notarized_received_at is None
 
     def test_admin_can_do_everything(self, authenticated_client, declaration_id):
         base = _detail(declaration_id)
@@ -751,8 +799,304 @@ class TestRoles:
     @pytest.mark.parametrize("method,url", [
         ("get", LIST_URL), ("get", "/declaraciones/1"), ("get", "/declaraciones/1/file/signature"),
         ("post", "/declaraciones/1/approve"), ("post", "/declaraciones/1/reject"),
+        ("get", "/declaraciones/1/pdf"), ("post", "/declaraciones/1/notarized"),
+        ("post", "/declaraciones/1/notarized/undo"),
     ])
     def test_anonymous_redirects_to_login(self, client, clean_db, method, url):
         resp = getattr(client, method)(url)
         assert resp.status_code == 302
         assert "/login" in resp.headers["Location"]
+
+
+def _notary_kw() -> dict:
+    """notarized_pdf_file="n.pdf" while the core still demands it for PÉRDIDA
+    (the field goes away with the generated-PDF flow)."""
+    names = {f.name for f in fields(decl.DeclarationInput)}
+    return {"notarized_pdf_file": "n.pdf"} if "notarized_pdf_file" in names else {}
+
+
+def _loss_approved(db_conn, name: str = "LUISA PERDIDA", plate: str = "LLL111", **input_kw) -> int:
+    """An auto-approved declaration whose only card is a PÉRDIDA."""
+    declaration_id = _submit(db_conn, _input(
+        declarant=_owner(name=name),
+        cards=[_card(plate_number=plate, transit_license=f"L-{plate}", reason="PÉRDIDA")],
+        **_notary_kw(), **input_kw,
+    ))
+    assert _status(db_conn, declaration_id) == "approved"
+    return declaration_id
+
+
+def _record(db_conn, declaration_id: int) -> db.DeclarationRecord:
+    record = db.get_declaration(db_conn, declaration_id)
+    assert record is not None
+    return record
+
+
+class TestReasons:
+    def test_detail_badges_each_card_reason_distinctly(self, authenticated_client, db_conn):
+        html = authenticated_client.get(_detail(_three_cards_one_flagged(db_conn))).data.decode()
+        first, second, third = (_section(html, n) for n in (1, 2, 3))
+        assert 'class="badge reason deterioration">DETERIORO<' in first
+        assert 'class="badge reason loss">PÉRDIDA<' in second
+        assert 'class="badge reason deterioration">DETERIORO<' in third
+        assert "reason loss" not in first and "reason loss" not in third
+
+    def test_list_summary_counts_reasons(self, authenticated_client, db_conn):
+        _three_cards_one_flagged(db_conn)
+        html = authenticated_client.get(LIST_URL).data.decode()
+        assert "1 pérdida · 2 deterioro" in html
+        assert "reasons has-loss" in html
+
+    def test_list_summary_for_a_pure_declaration_has_no_loss_style(self, authenticated_client, db_conn):
+        _pending_recent(db_conn)
+        body = authenticated_client.get(LIST_URL).data.decode().split("<tbody>")[1]
+        assert "1 deterioro" in body and "pérdida" not in body
+        assert "has-loss" not in body
+
+    def test_filter_by_reason(self, authenticated_client, db_conn):
+        _approved(db_conn)                                     # ANA APROBADA: DETERIORO only
+        _loss_approved(db_conn)                                # LUISA PERDIDA: PÉRDIDA only
+        _three_cards_one_flagged(db_conn)                      # GESTORIA SUR (pending): mixed
+        everyone = {"ANA APROBADA", "LUISA PERDIDA", "GESTORIA SUR"}
+
+        def names(reason: str) -> set[str]:
+            html = authenticated_client.get(f"{LIST_URL}?status=all&reason={reason}").data.decode()
+            return {n for n in everyone if n in html}
+
+        assert names("all") == everyone
+        assert names("loss") == {"LUISA PERDIDA", "GESTORIA SUR"}            # any card PÉRDIDA
+        assert names("deterioration") == {"ANA APROBADA", "GESTORIA SUR"}    # any card DETERIORO
+        assert names("bogus") == everyone
+        assert names("PÉRDIDA") == {"LUISA PERDIDA", "GESTORIA SUR"}         # the stored word works too
+
+    def test_reason_filter_combines_with_status_attended_and_search(self, authenticated_client, db_conn):
+        _loss_approved(db_conn)
+        attended = _loss_approved(db_conn, name="BETO ATENDIDO", plate="BBB222")
+        _attend(db_conn, attended)
+        _approved(db_conn)
+
+        def get(qs: str) -> str:
+            return authenticated_client.get(f"{LIST_URL}?{qs}").data.decode()
+
+        assert "LUISA PERDIDA" not in get("status=pending_review&reason=loss")
+        html = get("status=approved&reason=loss&attended=no")
+        assert "LUISA PERDIDA" in html and "BETO ATENDIDO" not in html and "ANA APROBADA" not in html
+        html = get("status=approved&reason=loss&q=BETO")
+        assert "BETO ATENDIDO" in html and "LUISA PERDIDA" not in html
+
+    def test_reason_select_is_rendered_selected_and_kept_by_the_tabs(self, authenticated_client, db_conn):
+        _loss_approved(db_conn)
+        html = authenticated_client.get(f"{LIST_URL}?status=approved&reason=loss").data.decode()
+        assert '<option value="loss" selected>Pérdida</option>' in html
+        assert '<option value="all">Todos</option>' in html
+        assert '<option value="deterioration">Deterioro</option>' in html
+        assert "reason=loss" in html
+
+
+class TestNotarizationList:
+    def test_badges_on_approved_declarations_with_a_loss_card(self, authenticated_client, db_conn):
+        _loss_approved(db_conn)
+        done = _loss_approved(db_conn, name="BETO AUTENTICADO", plate="BBB222")
+        db.set_declaration_notarized_received(db_conn, done, received_by=None)
+        _approved(db_conn)
+        html = authenticated_client.get(f"{LIST_URL}?status=approved").data.decode()
+        rows = html[html.index("<tbody>"):].split("<tr>")
+        by_name = {n: next(r for r in rows if n in r) for n in ("LUISA PERDIDA", "BETO AUTENTICADO", "ANA APROBADA")}
+        missing_row, done_row, plain_row = (by_name[n] for n in ("LUISA PERDIDA", "BETO AUTENTICADO", "ANA APROBADA"))
+        assert "Falta autenticación" in missing_row and "Autenticada" not in missing_row
+        assert "Autenticada" in done_row and "Falta autenticación" not in done_row
+        assert "Falta autenticación" not in plain_row and "Autenticada" not in plain_row
+
+    def test_pending_with_a_loss_card_has_no_notary_badge(self, authenticated_client, db_conn):
+        _three_cards_one_flagged(db_conn)
+        html = authenticated_client.get(LIST_URL).data.decode()
+        assert "Falta autenticación" not in html and "Autenticada" not in html
+
+
+class TestPdf:
+    @pytest.fixture
+    def calls(self, monkeypatch) -> list[dict]:
+        recorded: list[dict] = []
+
+        def fake(*, declaration, cards, signature_png, issued_at):
+            recorded.append({"declaration": declaration, "cards": cards,
+                             "signature_png": signature_png, "issued_at": issued_at})
+            return b"%PDF-1.4 generated"
+
+        monkeypatch.setattr("app.web.blueprints.declarations.build_declaration_pdf", fake)
+        return recorded
+
+    @pytest.mark.parametrize("client_fixture", ["authenticated_client", "punto_venta_client"])
+    def test_approved_with_loss_downloads_an_attachment(self, request, db_conn, calls, client_fixture):
+        client = request.getfixturevalue(client_fixture)
+        declaration_id = _loss_approved(db_conn)
+        resp = client.get(f"{_detail(declaration_id)}/pdf")
+        assert resp.status_code == 200
+        assert resp.mimetype == "application/pdf"
+        assert resp.data == b"%PDF-1.4 generated"
+        assert resp.headers["Content-Disposition"] == f"attachment; filename=declaracion-{declaration_id}.pdf"
+        assert resp.headers["Cache-Control"] == "no-store"
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+
+    def test_the_generator_gets_the_declaration_cards_signature_and_a_timestamp(
+        self, authenticated_client, db_conn, uploads, calls,
+    ):
+        declaration_id, _ = _with_files(db_conn, uploads)
+        authenticated_client.get(f"{_detail(declaration_id)}/pdf")
+        (call,) = calls
+        assert call["declaration"].id == declaration_id
+        assert [c.id for c in call["cards"]] == [c.id for c in _cards_of(db_conn, declaration_id)]
+        assert call["signature_png"] == PNG
+        assert abs((datetime.now() - call["issued_at"]).total_seconds()) < 60
+
+    @pytest.mark.parametrize("mode", ["no_path", "missing_file", "traversal"])
+    def test_signature_is_none_when_unavailable(self, authenticated_client, db_conn, uploads, calls, mode):
+        if mode == "no_path":
+            declaration_id = _loss_approved(db_conn, signature_file=None)
+        elif mode == "missing_file":
+            declaration_id, names = _with_files(db_conn, uploads)
+            (uploads / names["signature"]).unlink()
+        else:
+            (uploads.parent / "secret.png").write_bytes(PNG)
+            declaration_id = _loss_approved(db_conn, signature_file="../secret.png")
+        assert authenticated_client.get(f"{_detail(declaration_id)}/pdf").status_code == 200
+        assert calls[-1]["signature_png"] is None
+
+    def test_real_placeholder_generator_returns_a_pdf(self, authenticated_client, db_conn):
+        declaration_id = _loss_approved(db_conn)
+        resp = authenticated_client.get(f"{_detail(declaration_id)}/pdf")
+        assert resp.status_code == 200 and resp.data.startswith(b"%PDF-")
+
+    def test_pending_with_loss_is_404_with_a_clear_message(self, authenticated_client, db_conn, calls):
+        pending_id = _three_cards_one_flagged(db_conn)
+        resp = authenticated_client.get(f"{_detail(pending_id)}/pdf")
+        assert resp.status_code == 404
+        assert "solo está disponible para declaraciones aprobadas" in resp.data.decode()
+        assert calls == []
+
+    def test_rejected_is_404(self, authenticated_client, db_conn, calls):
+        pending_id = _three_cards_one_flagged(db_conn)
+        decl.reject_declaration(db_conn, pending_id, 1, "no")
+        assert authenticated_client.get(f"{_detail(pending_id)}/pdf").status_code == 404
+        assert calls == []
+
+    def test_approved_deterioration_only_is_404_with_a_clear_message(self, authenticated_client, db_conn, calls):
+        resp = authenticated_client.get(f"{_detail(_approved(db_conn))}/pdf")
+        assert resp.status_code == 404
+        assert "no requiere autenticación notarial" in resp.data.decode()
+        assert calls == []
+
+    def test_unknown_declaration_is_404(self, authenticated_client, db_conn, calls):
+        assert authenticated_client.get(f"{_detail(9999)}/pdf").status_code == 404
+
+
+class TestNotarizationDetail:
+    def test_pending_block_with_pdf_button_and_mark_form_and_no_create_button(
+        self, authenticated_client, db_conn,
+    ):
+        declaration_id = _loss_approved(db_conn)
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert "Autenticación notarial" in html
+        assert "Pendiente." in html
+        assert "Descargar PDF para autenticación" in html
+        assert f'href="/declaraciones/{declaration_id}/pdf"' in html
+        assert "se imprime y se entrega al cliente para que lo autentique en una notaría" in html.lower()
+        assert f'action="/declaraciones/{declaration_id}/notarized"' in html
+        assert "/notarized/undo" not in html
+        assert "Crear pedido" not in html and "declaration_id=" not in html
+        assert "Falta la autenticación notarial" in html
+
+    def test_received_block_shows_when_who_and_undo_and_restores_the_create_button(
+        self, authenticated_client, db_conn,
+    ):
+        declaration_id = _loss_approved(db_conn)
+        authenticated_client.post(f"{_detail(declaration_id)}/notarized")
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert "Autenticación recibida" in html
+        assert f"(registrada por {TEST_USERNAME})" in html
+        assert f'action="/declaraciones/{declaration_id}/notarized/undo"' in html
+        assert f'action="/declaraciones/{declaration_id}/notarized"' not in html
+        assert "Falta la autenticación notarial" not in html
+        assert "Crear pedido" in html and f'href="/ingest?declaration_id={declaration_id}"' in html
+        assert "Descargar PDF para autenticación" in html            # reprint stays available
+
+    def test_deterioration_only_has_no_block_and_keeps_the_create_button(self, authenticated_client, db_conn):
+        html = authenticated_client.get(_detail(_approved(db_conn))).data.decode()
+        assert "Autenticación notarial" not in html and "Descargar PDF" not in html
+        assert "Crear pedido" in html
+
+    def test_mixed_declaration_is_gated(self, authenticated_client, db_conn):
+        declaration_id = _submit(db_conn, _gestor_input(
+            cards=[_gcard("ABC123", "L1"), _gcard("DEF456", "L2", reason="PÉRDIDA")], **_notary_kw(),
+        ))
+        assert _status(db_conn, declaration_id) == "approved"
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert "Autenticación notarial" in html and "Crear pedido" not in html
+
+    def test_pending_and_rejected_have_no_block(self, authenticated_client, db_conn):
+        pending_id = _three_cards_one_flagged(db_conn)
+        assert "Autenticación notarial" not in authenticated_client.get(_detail(pending_id)).data.decode()
+        decl.reject_declaration(db_conn, pending_id, 1, "no")
+        assert "Autenticación notarial" not in authenticated_client.get(_detail(pending_id)).data.decode()
+
+    def test_attended_declaration_hides_the_undo(self, authenticated_client, db_conn):
+        declaration_id = _loss_approved(db_conn)
+        db.set_declaration_notarized_received(db_conn, declaration_id, received_by=None)
+        _attend(db_conn, declaration_id)
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert "Autenticación recibida" in html and "/notarized/undo" not in html
+        assert "Atendida" in html
+
+
+class TestNotarizedActions:
+    def test_mark_records_the_acting_user_and_redirects_to_the_detail(self, authenticated_client, db_conn):
+        declaration_id = _loss_approved(db_conn)
+        resp = authenticated_client.post(f"{_detail(declaration_id)}/notarized")
+        assert resp.status_code == 302 and resp.headers["Location"].endswith(_detail(declaration_id))
+        record = _record(db_conn, declaration_id)
+        user = db.get_user_by_username(db_conn, TEST_USERNAME)
+        assert user is not None
+        assert record.notarized_received_at is not None and record.notarized_received_by == user.id
+
+    def test_marking_twice_keeps_the_first_stamp(self, authenticated_client, punto_venta_client, db_conn):
+        declaration_id = _loss_approved(db_conn)
+        authenticated_client.post(f"{_detail(declaration_id)}/notarized")
+        first = _record(db_conn, declaration_id)
+        punto_venta_client.post(f"{_detail(declaration_id)}/notarized")
+        second = _record(db_conn, declaration_id)
+        assert second.notarized_received_at == first.notarized_received_at
+        assert second.notarized_received_by == first.notarized_received_by
+
+    def test_undo_clears_the_stamp(self, authenticated_client, db_conn):
+        declaration_id = _loss_approved(db_conn)
+        authenticated_client.post(f"{_detail(declaration_id)}/notarized")
+        resp = authenticated_client.post(f"{_detail(declaration_id)}/notarized/undo")
+        assert resp.status_code == 302
+        record = _record(db_conn, declaration_id)
+        assert record.notarized_received_at is None and record.notarized_received_by is None
+
+    def test_undo_is_refused_once_an_order_attended_it(self, authenticated_client, db_conn):
+        declaration_id = _loss_approved(db_conn)
+        authenticated_client.post(f"{_detail(declaration_id)}/notarized")
+        _attend(db_conn, declaration_id)
+        resp = authenticated_client.post(f"{_detail(declaration_id)}/notarized/undo")
+        assert resp.status_code == 400 and "ya fue atendida" in resp.data.decode()
+        assert _record(db_conn, declaration_id).notarized_received_at is not None
+
+    @pytest.mark.parametrize("url_suffix", ["notarized", "notarized/undo"])
+    def test_not_applicable_declarations_are_refused_and_unchanged(self, authenticated_client, db_conn, url_suffix):
+        for declaration_id in (_approved(db_conn), _three_cards_one_flagged(db_conn)):
+            resp = authenticated_client.post(f"{_detail(declaration_id)}/{url_suffix}")
+            assert resp.status_code == 400
+            assert "requieren autenticación notarial" in resp.data.decode()
+            assert _record(db_conn, declaration_id).notarized_received_at is None
+
+    @pytest.mark.parametrize("url_suffix", ["notarized", "notarized/undo"])
+    def test_unknown_id_redirects_to_list(self, authenticated_client, db_conn, url_suffix):
+        resp = authenticated_client.post(f"{_detail(9999)}/{url_suffix}")
+        assert resp.status_code == 302 and resp.headers["Location"].endswith(LIST_URL)
+
+    def test_get_is_not_allowed(self, authenticated_client, db_conn):
+        declaration_id = _loss_approved(db_conn)
+        assert authenticated_client.get(f"{_detail(declaration_id)}/notarized").status_code == 405
+        assert _record(db_conn, declaration_id).notarized_received_at is None
