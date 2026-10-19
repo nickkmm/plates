@@ -18,7 +18,7 @@ blueprints (`today_iso`, `_options`, `_padded`, `_validate_order_header`,
 | GET | `/healthz` | `app.py` | Liveness probe | — | — | abierta |
 | GET/POST | `/login` | `auth_routes.py` | Login (consulta `users`, Fase 2) | `auth.authenticate` | `login.html` | abierta |
 | GET/POST | `/logout` | `auth_routes.py` | Cierra sesión | — | (redirect) | abierta |
-| GET/POST | `/declaracion` | `public_declaration.py` | Formulario público de declaración juramentada (QR en el mostrador), solo para personas que declaran por sí mismas (PROPIETARIO / POSEEDOR; un `GESTOR` enviado a mano se rechaza con 400; el endpoint para gestores está planeado). POST: honeypot, token firmado, Turnstile, límite por IP (5/hora), lee de 1 a 30 tarjetas de propiedad (`card_<i>_*`) con un solo declarante y una sola firma, guarda firma/PDF en `UPLOADS_DIR`, valida y guarda. Responde **503** (`declaration_unavailable.html`) mientras no estén `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (o `TURNSTILE_BYPASS`). La página de éxito es idéntica para declaraciones aprobadas y retenidas: nunca revela estado, alertas ni al dueño anterior | `declarations.validate_declaration`, `submit_declaration`, `db.count_recent_by_ip` | `declaration.html`, `declaration_received.html`, `declaration_unavailable.html` | **sin login** (única ruta pública que escribe) |
+| GET/POST | `/declaracion` | `public_declaration.py` | Formulario público de declaración juramentada (QR en el mostrador), solo para personas que declaran por sí mismas (PROPIETARIO / POSEEDOR; un `GESTOR` enviado a mano se rechaza con 400; el endpoint para gestores está planeado). POST: honeypot, token firmado, Turnstile, límite por IP (20/hora; los clientes comparten la IP del wifi del local), lee de 1 a 30 tarjetas de propiedad (`card_<i>_*`) con un solo declarante y una sola firma, guarda la firma en `UPLOADS_DIR` (el formulario no sube ningún archivo), valida y guarda. Responde **503** (`declaration_unavailable.html`) mientras no estén `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (o `TURNSTILE_BYPASS`). La página de éxito es idéntica para declaraciones aprobadas y retenidas: nunca revela estado, alertas ni al dueño anterior | `declarations.validate_declaration`, `submit_declaration`, `db.count_recent_by_ip` | `declaration.html`, `declaration_received.html`, `declaration_unavailable.html` | **sin login** (única ruta pública que escribe) |
 | GET | `/ingest` | `ingest.py` | Form "Registrar" — captura completa de orden POS (Fase 3). Con `?declaration_id=N` (el botón de `/declaraciones`) llega **pre-llenado desde una declaración aprobada y todavía no atendida** (`production_order_id` NULL), igual que el PDF: **no guarda nada**. Encabezado: fecha de hoy, N° de orden y forma de pago vacíos (los decide el personal), cliente = el declarante (el gestor si actuó un gestor; si no, el cliente enlazado a las tarjetas) con todos sus datos. Una línea `placa` por tarjeta de propiedad, en orden: tipo de placa de la tarjeta (vacío si no se reconoce), placa, cantidad, motivo, marca y valor = tarifa vigente del tipo (vacío si no hay); la ciudad queda vacía y un aviso la pide para las líneas `CARRO PARTICULAR`/`CARRO PÚBLICO`. Id inexistente o mal formado → 404; pendiente, rechazada o ya atendida → el formulario normal con un error en español (si ya fue atendida, dice con qué orden y enlaza a su detalle) | `db.distinct_requested_by/cities`, `db.current_prices`, `db.list_customers`, `db.get_declaration`, `db.list_declaration_cards`, `db.get_customer` | `ingest.html` | `@pos_allowed` |
 | POST | `/ingest` | `ingest.py` | Guarda orden+placas (resuelve/crea cliente, snapshotea precios); gestiona los avisos de orden/placa duplicada y el "Reemplazar" opt-in. Si trae el campo oculto `declaration_id`, el servidor **vuelve a validar** la declaración (existe, aprobada, sin atender; si no, no guarda y devuelve el formulario tal cual con el error); las placas de sus tarjetas **no se bloquean** como "ya existe" (el caso es reponer una placa perdida o deteriorada; escribir dos veces la misma placa en el envío sí sigue bloqueando) y, en la **misma transacción** del guardado (camino normal y "Reemplazar"), la declaración queda atendida por la orden creada (`db.set_declaration_production_order`). El campo oculto viaja en todos los re-renders (avisos de orden/placa duplicada, errores). Sin `declaration_id` el comportamiento no cambia | `ingestion.process_rows`, `ingestion.replace_order`, `ingestion.find_duplicate_plate_numbers`, `db.resolve_or_create_customer`, `db.find_orders_by_number`, `db.set_declaration_production_order` | `ingest.html` | `@pos_allowed` |
 | GET | `/ingest/pdf` | `ingest.py` | Form de upload de PDF | — | `ingest_pdf.html` | `@pos_allowed` |
@@ -104,9 +104,10 @@ anónima; agregar una ruta pública exige editar su lista a propósito.
 
 `/declaracion` se apaga sola: sin llaves de Turnstile (ni `TURNSTILE_BYPASS`)
 responde 503, así que producción no expone nada hasta que el dueño configure
-Cloudflare. `app.py` fija `MAX_CONTENT_LENGTH` en 12 MB (PDF autenticado de
-hasta 10 MB más la firma PNG en base64, unos 270 KB); un cuerpo más
-grande recibe un 413 amigable en esa ruta.
+Cloudflare. `app.py` fija `MAX_CONTENT_LENGTH` en 12 MB para toda la app (lo
+necesitan los PDFs de `/ingest/pdf`; el formulario público ya no sube PDF, solo
+la firma PNG en base64, unos 270 KB); un cuerpo más grande recibe un 413
+amigable en esa ruta.
 
 ### Formulario público de declaración
 
@@ -137,12 +138,19 @@ poseedor de todas. Si alguien envía `acting_as = GESTOR` a mano, el servidor
 lo rechaza como un error de validación normal (400, antes de guardar
 archivos): vuelve a dibujar el formulario con "Este formulario es solo para
 personas que declaran por sí mismas…" y nunca llama a `submit_declaration`. Los
-campos `card_<i>_owner_*` que lleguen se ignoran. El PDF autenticado (uno solo)
-se muestra y se exige si **alguna** tarjeta es PÉRDIDA.
+campos `card_<i>_owner_*` que lleguen se ignoran. **El formulario no tiene
+ningún campo de archivo**: junto al motivo de cada tarjeta hay una nota ("Si
+declaras pérdida, INGSE te entregará este documento en el mostrador para que lo
+autentiques en una notaría.") que es visible sin JavaScript y que el script
+oculta mientras el motivo de esa tarjeta no sea PÉRDIDA. La página de éxito
+repite el aviso en forma genérica, sin revelar estado.
 
-Campos del POST (`multipart/form-data`): `form_token`, `website` (honeypot),
+Límite por IP: `MAX_SUBMISSIONS_PER_IP_PER_HOUR` = 20 (constante única en
+`public_declaration.py`).
+
+Campos del POST (`application/x-www-form-urlencoded`): `form_token`, `website` (honeypot),
 `cf-turnstile-response`, `acting_as`, `declarant_<campo>`, `signature` (data
-URL PNG), `notarized_pdf`, `accept_terms` y, por cada tarjeta con índice `i`:
+URL PNG), `accept_terms` y, por cada tarjeta con índice `i`:
 `card_<i>_plate_number`, `_transit_license`, `_engine_number`,
 `_chassis_number`, `_vehicle_type`, `_registered_in`, `_vehicle_brand`,
 `_reason` y `_plate_quantity`. Los campos de persona son `name`, `document_type`,
@@ -154,7 +162,7 @@ rechaza (400, antes de construir nada ni guardar archivos) un envío con más de
 `MAX_CARDS` índices distintos, y también uno sin ninguna tarjeta. Una cantidad
 no numérica se convierte en 0 para que la validación la rechace. Tras un error
 de validación se vuelven a dibujar todos los bloques con lo que la persona
-digitó (la firma y el PDF no se devuelven: hay que volver a adjuntarlos). Sin
+digitó (la firma no se devuelve: hay que volver a firmar). Sin
 JavaScript la página sigue mostrando la primera tarjeta, pero agregar o quitar
 tarjetas y los límites por tipo requieren JavaScript.
 

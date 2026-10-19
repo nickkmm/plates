@@ -275,6 +275,24 @@ class TestAntispam:
         assert stub.submitted == []
         assert post(client, _form(), ip="8.8.8.8").status_code == 200  # other IPs unaffected
 
+    def test_limit_is_twenty_per_hour_per_ip(self, client, stub, monkeypatch):
+        assert pd.MAX_SUBMISSIONS_PER_IP_PER_HOUR == 20
+        monkeypatch.setattr(pd.db, "count_recent_by_ip", lambda conn, ip, since: 19)
+        assert post(client, _form(), ip="9.9.9.9").status_code == 200  # the 20th is still allowed
+        monkeypatch.setattr(pd.db, "count_recent_by_ip", lambda conn, ip, since: 20)
+        assert post(client, _form(), ip="9.9.9.9").status_code == 429  # the 21st is not
+
+    def test_success_page_has_the_generic_notarization_line(self, client, stub):
+        html = post(client, _form()).get_data(as_text=True)
+        assert ("Si declaraste una pérdida, en el mostrador te entregaremos el documento "
+                "para que lo autentiques en una notaría.") in html
+
+    def test_loss_declaration_is_accepted_without_a_file(self, client, stub, enabled):
+        resp = post(client, _form(_card(0, reason="PÉRDIDA")))
+        assert resp.status_code == 200
+        assert len(stub.submitted) == 1
+        assert [p.suffix for p in _files(enabled)] == [".png"]
+
 
 class TestParsing:
     """The POST fields become a DeclarationInput (core validate/submit stubbed)."""
@@ -411,28 +429,16 @@ class TestFiles:
         assert len(_files(enabled)) == 1  # ONE signature for every card
         name = stub.inp.signature_file
         assert name is not None and (enabled / name).read_bytes() == PNG
-        assert stub.inp.notarized_pdf_file is None
 
-    def test_pdf_is_stored_when_any_card_is_a_loss(self, client, stub, enabled):
+    def test_a_posted_pdf_is_never_stored(self, client, stub, enabled):
+        # An old page (or a hand-made post) may still send a file: it is ignored.
         post(client, _form(
             _card(0, reason="DETERIORO"),
             _card(1, plate_number="DEF456", reason="PÉRDIDA"),
             notarized_pdf=(_bytes_io(PDF), "n.pdf"),
         ))
-        assert sorted(p.suffix for p in _files(enabled)) == [".pdf", ".png"]
-        assert stub.inp.notarized_pdf_file is not None
-
-    def test_pdf_is_discarded_when_no_card_is_a_loss(self, client, stub, enabled):
-        post(client, _form(notarized_pdf=(_bytes_io(PDF), "n.pdf")))
         assert [p.suffix for p in _files(enabled)] == [".png"]
-        assert stub.inp.notarized_pdf_file is None
-
-    def test_invalid_pdf_is_reported_and_every_file_deleted(self, client, stub, enabled):
-        resp = post(client, _form(_card(0, reason="PÉRDIDA"), notarized_pdf=(_bytes_io(b"nope"), "x.pdf")))
-        assert resp.status_code == 400
-        assert "PDF" in resp.get_data(as_text=True)
-        assert stub.submitted == []
-        assert _files(enabled) == []
+        assert not hasattr(stub.inp, "notarized_pdf_file")
 
     def test_bad_signature_is_rejected_and_cleaned(self, client, stub, enabled):
         resp = post(client, _form(signature="data:image/png;base64,@@@"))
@@ -448,14 +454,12 @@ class TestFiles:
 
     def test_validation_errors_keep_sticky_values_and_delete_files(self, client, stub, enabled):
         stub.validate_errors = ["Falta el teléfono del declarante."]
-        resp = post(client, _form(
-            _card(0, reason="PÉRDIDA"), notarized_pdf=(_bytes_io(PDF), "n.pdf"),
-        ))
+        resp = post(client, _form(_card(0, reason="PÉRDIDA")))
         html = resp.get_data(as_text=True)
         assert resp.status_code == 400
         assert "Falta el teléfono del declarante." in html
         assert stub.submitted == []
-        assert _files(enabled) == []  # signature and PDF saved for the validator were removed
+        assert _files(enabled) == []  # the signature saved for the validator was removed
 
     def test_unexpected_failure_cleans_files_and_hides_details(self, client, stub, enabled):
         stub.submit_error = RuntimeError("secret internal detail")
@@ -488,7 +492,7 @@ class TestStickyRerender:
         assert 'data-card="1"' not in html
         assert 'name="card_3_reason" value="PÉRDIDA" checked' in html
         assert "data:image/png" not in html
-        assert 'id="notarizedWrap" hidden' not in html  # one card is a PÉRDIDA
+        assert "notarizedWrap" not in html and 'type="file"' not in html
         assert '<output id="totalPlates" aria-live="polite">3</output>' in html.replace("\n", "")
 
     def test_acting_as_is_kept_on_rerender(self, client, stub):
@@ -533,23 +537,15 @@ class TestSubmitRetry:
 
 
 class TestSizeLimits:
-    def test_a_large_signature_and_a_pdf_are_accepted(self, client, stub, enabled):
+    def test_a_large_signature_is_accepted(self, client, stub, enabled):
         big = _data_url(PNG + b"\x01" * (190 * 1024))  # ~253 KB as base64
         assert len(big) > 250_000
-        pdf = PDF + b"y" * (1024 * 1024)
-        resp = post(client, _two_cards_form(signature=big, notarized_pdf=(_bytes_io(pdf), "n.pdf")))
-        assert resp.status_code == 200  # (cards default to DETERIORO: pdf discarded)
+        resp = post(client, _two_cards_form(signature=big))
+        assert resp.status_code == 200
         assert len(_files(enabled)) == 1
 
-    def test_a_pdf_for_a_loss_card_is_kept_next_to_the_signature(self, client, stub, enabled):
-        pdf = PDF + b"y" * (1024 * 1024)
-        resp = post(client, _form(_card(0, reason="PÉRDIDA"), notarized_pdf=(_bytes_io(pdf), "n.pdf")))
-        assert resp.status_code == 200
-        assert len(_files(enabled)) == 2
-
     def test_oversized_body_gets_friendly_413(self, client, stub, enabled):
-        huge = _bytes_io(b"%PDF-" + b"z" * (13 * 1024 * 1024))
-        resp = post(client, _form(_card(0, reason="PÉRDIDA"), notarized_pdf=(huge, "n.pdf")))
+        resp = post(client, _form(_card(0, reason="PÉRDIDA"), junk="z" * (13 * 1024 * 1024)))
         assert resp.status_code == 413
         assert "demasiado grandes" in resp.get_data(as_text=True)
         assert _files(enabled) == []
@@ -607,13 +603,18 @@ class TestEndToEnd:
         owner = db.get_customer_by_name(db_conn, "Maria Lopez")
         assert owner is not None and owner.document_relation == "DUEÑO"  # PROPIETARIO
 
-    def test_loss_card_without_pdf_is_rejected(self, client, enabled, db_conn):
+    def test_loss_card_is_accepted_without_any_file(self, client, enabled, db_conn):
         resp = post(client, _form(_card(0), _card(1, plate_number="DEF456", reason="PÉRDIDA",
                                                   transit_license="L-2")))
-        assert resp.status_code == 400
-        assert "PDF" in resp.get_data(as_text=True)
-        assert _files(enabled) == []
-        assert _count(db_conn, "declarations") == 0
+        assert resp.status_code == 200
+        assert "Recibimos tu declaración" in resp.get_data(as_text=True)
+        assert _count(db_conn, "declarations") == 1
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT notarized_pdf_path FROM declarations")
+            assert cur.fetchone()["notarized_pdf_path"] is None
+            cur.execute("SELECT reason FROM declaration_cards ORDER BY id")
+            assert [r["reason"] for r in cur.fetchall()] == ["DETERIORO", "PÉRDIDA"]
+        assert [p.suffix for p in _files(enabled)] == [".png"]  # only the signature
 
     def test_missing_signature_is_rejected(self, client, enabled, db_conn):
         resp = post(client, _form(signature=None))

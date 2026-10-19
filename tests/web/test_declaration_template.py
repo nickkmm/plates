@@ -94,7 +94,7 @@ def card_names(i) -> list[str]:
 
 ALL_FIELDS = [
     "acting_as", *[f"declarant_{s}" for s in PERSON_LEAVES], *card_names(0),
-    "notarized_pdf", "signature", "accept_terms", "form_token", "website",
+    "signature", "accept_terms", "form_token", "website",
 ]
 
 
@@ -102,15 +102,13 @@ def test_empty_form_renders_all_fields_standalone():
     html = render()
     for name in ALL_FIELDS:
         tag(html, name)
-    assert '<form id="declForm" method="post" action="/declaracion" enctype="multipart/form-data"' in html
+    assert '<form id="declForm" method="post" action="/declaracion"' in html
     assert 'lang="es"' in html and 'name="viewport"' in html
     # standalone: nothing from _nav.html
     assert "Salir" not in html and "logout" not in html and 'class="tabs"' not in html
     assert "Registros" not in html
-    # empty form: nothing checked, the PDF is hidden and disabled
+    # empty form: nothing checked
     assert not re.search(r"<input[^>]* checked", split(html)[0])
-    assert "disabled" in tag(html, "notarized_pdf")
-    assert 'id="notarizedWrap" hidden' in html
     # the declarant block is always live
     assert "disabled" not in tag(html, "declarant_name")
     assert "required" in tag(html, "declarant_name")
@@ -157,9 +155,30 @@ def test_hidden_token_honeypot_and_signature_inputs():
     assert html.count("Borrar firma") >= 1
 
 
-def test_pdf_accept_and_submit_and_footer():
+def test_there_is_no_file_upload_and_the_form_is_not_multipart():
     html = render()
-    assert 'accept="application/pdf"' in tag(html, "notarized_pdf")
+    assert 'type="file"' not in html
+    assert "multipart" not in html
+    assert "notarized" not in html.lower() and "autenticado" not in html.lower()
+    assert "adjunt" not in html.lower()
+
+
+def test_loss_note_is_in_every_card_block_and_visible_without_js():
+    note = ("Si declaras pérdida, INGSE te entregará este documento en el mostrador "
+            "para que lo autentiques en una notaría.")
+    html = render(form=FULL_FORM)
+    blocks = card_blocks(html)
+    assert len(blocks) == 2
+    for block in blocks:
+        assert note in block
+        # plain note: not hidden in the markup (the script hides it for non-PÉRDIDA cards)
+        assert re.search(r'<div class="note loss-note">', block)
+    assert "loss-note" in split(html)[1]  # the clone template carries it too
+    assert "querySelector('.loss-note')" in html and "note.hidden = " in html
+
+
+def test_submit_and_footer():
+    html = render()
     assert "Enviar declaración" in html
     assert "La huella se toma en el mostrador si INGSE la requiere" in html
     assert "name=\"fingerprint\"" not in html and "huella_" not in html
@@ -235,10 +254,6 @@ def test_populated_form_is_sticky_with_sparse_indices():
     assert re.search(r'name="card_0_reason" value="DETERIORO" required checked', first)
     assert re.search(r'name="card_2_reason" value="PÉRDIDA" checked', second)
     assert not re.search(r'name="card_2_reason" value="DETERIORO"[^>]*checked', second)
-    # a PÉRDIDA card: the PDF is shown and required
-    nt = tag(html, "notarized_pdf")
-    assert "disabled" not in nt and "required" in nt
-    assert 'id="notarizedWrap" hidden' not in html
 
 
 def test_plate_quantity_select_follows_the_card_type():
@@ -265,22 +280,15 @@ def test_total_plates_is_an_output_not_an_input():
 
 
 @pytest.mark.parametrize("acting", ["PROPIETARIO", "POSEEDOR"])
-def test_owner_or_possessor_is_checked_and_deterioro_keeps_the_pdf_off(acting):
+def test_owner_or_possessor_is_checked(acting):
     html = render(form={"acting_as": acting, "card_0_reason": "DETERIORO"})
     assert re.search(rf'name="acting_as" value="{acting}"( required)? checked', html)
-    assert "disabled" in tag(html, "notarized_pdf")
 
 
 def test_a_posted_gestor_is_not_pre_selected_on_the_re_rendered_form():
     html = render(form={"acting_as": "GESTOR", "card_0_reason": "DETERIORO"})
     assert not re.search(r'name="acting_as"[^>]* checked', html)
     assert "gestor" not in html.lower()
-
-
-def test_deterioro_only_keeps_the_pdf_hidden():
-    html = render(form={"acting_as": "POSEEDOR", "card_0_reason": "DETERIORO", "card_1_reason": "DETERIORO"})
-    assert 'id="notarizedWrap" hidden' in html
-    assert "disabled" in tag(html, "notarized_pdf")
 
 
 def test_form_values_are_escaped():
@@ -290,20 +298,13 @@ def test_form_values_are_escaped():
     assert "<img src=x" not in html
 
 
-def test_errors_banner_and_reattach_note():
+def test_errors_banner_and_resign_note():
     html = render(errors=["La placa no es válida.", "Falta la firma."])
     assert "La placa no es válida." in html and "Falta la firma." in html
     assert 'class="error" role="alert"><ul>' in html
-    assert "Vuelve a adjuntar el PDF y a firmar" in html
+    assert html.count("Vuelve a firmar.") == 1
     assert "La placa no es válida." not in render()
-    assert "Vuelve a adjuntar" not in render()
-
-
-def test_reattach_note_next_to_pdf_only_when_some_card_is_perdida():
-    perdida = render(errors=["x"], form={"card_0_reason": "PÉRDIDA"})
-    deterioro = render(errors=["x"], form={"card_0_reason": "DETERIORO"})
-    assert perdida.count("Vuelve a adjuntar el PDF y a firmar") == 2  # next to the PDF + signature
-    assert deterioro.count("Vuelve a adjuntar el PDF y a firmar") == 1
+    assert "Vuelve a firmar" not in render()
 
 
 def test_turnstile_with_and_without_site_key():

@@ -9,7 +9,7 @@ login decorator and everything else here is defence in depth:
   nothing until the owner sets the Cloudflare keys.
 * POST pipeline, cheapest check first: honeypot, signed form token (minimum
   and maximum age), Turnstile, per-IP rate limit (counted in Postgres), then
-  parsing, file saving, validation and finally `submit_declaration`.
+  parsing, signature saving, validation and finally `submit_declaration`.
 * The form is ONLY for individuals declaring for themselves (PROPIETARIO or
   POSEEDOR). The core still supports acting_as GESTOR (a separate public
   endpoint for gestores is planned), but a GESTOR posted here by hand is
@@ -18,8 +18,10 @@ login decorator and everything else here is defence in depth:
   blocks (`card_<i>_*`, stable and possibly sparse after a removal); the server
   reads whichever indices arrive, in numeric order, and rejects more than
   MAX_CARDS of them BEFORE building the input or storing any file.
-* Files are written before validation (the validator needs their names); any
-  failure deletes every file saved during the request.
+* The form has NO file upload (a PÉRDIDA document is notarized offline: staff
+  hand the client the declaration as a PDF). The only stored file is the
+  signature PNG, written before validation (the validator needs its name); any
+  failure deletes it.
 * Privacy: the response is the same generic page for an approved and for a
   `pending_review` declaration. Status, flags and any detail about a previous
   owner never reach the anonymous submitter (they go to the log without PII).
@@ -29,7 +31,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -40,7 +42,6 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from app.core import db, normalize
 from app.core.declarations import (
     ACTING_AS_GESTOR,
-    LOSS_REASON,
     MAX_CARDS,
     DeclarationInput,
     OwnershipCardInput,
@@ -50,11 +51,13 @@ from app.core.declarations import (
     validate_declaration,
 )
 from app.web import antispam
-from app.web.uploads import UploadError, resolve_upload_path, save_pdf, save_signature_png
+from app.web.uploads import UploadError, resolve_upload_path, save_signature_png
 
 bp = Blueprint("public_declaration", __name__)
 
-MAX_SUBMISSIONS_PER_IP_PER_HOUR = 5
+# Generous on purpose: customers scan the counter QR on the shop wifi and all
+# share one public IP.
+MAX_SUBMISSIONS_PER_IP_PER_HOUR = 20
 
 # Form keys never copied into `submitted_data`: the signature is a huge base64
 # blob (stored as a file) and the rest is anti-spam plumbing.
@@ -70,7 +73,7 @@ _CARD_KEY_RE = re.compile(r"card_(\d{1,6})_")
 _ERR_TOKEN = "El formulario expiró o no es válido, inténtalo de nuevo."
 _ERR_TURNSTILE = "No pudimos verificar que eres una persona. Inténtalo de nuevo."
 _ERR_GENERIC = "No pudimos guardar tu declaración por un problema temporal. Inténtalo de nuevo en unos minutos."
-_ERR_TOO_LARGE = "Los archivos enviados son demasiado grandes. Reduce el tamaño del PDF e inténtalo de nuevo."
+_ERR_TOO_LARGE = "Los datos enviados son demasiado grandes. Inténtalo de nuevo."
 _ERR_RATE_LIMIT = (
     "Recibimos varias declaraciones desde tu conexión. "
     "Inténtalo de nuevo más tarde o acércate al mostrador de INGSE."
@@ -191,28 +194,20 @@ def _delete_files(names: list[str]) -> None:
 
 
 def _save_files(inp: DeclarationInput, saved: list[str]) -> list[str]:
-    """Store the signature / PDF and set their names on `inp`; every stored name
-    is appended to `saved` so the caller can clean up. A missing file is left
-    as None (the validator reports it); only a present-but-bad one errors here."""
+    """Store the signature (a canvas data URL in a plain form field -- the form
+    has NO file upload) and set its name on `inp`; the stored name is appended
+    to `saved` so the caller can clean up. A missing signature is left as None
+    (the validator reports it); only a present-but-bad one errors here."""
     errors: list[str] = []
-
-    def attempt(save: Callable[[Any], str], value: Any, label: str) -> str | None:
-        try:
-            name = save(value)
-        except UploadError as exc:
-            errors.append(f"{label}: {exc}")
-            return None
-        saved.append(name)
-        return name
-
     signature = request.form.get("signature", "").strip()
     if signature:
-        inp.signature_file = attempt(save_signature_png, signature, "Firma del declarante")
-    # The PDF only matters when some card is a PÉRDIDA; one sent otherwise is discarded.
-    if any(normalize.normalize_choice(c.reason, normalize.DECLARATION_REASONS) == LOSS_REASON for c in inp.cards):
-        pdf = request.files.get("notarized_pdf")
-        if pdf is not None and pdf.filename:
-            inp.notarized_pdf_file = attempt(save_pdf, pdf, "PDF autenticado")
+        try:
+            name = save_signature_png(signature)
+        except UploadError as exc:
+            errors.append(f"Firma del declarante: {exc}")
+        else:
+            saved.append(name)
+            inp.signature_file = name
     return errors
 
 

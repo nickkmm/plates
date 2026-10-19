@@ -63,9 +63,6 @@
 {% set indices = card_indices if card_indices else [0] %}
 {% set max_cards_v = max_cards if max_cards else 30 %}
 {% set max_by_type = max_plates_by_type if max_plates_by_type else {} %}
-{% set loss = namespace(any=false) %}
-{% for i in indices %}{% if f.get('card_' ~ i ~ '_reason', '') == 'PÉRDIDA' %}{% set loss.any = true %}{% endif %}{% endfor %}
-{% set is_loss = loss.any %}
 {# The declarant block. `p` is the field-name prefix ("declarant"). #}
 {% macro person(p) %}
   <label class="field">Nombre completo
@@ -146,6 +143,8 @@
       <label class="choice"><input type="radio" name="{{ c }}reason" value="DETERIORO" required{% if rsn == 'DETERIORO' %} checked{% endif %}> Deterioro de la(s) placa(s)</label>
       <label class="choice"><input type="radio" name="{{ c }}reason" value="PÉRDIDA"{% if rsn == 'PÉRDIDA' %} checked{% endif %}> Pérdida o hurto de la(s) placa(s)</label>
     </div>
+    {# Plain note without JS; the script hides it unless this card's reason is PÉRDIDA. #}
+    <div class="note loss-note">Si declaras pérdida, INGSE te entregará este documento en el mostrador para que lo autentiques en una notaría.</div>
     <label class="field" style="margin-top:.4rem">Cantidad de placas
       <select name="{{ c }}plate_quantity" required>
         <option value="1"{% if q_sel == 1 %} selected{% endif %}>1</option>
@@ -169,7 +168,7 @@
   {% endif %}
   <div class="error" id="clientError" role="alert"></div>
 
-  <form id="declForm" method="post" action="/declaracion" enctype="multipart/form-data" data-max-cards="{{ max_cards_v }}" data-max-by-type='{{ max_by_type|tojson }}'>
+  <form id="declForm" method="post" action="/declaracion" data-max-cards="{{ max_cards_v }}" data-max-by-type='{{ max_by_type|tojson }}'>
     <input type="hidden" name="form_token" value="{{ token }}">
     <div class="hp" aria-hidden="true">
       <label>No llenar este campo <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true"></label>
@@ -190,7 +189,7 @@
 
     <div class="card">
       <h2>3. Tarjetas de propiedad</h2>
-      <div class="note">NOTA. Agrega un bloque por cada tarjeta de propiedad de la que necesites placas. Si la placa que vas a fabricar es por PÉRDIDA, este formato debe estar autenticado por Notaría (adjunta el PDF autenticado más abajo).</div>
+      <div class="note">NOTA. Agrega un bloque por cada tarjeta de propiedad de la que necesites placas.</div>
       <div id="cards">
         {% for i in indices %}{{ card_block(i, loop.index) }}{% endfor %}
       </div>
@@ -198,12 +197,6 @@
         <button type="button" class="secondary" id="addCard">+ Agregar tarjeta de propiedad</button>
       </div>
       <div class="total">Total de placas a fabricar <output id="totalPlates" aria-live="polite">{{ total_plates if total_plates else 1 }}</output></div>
-      <div id="notarizedWrap"{% if not is_loss %} hidden{% endif %}>
-        <label class="field">Formato autenticado por Notaría (PDF)
-          <input type="file" name="notarized_pdf" id="notarizedPdf" accept="application/pdf"{% if is_loss %} required{% else %} disabled{% endif %}>
-        </label>
-        {% if errors and is_loss %}<div class="note">Vuelve a adjuntar el PDF y a firmar.</div>{% endif %}
-      </div>
     </div>
 
     <template id="cardTemplate">{{ card_block('__I__', '') }}</template>
@@ -237,7 +230,7 @@
 
     <div class="card">
       <h2>7. Firma</h2>
-      {% if errors %}<div class="note">Vuelve a adjuntar el PDF y a firmar.</div>{% endif %}
+      {% if errors %}<div class="note">Vuelve a firmar.</div>{% endif %}
       <div class="pad-wrap">
         <div class="pad-label">Firma del declarante (cubre todas las tarjetas de propiedad de esta declaración)</div>
         <canvas class="pad" id="signatureCanvas" aria-label="Firma del declarante"></canvas>
@@ -374,16 +367,13 @@
     totalOut.textContent = String(total);
   }
 
-  // --- Conditional part (any PÉRDIDA -> PDF) ----------------------------
+  // --- Conditional part (a card's PÉRDIDA -> notarization note) ----------
   function applyState() {
-    var loss = false, bs = blocks();
+    var bs = blocks();
     for (var i = 0; i < bs.length; i++) {
-      if (checkedValue('card_' + bs[i].getAttribute('data-card') + '_reason') === 'PÉRDIDA') loss = true;
+      var note = bs[i].querySelector('.loss-note');
+      if (note) note.hidden = checkedValue('card_' + bs[i].getAttribute('data-card') + '_reason') !== 'PÉRDIDA';
     }
-    var pdf = document.getElementById('notarizedPdf');
-    document.getElementById('notarizedWrap').hidden = !loss;
-    pdf.disabled = !loss;
-    pdf.required = loss;
   }
 
   function renumber() {
