@@ -486,3 +486,22 @@ que `db/*` (recibe `conn` abierto, nunca comitea).
 
 Dinero (`Decimal`) de punta a punta, nunca mezclado con `float` — ver
 [`DATABASE.md`](DATABASE.md) para las columnas `NUMERIC` involucradas.
+
+### `declaration_pdf.py` (declaración juramentada en PDF)
+
+Función pura (sin Flask ni DB) que genera, con `reportlab`, la declaración
+juramentada tal como la envió el cliente, para que —cuando algún motivo es
+PÉRDIDA— el personal se la entregue y el cliente la lleve a autenticar en
+Notaría. La ruta de descarga la llama; este módulo no toca la base de datos.
+
+| Función | Qué hace |
+|---|---|
+| `build_declaration_pdf(*, declaration, cards, signature_png, issued_at) -> bytes` | PDF tamaño carta: encabezado INGSE, número y fecha, calidad en la que actúa (PROPIETARIO / POSEEDOR / GESTOR), datos del declarante (de `submitted_data["declarant"]`), un bloque por tarjeta de propiedad (con el propietario de cada una si es GESTOR), los textos legales, la firma del declarante con su nombre y documento, y un recuadro en blanco para la autenticación notarial. Pie "Declaración N° X — página i de n" en todas las páginas; el bloque de firma no se parte entre páginas. Si `signature_png` es `None` o no se puede leer, se omite la imagen y queda el espacio para firmar a mano. |
+
+Notas: todo texto del usuario se escapa (el `Paragraph` de reportlab
+interpreta marcado) y se reduce a caracteres que las fuentes estándar pueden
+imprimir. Los textos legales son una copia de la sección legal de
+`app/web/templates/declaration.html` (misma numeración, porque la cláusula
+4(b) cita "la sección 3"); `tests/core/test_declaration_pdf.py` falla si
+alguna de las dos se modifica sin la otra. La salida es determinista
+(`invariant=True`).
