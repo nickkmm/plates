@@ -4,7 +4,7 @@ A declaration is one sworn declaration ("declaración juramentada") submitted
 through the public form: ONE declarant (the person who signs, once) and one or
 more ownership cards ("tarjetas de propiedad"), each a `declaration_cards` row
 with its own reason, plate quantity, owner and review flags. This module is
-only the data layer; the decision rules (flags, auto-approval, review) live in
+only the data layer; the decision rules (flags, review) live in
 app/core/declarations.py.
 
 While a declaration is `pending_review`, `declarations.gestor_id` and every
@@ -33,6 +33,17 @@ STATUS_PENDING_REVIEW = "pending_review"
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 STATUSES = (STATUS_PENDING_REVIEW, STATUS_APPROVED, STATUS_REJECTED)
+
+# Derived stage of a declaration (NOT a column): the single "where is it in the
+# flow" answer shown as ONE badge. See declaration_stage.
+STAGE_TO_REVIEW = "to_review"
+STAGE_AWAITING_NOTARIZATION = "awaiting_notarization"
+STAGE_READY = "ready"
+STAGE_ATTENDED = "attended"
+STAGE_REJECTED = "rejected"
+STAGES = (
+    STAGE_TO_REVIEW, STAGE_AWAITING_NOTARIZATION, STAGE_READY, STAGE_ATTENDED, STAGE_REJECTED,
+)
 
 # declaration_cards.reason values (the Spanish business terms, stored as data;
 # normalize.DECLARATION_REASONS is the form's source of truth).
@@ -221,16 +232,59 @@ def requires_notarization(cards: Collection[DeclarationCardRecord]) -> bool:
     return any(card.reason == REASON_LOSS for card in cards)
 
 
+def declaration_stage(
+    declaration: DeclarationRecord, cards: Collection[DeclarationCardRecord],
+) -> str:
+    """The ONE stage a declaration is in (a STAGE_* value), derived from its
+    status, its order and its notarization step:
+
+    * rejected -> STAGE_REJECTED; pending_review -> STAGE_TO_REVIEW;
+    * approved with `production_order_id` -> STAGE_ATTENDED;
+    * approved, no order, a PÉRDIDA card (requires_notarization) and no
+      `notarized_received_at` -> STAGE_AWAITING_NOTARIZATION;
+    * approved otherwise -> STAGE_READY (an order can be created).
+
+    list_declarations(stage=...) applies the same rules in SQL.
+    """
+    if declaration.status == STATUS_REJECTED:
+        return STAGE_REJECTED
+    if declaration.status == STATUS_PENDING_REVIEW:
+        return STAGE_TO_REVIEW
+    if declaration.production_order_id is not None:
+        return STAGE_ATTENDED
+    if requires_notarization(cards) and declaration.notarized_received_at is None:
+        return STAGE_AWAITING_NOTARIZATION
+    return STAGE_READY
+
+
+# list_declarations(stage=...): the SQL form of declaration_stage's rules.
+_LOSS_CARD_SQL = (
+    "EXISTS (SELECT 1 FROM declaration_cards lc "
+    f"WHERE lc.declaration_id = d.id AND lc.reason = '{REASON_LOSS}')"
+)
+_STAGE_SQL = {
+    STAGE_TO_REVIEW: f"d.status = '{STATUS_PENDING_REVIEW}'",
+    STAGE_REJECTED: f"d.status = '{STATUS_REJECTED}'",
+    STAGE_ATTENDED: f"d.status = '{STATUS_APPROVED}' AND d.production_order_id IS NOT NULL",
+    STAGE_AWAITING_NOTARIZATION: (
+        f"d.status = '{STATUS_APPROVED}' AND d.production_order_id IS NULL "
+        f"AND d.notarized_received_at IS NULL AND {_LOSS_CARD_SQL}"
+    ),
+    STAGE_READY: (
+        f"d.status = '{STATUS_APPROVED}' AND d.production_order_id IS NULL "
+        f"AND (d.notarized_received_at IS NOT NULL OR NOT {_LOSS_CARD_SQL})"
+    ),
+}
+
+
 def list_declarations(
-    conn: psycopg.Connection[DictRow], *, status: str | None = None, query: str | None = None,
-    attended: bool | None = None, reason: str | None = None,
+    conn: psycopg.Connection[DictRow], *, stage: str | None = None, query: str | None = None,
+    reason: str | None = None,
 ) -> list[DeclarationRecord]:
     """Declarations, `pending_review` first and then newest first.
 
-    `status` filters by exact status. `attended` filters by whether an order
-    already attended the declaration (`production_order_id`): None = no filter,
-    True = IS NOT NULL, False = IS NULL (it does not look at the status, so
-    False also includes pending/rejected ones; combine it with `status`).
+    `stage` keeps one derived stage (STAGES; None = all; see
+    declaration_stage); an unknown value raises ValueError.
     `reason` keeps the declarations with AT LEAST ONE card of that reason
     (e.g. REASON_LOSS / REASON_DETERIORATION; a mixed declaration matches
     both). `query` is a case-insensitive substring
@@ -244,11 +298,10 @@ def list_declarations(
     """
     where: list[str] = []
     params: list[Any] = []
-    if status is not None:
-        where.append("d.status = %s")
-        params.append(status)
-    if attended is not None:
-        where.append("d.production_order_id IS NOT NULL" if attended else "d.production_order_id IS NULL")
+    if stage is not None:
+        if stage not in _STAGE_SQL:
+            raise ValueError(f"Unknown declaration stage: {stage!r}")
+        where.append(f"({_STAGE_SQL[stage]})")
     if reason is not None:
         where.append(
             "EXISTS (SELECT 1 FROM declaration_cards rc "
