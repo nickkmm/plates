@@ -315,7 +315,7 @@ class TestSavingWhatThePdfProduced:
             "plate_number": [line["plate_number"] or "" for line in lines],
             "plate_to": [line["plate_to"] or "" for line in lines],
             "quantity": [str(line["quantity"]) for line in lines],
-            "city": [line["city"] for line in lines],
+            "city": [line["city"] or "COLOMBIA" for line in lines],
         })
         assert resp.status_code == 200
         assert "Registrado" in resp.get_data(as_text=True)
@@ -326,14 +326,14 @@ class TestSavingWhatThePdfProduced:
             cur.execute(
                 "SELECT plate_number, plate_to, plate_type, quantity, city FROM plates ORDER BY id"
             )
-            # Only the público line names a city in the fixture. The two MOTO
-            # lines are nationwide, so their blank city becomes COLOMBIA; the
-            # CARRO PARTICULAR line is city-specific, so its blank stays blank.
+            # Only the público line names a city in the fixture. The city is now
+            # mandatory on every line, so the form below plays the person filling
+            # the blank ones in (COLOMBIA) before saving.
             assert cur.fetchall() == [
                 ("ABC12D", None, "MOTO PARTICULAR", 1, "COLOMBIA"),
                 ("EFG34H", None, "MOTO PARTICULAR", 1, "COLOMBIA"),
                 ("PUB100", None, "CARRO PÚBLICO", 2, "CIUDAD DEMO"),
-                ("RNG001", "RNG009", "CARRO PARTICULAR", 9, None),
+                ("RNG001", "RNG009", "CARRO PARTICULAR", 9, "COLOMBIA"),
             ]
 
     def test_each_line_saves_its_own_city_end_to_end(self, authenticated_client, db_conn):

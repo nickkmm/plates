@@ -125,6 +125,14 @@ def _rows_from_form(form) -> list[ExtractedRow]:
     ):
         if not (pt or "").strip():
             continue  # skip empty line
+        line_number = len(rows) + 1
+        # The city is mandatory on every line except a voided order (nothing
+        # shipped). Types that are not tied to one city use COLOMBIA.
+        if lt != "anulada_orden" and not (ct or "").strip():
+            raise ValueError(
+                f"Línea {line_number}: elegí la ciudad "
+                "(para las placas que no dependen de una ciudad usá COLOMBIA)."
+            )
         plate_number = (pn or "").strip() or None
         plate_to = (pto or "").strip() or None
         is_batch = is_voided = is_plate_annulled = False
