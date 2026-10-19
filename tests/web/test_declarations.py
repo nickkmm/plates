@@ -18,6 +18,12 @@ holds the whole declaration. Contract under test:
 - files are served only through a stored name resolved by
   app.web.uploads.resolve_upload_path, with safe headers.
 
+EVERY public declaration is stored as pending_review (flags or not); the
+point of sale approves it. So "approved" fixtures are built the real way:
+submit_declaration, then approve_declaration (see _submit_approved). Each
+declaration shows ONE status badge, its derived stage (db.declaration_stage),
+and the list filters by it (`?stage=`).
+
 Pending declarations are built through the real
 app.core.declarations.submit_declaration so the conflicts are real. No test
 here expects a DB error, so no rollback gymnastics are needed (see
@@ -47,6 +53,7 @@ from tests.core.test_declarations import (
     _gestor_input,
     _input,
     _owner,
+    _reviewer_id,
 )
 
 LIST_URL = "/declaraciones"
@@ -106,11 +113,35 @@ def _make_order(db_conn, order_number: str = "7001") -> int:
     return db.insert_order(db_conn, row=row, customer_id=None, created_by=None)
 
 
-def _approved(db_conn) -> int:
-    declaration_id = _submit(db_conn, _input(declarant=_owner(name="ANA APROBADA"),
-                                             cards=[_card(plate_number="AAA111", transit_license="L-A")]))
+def _submit_approved(db_conn, inp=None) -> int:
+    """Submit (always pending) and approve it as the reviewer: the one helper
+    every "approved declaration" fixture goes through."""
+    declaration_id = _submit(db_conn, inp)
+    decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
     assert _status(db_conn, declaration_id) == "approved"
     return declaration_id
+
+
+def _approved(db_conn, name: str = "ANA APROBADA", plate: str = "AAA111") -> int:
+    """An approved declaration whose only card is a DETERIORO (no notary step)."""
+    return _submit_approved(db_conn, _input(
+        declarant=_owner(name=name), cards=[_card(plate_number=plate, transit_license=f"L-{plate}")],
+    ))
+
+
+def _unflagged_pending(db_conn) -> int:
+    """A clean declaration: pending_review with NO review flags."""
+    declaration_id = _submit(db_conn)
+    record = db.get_declaration(db_conn, declaration_id)
+    assert record is not None and record.status == "pending_review" and record.review_flags == []
+    return declaration_id
+
+
+STAGE_BADGE = re.compile(r'class="badge (to_review|awaiting_notarization|ready|attended|rejected)"')
+
+
+def _stage_badges(html: str) -> list[str]:
+    return STAGE_BADGE.findall(html)
 
 
 def _attend(db_conn, declaration_id: int, order_number: str = "7001") -> int:
@@ -147,7 +178,7 @@ def _with_files(db_conn, uploads) -> tuple[int, dict[str, str]]:
         _gestor_input(cards=[_gcard(reason="PÉRDIDA")]),
         signature_file=names["signature"],
     )
-    declaration_id = _submit(db_conn, inp)
+    declaration_id = _submit_approved(db_conn, inp)
     # The public form no longer takes a notarized PDF; the column stays for legacy
     # rows, so write it straight through to keep covering that download kind.
     with db_conn.cursor() as cur:
@@ -160,36 +191,25 @@ def _with_files(db_conn, uploads) -> tuple[int, dict[str, str]]:
 
 class TestList:
     def test_default_shows_pending_first_and_hides_nothing_in_pending_tab(self, authenticated_client, db_conn):
-        approved_id = _submit(db_conn, _input(declarant=_owner(name="ANA APROBADA"),
-                                              cards=[_card(plate_number="AAA111", transit_license="L-A")]))
+        approved_id = _approved(db_conn)
         pending_id = _pending_recent(db_conn)
         html = authenticated_client.get(LIST_URL).data.decode()
         assert "MARIA LOPEZ" in html
-        assert "ANA APROBADA" not in html          # default tab = Pendientes
+        assert "ANA APROBADA" not in html          # default tab = Por revisar
         assert "Placa reciente" in html
         assert _status(db_conn, approved_id) == "approved"
         assert _status(db_conn, pending_id) == "pending_review"
 
     def test_all_tab_puts_pending_before_approved(self, authenticated_client, db_conn):
-        _submit(db_conn, _input(declarant=_owner(name="ANA APROBADA"),
-                                cards=[_card(plate_number="AAA111", transit_license="L-A")]))
+        _approved(db_conn)
         _pending_recent(db_conn)
-        html = authenticated_client.get(f"{LIST_URL}?status=all").data.decode()
+        html = authenticated_client.get(f"{LIST_URL}?stage=all").data.decode()
         assert html.index("MARIA LOPEZ") < html.index("ANA APROBADA")
 
-    def test_status_filters(self, authenticated_client, db_conn):
-        _submit(db_conn, _input(declarant=_owner(name="ANA APROBADA"),
-                                cards=[_card(plate_number="AAA111", transit_license="L-A")]))
-        pending_id = _pending_recent(db_conn)
-        decl.reject_declaration(db_conn, pending_id, 1, "no")
-        approved = authenticated_client.get(f"{LIST_URL}?status=approved").data.decode()
-        rejected = authenticated_client.get(f"{LIST_URL}?status=rejected").data.decode()
-        assert "ANA APROBADA" in approved and "MARIA LOPEZ" not in approved
-        assert "MARIA LOPEZ" in rejected and "ANA APROBADA" not in rejected
-
-    def test_unknown_status_falls_back_to_pending(self, authenticated_client, db_conn):
+    def test_unknown_stage_falls_back_to_pending(self, authenticated_client, db_conn):
         _pending_recent(db_conn)
-        assert authenticated_client.get(f"{LIST_URL}?status=bogus").status_code == 200
+        resp = authenticated_client.get(f"{LIST_URL}?stage=bogus")
+        assert resp.status_code == 200 and "MARIA LOPEZ" in resp.data.decode()
 
     def test_one_row_per_declaration_with_counts_and_summary(self, authenticated_client, db_conn):
         _three_cards_one_flagged(db_conn)
@@ -216,7 +236,7 @@ class TestList:
     ])
     def test_search_single_card(self, authenticated_client, db_conn, term):
         _pending_recent(db_conn)
-        html = authenticated_client.get(f"{LIST_URL}?status=all&q={term}").data.decode()
+        html = authenticated_client.get(f"{LIST_URL}?stage=all&q={term}").data.decode()
         assert "MARIA LOPEZ" in html
 
     @pytest.mark.parametrize("term", [
@@ -226,7 +246,7 @@ class TestList:
     ])
     def test_search_finds_the_declaration_through_any_card(self, authenticated_client, db_conn, term):
         _three_cards_one_flagged(db_conn)
-        html = authenticated_client.get(f"{LIST_URL}?status=all&q={term}").data.decode()
+        html = authenticated_client.get(f"{LIST_URL}?stage=all&q={term}").data.decode()
         assert "GESTORIA SUR" in html
 
     def test_search_without_match(self, authenticated_client, db_conn):
@@ -237,7 +257,7 @@ class TestList:
     def test_pending_count_is_visible(self, authenticated_client, db_conn):
         _pending_recent(db_conn)
         html = authenticated_client.get(LIST_URL).data.decode()
-        assert "Pendientes (1)" in html
+        assert "Por revisar (1)" in html
 
     def test_list_loads_cards_with_one_query_for_all_rows(self, authenticated_client, db_conn, monkeypatch):
         _pending_recent(db_conn)
@@ -250,7 +270,7 @@ class TestList:
             return real(conn, ids)
 
         monkeypatch.setattr(db, "list_cards_for_declarations", spy)
-        authenticated_client.get(f"{LIST_URL}?status=all")
+        authenticated_client.get(f"{LIST_URL}?stage=all")
         assert calls == [2]
 
 
@@ -369,7 +389,7 @@ class TestDetail:
         self, authenticated_client, db_conn,
     ):
         cards = [_gcard("ABC123", "L1"), _gcard("DEF456", "L2", owner=_luis())]
-        declaration_id = _submit(db_conn, _gestor_input(cards=cards))
+        declaration_id = _submit_approved(db_conn, _gestor_input(cards=cards))
         rows = _cards_of(db_conn, declaration_id)
         html = authenticated_client.get(_detail(declaration_id)).data.decode()
         assert "Resultado de la revisión" in html
@@ -382,6 +402,28 @@ class TestDetail:
         assert record is not None and record.gestor_id is not None
         assert f"/customers/{record.gestor_id}" in html
         assert "/approve" not in html and "/reject" not in html
+
+    @pytest.mark.parametrize("client_fixture", ["authenticated_client", "punto_venta_client"])
+    def test_unflagged_pending_has_a_plain_approve_button_and_reject_with_required_note(
+        self, request, db_conn, client_fixture,
+    ):
+        client = request.getfixturevalue(client_fixture)
+        declaration_id = _unflagged_pending(db_conn)
+        html = client.get(_detail(declaration_id)).data.decode()
+        assert f'action="/declaraciones/{declaration_id}/approve"' in html
+        assert "Aprobar declaración</button>" in html
+        assert "no tiene alertas" in html
+        assert "se crean o enlazan" in html and "tarjeta de propiedad" in html
+        assert f'action="/declaraciones/{declaration_id}/reject"' in html
+        assert re.search(r'<textarea name="note" rows="2" required>', html)
+        assert "Retenida" not in html and 'name="reassign_' not in html
+        assert _stage_badges(html) == ["to_review"] and "Por revisar" in html
+
+    def test_flagged_pending_keeps_alerts_and_the_same_approve_button(self, authenticated_client, db_conn):
+        html = authenticated_client.get(_detail(_pending_recent(db_conn))).data.decode()
+        assert "Aprobar declaración</button>" in html
+        assert "no tiene alertas" not in html
+        assert "Retenida por 1 de 1 tarjeta" in html
 
     def test_admin_sees_review_forms_for_pending(self, authenticated_client, db_conn):
         declaration_id = _pending_recent(db_conn)
@@ -413,7 +455,7 @@ class TestDetail:
         assert "administrador" not in html
 
     def test_point_of_sale_gets_no_links_to_the_admin_only_customer_screen(self, punto_venta_client, db_conn):
-        declaration_id = _submit(db_conn, _gestor_input(cards=[_gcard("ABC123", "L1")]))
+        declaration_id = _submit_approved(db_conn, _gestor_input(cards=[_gcard("ABC123", "L1")]))
         html = punto_venta_client.get(_detail(declaration_id)).data.decode()
         assert "Resultado de la revisión" in html
         assert "/customers/" not in html
@@ -505,6 +547,33 @@ class TestApprove:
         assert record.reviewed_by is not None
         (row,) = _cards_of(db_conn, declaration_id)
         assert row.customer_id is not None and row.ownership_card_id is not None
+
+    @pytest.mark.parametrize("client_fixture", ["authenticated_client", "punto_venta_client"])
+    def test_unflagged_declaration_is_approved_end_to_end(self, request, db_conn, client_fixture):
+        client = request.getfixturevalue(client_fixture)
+        declaration_id = _unflagged_pending(db_conn)
+        assert db.get_customer_by_name(db_conn, "MARIA LOPEZ") is None      # nothing created yet
+        assert _count(db_conn, "ownership_cards") == 0
+        resp = client.post(f"{_detail(declaration_id)}/approve", data={"note": ""})
+        assert resp.status_code == 302 and resp.headers["Location"].endswith(_detail(declaration_id))
+        assert _status(db_conn, declaration_id) == "approved"
+        assert db.get_customer_by_name(db_conn, "MARIA LOPEZ") is not None
+        (row,) = _cards_of(db_conn, declaration_id)
+        assert row.customer_id is not None and row.ownership_card_id is not None
+        html = client.get(_detail(declaration_id)).data.decode()
+        assert _stage_badges(html) == ["ready"] and "Lista para pedido" in html
+        assert "Crear pedido" in html and "/approve" not in html
+
+    def test_approval_error_on_an_unflagged_declaration_is_shown_in_spanish(self, authenticated_client, db_conn):
+        declaration_id = _unflagged_pending(db_conn)
+        # Created after the submission: approve_declaration re-checks the customer's type.
+        db.resolve_or_create_customer(db_conn, "MARIA LOPEZ", type="EMPRESA")
+        resp = authenticated_client.post(f"{_detail(declaration_id)}/approve", data={})
+        assert resp.status_code == 400
+        html = resp.data.decode()
+        assert 'class="error"' in html and "ya existe con tipo EMPRESA" in html
+        assert _status(db_conn, declaration_id) == "pending_review"
+        assert "Aprobar declaración</button>" in html
 
     def test_approve_with_reassign_moves_the_card(self, authenticated_client, db_conn):
         _create_card(db_conn, "OTRO DUENO")
@@ -659,7 +728,7 @@ class TestCreateOrder:
     def test_no_button_for_pending_but_explains_why(self, authenticated_client, db_conn):
         html = authenticated_client.get(_detail(_pending_recent(db_conn))).data.decode()
         assert "Crear pedido" not in html and "declaration_id=" not in html
-        assert "cuando el punto de venta apruebe" in html
+        assert "cuando el punto de venta apruebe" in html and "revisa todas las declaraciones" in html
         assert "administrador" not in html
 
     def test_no_button_for_rejected(self, authenticated_client, db_conn):
@@ -668,6 +737,7 @@ class TestCreateOrder:
         html = authenticated_client.get(_detail(pending_id)).data.decode()
         assert "Crear pedido" not in html and "declaration_id=" not in html
         assert "cuando el punto de venta apruebe" not in html
+        assert _stage_badges(html) == ["rejected"] and "Rechazada" in html
 
     @pytest.mark.parametrize("client_fixture", ["authenticated_client", "punto_venta_client"])
     def test_attended_shows_badge_and_order_link_without_button(self, request, db_conn, client_fixture):
@@ -678,6 +748,7 @@ class TestCreateOrder:
         assert "Atendida" in html
         assert f'href="/records/{order_id}"' in html and ">7001<" in html
         assert "Crear pedido" not in html
+        assert _stage_badges(html) == ["attended"]
 
     def test_pending_page_keeps_approve_and_reject_forms(self, authenticated_client, db_conn):
         pending_id = _pending_recent(db_conn)
@@ -692,47 +763,97 @@ class TestCreateOrder:
         html = resp.data.decode()
         assert "Crear pedido" not in html and 'class="error"' in html
 
-    def test_list_shows_attended_state_next_to_status(self, authenticated_client, db_conn):
-        to_attend = _approved(db_conn)
-        done = _submit(db_conn, _input(declarant=_owner(name="BETO ATENDIDO"),
-                                       cards=[_card(plate_number="BBB222", transit_license="L-B")]))
+    def test_list_shows_one_stage_badge_per_row(self, authenticated_client, db_conn):
+        _approved(db_conn)
+        done = _approved(db_conn, name="BETO ATENDIDO", plate="BBB222")
         _attend(db_conn, done)
-        html = authenticated_client.get(f"{LIST_URL}?status=approved").data.decode()
-        rows = html[html.index("<tbody>"):].split("<tr>")
+        html = authenticated_client.get(f"{LIST_URL}?stage=all").data.decode()
+        rows = html[html.index("<tbody>"):].split("<tr>")[1:]
         by_name = {name: next(r for r in rows if name in r) for name in ("ANA APROBADA", "BETO ATENDIDO")}
-        assert "Por atender" in by_name["ANA APROBADA"] and "Atendida" not in by_name["ANA APROBADA"]
-        assert "Atendida" in by_name["BETO ATENDIDO"] and "Por atender" not in by_name["BETO ATENDIDO"]
-        assert to_attend != done
+        assert _stage_badges(by_name["ANA APROBADA"]) == ["ready"]
+        assert "Lista para pedido" in by_name["ANA APROBADA"]
+        assert _stage_badges(by_name["BETO ATENDIDO"]) == ["attended"]
+        assert "Atendida" in by_name["BETO ATENDIDO"] and "Lista para pedido" not in by_name["BETO ATENDIDO"]
+        for row in by_name.values():
+            for old in ("Aprobada", "Por atender", "Autenticada"):
+                assert old not in row
 
-    def test_list_pending_rows_have_neither_state(self, authenticated_client, db_conn):
+    def test_list_pending_row_has_only_the_review_badge(self, authenticated_client, db_conn):
         _pending_recent(db_conn)
-        html = authenticated_client.get(LIST_URL).data.decode()
-        row = html[html.index("<tbody>"):]
-        assert "Por atender" not in row and "Atendida" not in row
+        row = authenticated_client.get(LIST_URL).data.decode().split("<tbody>")[1]
+        assert _stage_badges(row) == ["to_review"] and "Por revisar" in row
+        assert "Atendida" not in row and "Lista para pedido" not in row and "Pendiente" not in row
 
-    def test_attended_filter(self, authenticated_client, db_conn):
-        _approved(db_conn)
-        done = _submit(db_conn, _input(declarant=_owner(name="BETO ATENDIDO"),
-                                       cards=[_card(plate_number="BBB222", transit_license="L-B")]))
-        _attend(db_conn, done)
-        todo = authenticated_client.get(f"{LIST_URL}?status=approved&attended=no").data.decode()
-        yes = authenticated_client.get(f"{LIST_URL}?status=approved&attended=yes").data.decode()
-        everything = authenticated_client.get(f"{LIST_URL}?status=approved&attended=all").data.decode()
-        assert "ANA APROBADA" in todo and "BETO ATENDIDO" not in todo
-        assert "BETO ATENDIDO" in yes and "ANA APROBADA" not in yes
-        assert "ANA APROBADA" in everything and "BETO ATENDIDO" in everything
+    def test_failed_review_rerender_keeps_a_single_badge(self, authenticated_client, db_conn):
+        pending_id = _pending_recent(db_conn)
+        html = authenticated_client.post(f"{_detail(pending_id)}/reject", data={"note": ""}).data.decode()
+        assert _stage_badges(html) == ["to_review"]
 
-    def test_attended_filter_is_kept_by_the_tabs_and_selected(self, authenticated_client, db_conn):
-        _approved(db_conn)
-        html = authenticated_client.get(f"{LIST_URL}?status=approved&attended=no&q=ANA").data.decode()
-        assert '<option value="no" selected>Por atender</option>' in html
-        assert "attended=no" in html
-        assert 'name="status" value="approved"' in html
 
-    def test_unknown_attended_value_means_no_filter(self, authenticated_client, db_conn):
-        _approved(db_conn)
-        resp = authenticated_client.get(f"{LIST_URL}?status=approved&attended=bogus")
-        assert resp.status_code == 200 and "ANA APROBADA" in resp.data.decode()
+class TestStageFilter:
+    @pytest.fixture
+    def names(self, db_conn) -> dict[str, str]:
+        """One declaration per situation, keyed by label -> declarant name."""
+        _approved(db_conn, name="PEDRO LISTO", plate="PPP111")                       # ready
+        attended = _approved(db_conn, name="BETO ATENDIDO", plate="BBB222")
+        _attend(db_conn, attended)                                                    # attended
+        _loss_approved(db_conn, name="LUISA PERDIDA", plate="LLL111")                 # awaiting_notarization
+        notarized = _loss_approved(db_conn, name="NORA NOTARIADA", plate="NNN333")
+        db.set_declaration_notarized_received(db_conn, notarized, received_by=None)   # ready
+        rejected = _pending_recent(db_conn)                                           # MARIA LOPEZ
+        decl.reject_declaration(db_conn, rejected, 1, "no")
+        _three_cards_one_flagged(db_conn)                                             # GESTORIA SUR: to_review
+        return {
+            "ready": "PEDRO LISTO", "attended": "BETO ATENDIDO", "awaiting_notarization": "LUISA PERDIDA",
+            "notarized": "NORA NOTARIADA", "rejected": "MARIA LOPEZ", "to_review": "GESTORIA SUR",
+        }
+
+    @staticmethod
+    def _shown(client, names: dict[str, str], qs: str) -> set[str]:
+        html = client.get(f"{LIST_URL}?{qs}").data.decode()
+        return {key for key, name in names.items() if name in html}
+
+    def test_each_tab_shows_only_its_stage(self, authenticated_client, names):
+        def shown(stage: str) -> set[str]:
+            return self._shown(authenticated_client, names, f"stage={stage}")
+
+        assert shown("to_review") == {"to_review"}
+        assert shown("awaiting_notarization") == {"awaiting_notarization"}
+        assert shown("ready") == {"ready", "notarized"}
+        assert shown("attended") == {"attended"}
+        assert shown("rejected") == {"rejected"}
+        assert shown("all") == set(names)
+
+    def test_default_tab_is_to_review(self, authenticated_client, names):
+        assert self._shown(authenticated_client, names, "") == {"to_review"}
+
+    def test_stage_combines_with_search_and_reason(self, authenticated_client, names):
+        def get(qs: str) -> set[str]:
+            return self._shown(authenticated_client, names, qs)
+
+        assert get("stage=ready&q=PEDRO") == {"ready"}
+        assert get("stage=ready&q=BETO") == set()
+        assert get("stage=all&q=LUISA") == {"awaiting_notarization"}
+        assert get("stage=ready&reason=loss") == {"notarized"}
+        assert get("stage=ready&reason=deterioration") == {"ready"}
+        assert get("stage=all&reason=loss") == {"awaiting_notarization", "notarized", "to_review"}
+        assert get("stage=awaiting_notarization&reason=deterioration") == set()
+        assert get("stage=all&reason=loss&q=NORA") == {"notarized"}
+
+    def test_tabs_are_the_stage_labels_and_keep_search_and_reason(self, authenticated_client, names):
+        html = authenticated_client.get(f"{LIST_URL}?stage=ready&q=PEDRO&reason=loss").data.decode()
+        filters = html[html.index('class="filters"'):html.index('class="search"')]
+        for label in ("Por revisar", "Falta autenticación", "Lista para pedido", "Atendidas", "Rechazadas", "Todas"):
+            assert f">{label}" in filters
+        assert "Pendientes" not in filters and "Aprobadas" not in filters
+        assert re.search(r'href="[^"]*stage=awaiting_notarization[^"]*q=PEDRO[^"]*reason=loss', filters)
+        assert re.search(r'class="on">Lista para pedido', filters)
+        assert 'name="stage" value="ready"' in html
+        assert 'name="attended"' not in html
+
+    def test_stage_filter_empty_state_message(self, authenticated_client, db_conn):
+        html = authenticated_client.get(f"{LIST_URL}?stage=attended").data.decode()
+        assert "No hay declaraciones en esta etapa." in html
 
 
 class TestRoles:
@@ -817,14 +938,13 @@ class TestRoles:
 
 
 def _loss_approved(db_conn, name: str = "LUISA PERDIDA", plate: str = "LLL111", **input_kw) -> int:
-    """An auto-approved declaration whose only card is a PÉRDIDA."""
-    declaration_id = _submit(db_conn, _input(
+    """An approved declaration whose only card is a PÉRDIDA (awaiting the
+    notarized copy until it is marked received)."""
+    return _submit_approved(db_conn, _input(
         declarant=_owner(name=name),
         cards=[_card(plate_number=plate, transit_license=f"L-{plate}", reason="PÉRDIDA")],
         **input_kw,
     ))
-    assert _status(db_conn, declaration_id) == "approved"
-    return declaration_id
 
 
 def _record(db_conn, declaration_id: int) -> db.DeclarationRecord:
@@ -861,7 +981,7 @@ class TestReasons:
         everyone = {"ANA APROBADA", "LUISA PERDIDA", "GESTORIA SUR"}
 
         def names(reason: str) -> set[str]:
-            html = authenticated_client.get(f"{LIST_URL}?status=all&reason={reason}").data.decode()
+            html = authenticated_client.get(f"{LIST_URL}?stage=all&reason={reason}").data.decode()
             return {n for n in everyone if n in html}
 
         assert names("all") == everyone
@@ -870,7 +990,7 @@ class TestReasons:
         assert names("bogus") == everyone
         assert names("PÉRDIDA") == {"LUISA PERDIDA", "GESTORIA SUR"}         # the stored word works too
 
-    def test_reason_filter_combines_with_status_attended_and_search(self, authenticated_client, db_conn):
+    def test_reason_filter_combines_with_stage_and_search(self, authenticated_client, db_conn):
         _loss_approved(db_conn)
         attended = _loss_approved(db_conn, name="BETO ATENDIDO", plate="BBB222")
         _attend(db_conn, attended)
@@ -879,15 +999,15 @@ class TestReasons:
         def get(qs: str) -> str:
             return authenticated_client.get(f"{LIST_URL}?{qs}").data.decode()
 
-        assert "LUISA PERDIDA" not in get("status=pending_review&reason=loss")
-        html = get("status=approved&reason=loss&attended=no")
+        assert "LUISA PERDIDA" not in get("stage=to_review&reason=loss")
+        html = get("stage=awaiting_notarization&reason=loss")
         assert "LUISA PERDIDA" in html and "BETO ATENDIDO" not in html and "ANA APROBADA" not in html
-        html = get("status=approved&reason=loss&q=BETO")
+        html = get("stage=attended&reason=loss&q=BETO")
         assert "BETO ATENDIDO" in html and "LUISA PERDIDA" not in html
 
     def test_reason_select_is_rendered_selected_and_kept_by_the_tabs(self, authenticated_client, db_conn):
         _loss_approved(db_conn)
-        html = authenticated_client.get(f"{LIST_URL}?status=approved&reason=loss").data.decode()
+        html = authenticated_client.get(f"{LIST_URL}?stage=awaiting_notarization&reason=loss").data.decode()
         assert '<option value="loss" selected>Pérdida</option>' in html
         assert '<option value="all">Todos</option>' in html
         assert '<option value="deterioration">Deterioro</option>' in html
@@ -895,23 +1015,25 @@ class TestReasons:
 
 
 class TestNotarizationList:
-    def test_badges_on_approved_declarations_with_a_loss_card(self, authenticated_client, db_conn):
+    def test_one_badge_tells_the_notarization_state_of_loss_declarations(self, authenticated_client, db_conn):
         _loss_approved(db_conn)
         done = _loss_approved(db_conn, name="BETO AUTENTICADO", plate="BBB222")
         db.set_declaration_notarized_received(db_conn, done, received_by=None)
         _approved(db_conn)
-        html = authenticated_client.get(f"{LIST_URL}?status=approved").data.decode()
+        html = authenticated_client.get(f"{LIST_URL}?stage=all").data.decode()
         rows = html[html.index("<tbody>"):].split("<tr>")
         by_name = {n: next(r for r in rows if n in r) for n in ("LUISA PERDIDA", "BETO AUTENTICADO", "ANA APROBADA")}
-        missing_row, done_row, plain_row = (by_name[n] for n in ("LUISA PERDIDA", "BETO AUTENTICADO", "ANA APROBADA"))
-        assert "Falta autenticación" in missing_row and "Autenticada" not in missing_row
-        assert "Autenticada" in done_row and "Falta autenticación" not in done_row
-        assert "Falta autenticación" not in plain_row and "Autenticada" not in plain_row
+        assert _stage_badges(by_name["LUISA PERDIDA"]) == ["awaiting_notarization"]
+        assert "Falta autenticación" in by_name["LUISA PERDIDA"]
+        assert _stage_badges(by_name["BETO AUTENTICADO"]) == ["ready"]
+        done_row = by_name["BETO AUTENTICADO"]
+        assert "Falta autenticación" not in done_row and "Autenticada" not in done_row
+        assert _stage_badges(by_name["ANA APROBADA"]) == ["ready"]
 
     def test_pending_with_a_loss_card_has_no_notary_badge(self, authenticated_client, db_conn):
         _three_cards_one_flagged(db_conn)
-        html = authenticated_client.get(LIST_URL).data.decode()
-        assert "Falta autenticación" not in html and "Autenticada" not in html
+        body = authenticated_client.get(LIST_URL).data.decode().split("<tbody>")[1]
+        assert _stage_badges(body) == ["to_review"] and "Falta autenticación" not in body
 
 
 class TestPdf:
@@ -1006,6 +1128,7 @@ class TestNotarizationDetail:
         assert "/notarized/undo" not in html
         assert "Crear pedido" not in html and "declaration_id=" not in html
         assert "Falta la autenticación notarial" in html
+        assert _stage_badges(html) == ["awaiting_notarization"]
 
     def test_received_block_shows_when_who_and_undo_and_restores_the_create_button(
         self, authenticated_client, db_conn,
@@ -1020,6 +1143,7 @@ class TestNotarizationDetail:
         assert "Falta la autenticación notarial" not in html
         assert "Crear pedido" in html and f'href="/ingest?declaration_id={declaration_id}"' in html
         assert "Descargar PDF para autenticación" in html            # reprint stays available
+        assert _stage_badges(html) == ["ready"]
 
     def test_deterioration_only_has_no_block_and_keeps_the_create_button(self, authenticated_client, db_conn):
         html = authenticated_client.get(_detail(_approved(db_conn))).data.decode()
@@ -1027,10 +1151,9 @@ class TestNotarizationDetail:
         assert "Crear pedido" in html
 
     def test_mixed_declaration_is_gated(self, authenticated_client, db_conn):
-        declaration_id = _submit(db_conn, _gestor_input(
+        declaration_id = _submit_approved(db_conn, _gestor_input(
             cards=[_gcard("ABC123", "L1"), _gcard("DEF456", "L2", reason="PÉRDIDA")],
         ))
-        assert _status(db_conn, declaration_id) == "approved"
         html = authenticated_client.get(_detail(declaration_id)).data.decode()
         assert "Autenticación notarial" in html and "Crear pedido" not in html
 
@@ -1046,7 +1169,7 @@ class TestNotarizationDetail:
         _attend(db_conn, declaration_id)
         html = authenticated_client.get(_detail(declaration_id)).data.decode()
         assert "Autenticación recibida" in html and "/notarized/undo" not in html
-        assert "Atendida" in html
+        assert _stage_badges(html) == ["attended"] and "Atendida" in html
 
 
 class TestNotarizedActions:

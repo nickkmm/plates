@@ -27,11 +27,12 @@
     dd { margin:0; overflow-wrap:anywhere; }
     .muted { color:#777; font-size:.9rem; }
     .badge { display:inline-block; border-radius:5px; padding:.15rem .5rem; font-size:.78rem; margin-right:.2rem; }
-    .badge.pending_review { background:#fff3d6; color:#8a5a00; }
-    .badge.approved { background:#e8f6ee; color:#1a7a45; }
-    .badge.rejected { background:#fdecec; color:#900; }
-    .badge.flag { background:#fdecec; color:#900; }
+    .badge.to_review { background:#fff3d6; color:#8a5a00; }
+    .badge.awaiting_notarization { background:#fdecec; color:#900; }
+    .badge.ready { background:#e8f6ee; color:#1a7a45; }
     .badge.attended { background:#e6f0fb; color:#0b5cad; }
+    .badge.rejected { background:#eee; color:#555; }
+    .badge.flag { background:#fdecec; color:#900; }
     .badge.reason { font-weight:600; font-size:.82rem; }
     .badge.reason.loss { background:#c33; color:#fff; }
     .badge.reason.deterioration { background:#e6f0fb; color:#0b5cad; }
@@ -84,29 +85,28 @@
   {% endmacro %}
 
   <h1>Declaración #{{ d.id }}
-    <span class="badge {{ d.status }}">{{ status_labels.get(d.status, d.status) }}</span>
-    {% if d.production_order_id %}<span class="badge attended">Atendida</span>{% endif %}
+    <span class="badge {{ stage }}">{{ stage_labels[stage] }}</span>
     {% for f in d.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% endfor %}
   </h1>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
-  {% if d.production_order_id %}
+  {% if stage == 'attended' %}
   <div class="next done" id="attended">
     <p><strong>Atendida.</strong> Con esta declaración se creó el pedido
       {% if attended_order %}<a href="{{ url_for('records.record_detail', order_id=d.production_order_id) }}">{{ attended_order.order_number }}</a>{% else %}<a href="{{ url_for('records.record_detail', order_id=d.production_order_id) }}">#{{ d.production_order_id }}</a>{% endif %}.</p>
   </div>
-  {% elif d.status == approved_status and needs_notary and not notary_received %}
+  {% elif stage == 'awaiting_notarization' %}
   <div class="next waiting" id="create-order">
     <p><strong>Declaración aprobada.</strong> Falta la autenticación notarial: el pedido se podrá crear cuando el cliente entregue la declaración autenticada y se marque como recibida (ver «Autenticación notarial» abajo).</p>
   </div>
-  {% elif d.status == approved_status %}
+  {% elif stage == 'ready' %}
   <div class="next" id="create-order">
     <p><strong>Declaración aprobada.</strong> Falta registrar el pedido de las placas declaradas.</p>
     <a class="create" href="{{ url_for('ingest.ingest', declaration_id=d.id) }}">Crear pedido</a>
   </div>
-  {% elif d.status == pending_status %}
+  {% elif stage == 'to_review' %}
   <div class="next waiting">
-    <p class="muted">El pedido se podrá crear cuando el punto de venta apruebe esta declaración.</p>
+    <p class="muted">El punto de venta revisa todas las declaraciones; el pedido se podrá crear cuando el punto de venta apruebe la declaración.</p>
   </div>
   {% endif %}
 
@@ -240,7 +240,6 @@
   <fieldset>
     <legend>Resultado de la revisión</legend>
     <dl>
-      <dt>Estado</dt><dd>{{ status_labels.get(d.status, d.status) }}</dd>
       {% if d.reviewed_at %}<dt>Revisada el</dt><dd>{{ d.reviewed_at.strftime('%d/%m/%Y %H:%M') }}</dd>{% endif %}
       {% if d.review_note %}<dt>Nota</dt><dd>{{ d.review_note }}</dd>{% endif %}
     </dl>
@@ -250,9 +249,10 @@
     <fieldset>
       <legend>Aprobar</legend>
       <form id="approve-form" method="post" action="{{ url_for('declarations.declaration_approve', declaration_id=d.id) }}">
-        <p class="muted">Aprueba toda la declaración: crea o enlaza el gestor, los clientes y cada tarjeta de propiedad a partir de lo declarado. Si una tarjeta falla, no se aprueba ninguna.</p>
+        {% if not flagged_cards %}<p class="muted">Esta declaración no tiene alertas.</p>{% endif %}
+        <p class="muted">Al aprobar se crean o enlazan el gestor (si aplica), los clientes y cada tarjeta de propiedad a partir de lo declarado. Si una tarjeta falla, no se aprueba ninguna.</p>
         <label>Nota (opcional)<textarea name="note" rows="2"></textarea></label>
-        <button type="submit" class="approve">Aprobar</button>
+        <button type="submit" class="approve">Aprobar declaración</button>
       </form>
     </fieldset>
     <fieldset>

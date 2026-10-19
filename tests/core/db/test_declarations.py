@@ -9,7 +9,7 @@ import psycopg
 import pytest
 
 from app.core import db
-from app.core.db.declarations import requires_notarization
+from app.core.db.declarations import STAGES, declaration_stage, requires_notarization
 from tests.conftest import TEST_USERNAME
 
 _DECLARANT = {"name": "ANA", "document_number": "123"}
@@ -167,42 +167,38 @@ class TestListDeclarations:
         ids = [d.id for d in db.list_declarations(db_conn)]
         assert ids == [pending_new, pending_old, rejected, approved_new]
 
-    def test_filter_by_status(self, db_conn):
-        pending = _insert(db_conn, status="pending_review")
-        _insert(db_conn, status="approved")
-        assert [d.id for d in db.list_declarations(db_conn, status="pending_review")] == [pending]
+    def test_filter_by_stage(self, db_conn):
+        ids = _stage_fixtures(db_conn)
+        assert [d.id for d in db.list_declarations(db_conn, stage="to_review")] == [ids["to_review"]]
+        assert [d.id for d in db.list_declarations(db_conn, stage="rejected")] == [ids["rejected"]]
+        assert [d.id for d in db.list_declarations(db_conn, stage="attended")] == [ids["attended"]]
+        assert [d.id for d in db.list_declarations(db_conn, stage="awaiting_notarization")] == [ids["awaiting"]]
+        assert {d.id for d in db.list_declarations(db_conn, stage="ready")} == {
+            ids["ready_plain"], ids["ready_notarized"], ids["ready_plain_no_cards"],
+        }
+        assert len(db.list_declarations(db_conn)) == 7           # None = every stage
 
-    def test_filter_by_attended(self, db_conn):
-        from datetime import date
+    def test_every_listed_declaration_matches_its_derived_stage(self, db_conn):
+        _stage_fixtures(db_conn)
+        for stage in STAGES:
+            listed = db.list_declarations(db_conn, stage=stage)
+            assert listed, stage
+            for d in listed:
+                assert declaration_stage(d, db.list_declaration_cards(db_conn, d.id)) == stage
 
-        from app.core.models import ExtractedRow
+    def test_unknown_stage_raises(self, db_conn):
+        with pytest.raises(ValueError):
+            db.list_declarations(db_conn, stage="bogus")
 
-        row = ExtractedRow(
-            order_number="9001", order_date=date(2026, 9, 1), requested_by="ANA",
-            plate_type="CARRO PARTICULAR",
-        )
-        order_id = db.insert_order(db_conn, row=row, customer_id=None, created_by=None)
-        attended = _insert(db_conn, status="approved")
-        db.set_declaration_production_order(db_conn, attended, order_id)
-        to_attend = _insert(db_conn, status="approved")
-        pending = _insert(db_conn, status="pending_review")
-
-        assert {d.id for d in db.list_declarations(db_conn)} == {attended, to_attend, pending}
-        assert [d.id for d in db.list_declarations(db_conn, attended=True)] == [attended]
-        # attended=False ignores the status; combine it to get "approved and still to attend".
-        assert {d.id for d in db.list_declarations(db_conn, attended=False)} == {to_attend, pending}
-        assert [d.id for d in db.list_declarations(db_conn, status="approved", attended=False)] == [to_attend]
-        assert [d.id for d in db.list_declarations(db_conn, status="approved", attended=True)] == [attended]
-        assert db.list_declarations(db_conn, status="pending_review", attended=True) == []
-
-    def test_attended_combines_with_query_and_keeps_ordering(self, db_conn):
+    def test_stage_combines_with_query_and_keeps_ordering(self, db_conn):
         base = datetime(2026, 3, 1, 12, 0)
         old = _insert(db_conn, status="approved")
         new = _insert(db_conn, status="approved")
         _set_created_at(db_conn, old, base)
         _set_created_at(db_conn, new, base + timedelta(days=1))
-        assert [d.id for d in db.list_declarations(db_conn, attended=False, query="ana")] == [new, old]
-        assert db.list_declarations(db_conn, attended=False, query="nobody") == []
+        assert [d.id for d in db.list_declarations(db_conn, stage="ready", query="ana")] == [new, old]
+        assert db.list_declarations(db_conn, stage="ready", query="nobody") == []
+        assert db.list_declarations(db_conn, stage="attended", query="ana") == []
 
     def test_query_matches_declarant_case_insensitive(self, db_conn):
         match = _insert(db_conn, submitted_data={
@@ -252,10 +248,10 @@ class TestListDeclarations:
         assert [d.id for d in db.list_declarations(db_conn, query="\\")] == []
         assert plain not in [d.id for d in db.list_declarations(db_conn, query="%")]
 
-    def test_query_and_status_combine_and_blank_query_ignored(self, db_conn):
+    def test_query_and_stage_combine_and_blank_query_ignored(self, db_conn):
         a = _insert(db_conn, status="approved")
         b = _insert(db_conn, status="pending_review")
-        assert [d.id for d in db.list_declarations(db_conn, query="ana", status="approved")] == [a]
+        assert [d.id for d in db.list_declarations(db_conn, query="ana", stage="ready")] == [a]
         assert {d.id for d in db.list_declarations(db_conn, query="  ")} == {a, b}
 
 
@@ -315,7 +311,7 @@ class TestListByReason:
             _insert_card(db_conn, mixed, position, reason="PÉRDIDA")
         assert [d.id for d in db.list_declarations(db_conn, reason="PÉRDIDA")] == [mixed]
 
-    def test_reason_combines_with_status_attended_and_query(self, db_conn):
+    def test_reason_combines_with_stage_and_query(self, db_conn):
         approved = _insert(db_conn, status="approved", submitted_data={"declarant": {"name": "ANA"}})
         _insert_card(db_conn, approved, 0, reason="PÉRDIDA", plate_number="AAA111")
         pending = _insert(db_conn, status="pending_review", submitted_data={"declarant": {"name": "BETO"}})
@@ -323,11 +319,58 @@ class TestListByReason:
         other = _insert(db_conn, status="approved", submitted_data={"declarant": {"name": "CARLA"}})
         _insert_card(db_conn, other, 0, reason="DETERIORO", plate_number="CCC333")
 
-        assert [d.id for d in db.list_declarations(db_conn, reason="PÉRDIDA", status="approved")] == [approved]
+        assert [d.id for d in db.list_declarations(db_conn, reason="PÉRDIDA", stage="awaiting_notarization")] == [approved]
+        assert db.list_declarations(db_conn, reason="PÉRDIDA", stage="ready") == []
         assert [d.id for d in db.list_declarations(db_conn, reason="PÉRDIDA", query="bbb")] == [pending]
         assert db.list_declarations(db_conn, reason="PÉRDIDA", query="carla") == []
-        assert [d.id for d in db.list_declarations(db_conn, reason="PÉRDIDA", attended=False, status="approved")] == [approved]
-        assert db.list_declarations(db_conn, reason="PÉRDIDA", attended=True) == []
+        assert db.list_declarations(db_conn, reason="PÉRDIDA", stage="attended") == []
+
+
+def _stage_fixtures(db_conn) -> dict[str, int]:
+    """One declaration per situation of the derived stage (7 rows, 5 stages)."""
+    from datetime import date
+
+    from app.core.models import ExtractedRow
+
+    order_id = db.insert_order(db_conn, row=ExtractedRow(
+        order_number="9001", order_date=date(2026, 9, 1), requested_by="ANA",
+        plate_type="CARRO PARTICULAR"), customer_id=None, created_by=None)
+    ids: dict[str, int] = {}
+    ids["to_review"] = _insert(db_conn, status="pending_review")
+    _insert_card(db_conn, ids["to_review"], reason="PÉRDIDA")
+    ids["rejected"] = _insert(db_conn, status="rejected")
+    ids["ready_plain"] = _insert(db_conn, status="approved")
+    _insert_card(db_conn, ids["ready_plain"], reason="DETERIORO")
+    ids["awaiting"] = _insert(db_conn, status="approved")
+    _insert_card(db_conn, ids["awaiting"], 0, reason="DETERIORO")
+    _insert_card(db_conn, ids["awaiting"], 1, reason="PÉRDIDA")
+    ids["ready_notarized"] = _insert(db_conn, status="approved")
+    _insert_card(db_conn, ids["ready_notarized"], reason="PÉRDIDA")
+    db.set_declaration_notarized_received(db_conn, ids["ready_notarized"], received_by=None)
+    ids["attended"] = _insert(db_conn, status="approved")
+    _insert_card(db_conn, ids["attended"], reason="PÉRDIDA")          # even un-notarized: attended wins
+    db.set_declaration_production_order(db_conn, ids["attended"], order_id)
+    ids["ready_plain_no_cards"] = _insert(db_conn, status="approved")
+    return ids
+
+
+class TestDeclarationStage:
+    def test_the_five_stages(self, db_conn):
+        ids = _stage_fixtures(db_conn)
+        expected = {
+            "to_review": "to_review", "rejected": "rejected", "attended": "attended",
+            "awaiting": "awaiting_notarization", "ready_plain": "ready",
+            "ready_notarized": "ready", "ready_plain_no_cards": "ready",
+        }
+        for key, stage in expected.items():
+            record = db.get_declaration(db_conn, ids[key])
+            assert record is not None
+            assert declaration_stage(record, db.list_declaration_cards(db_conn, ids[key])) == stage, key
+
+    def test_constants(self):
+        assert STAGES == (
+            "to_review", "awaiting_notarization", "ready", "attended", "rejected",
+        )
 
 
 class TestRequiresNotarization:

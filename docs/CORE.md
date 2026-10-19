@@ -428,20 +428,21 @@ tarjetas por declaración.
 | Función | Qué hace |
 |---|---|
 | `validate_declaration(inp)` | Lista de errores en español (vacía = válida): declarante, firma única y términos siempre; 1..`MAX_CARDS` tarjetas; por tarjeta (con prefijo `Tarjeta N: `): obligatorios, vocabulario con `normalize_choice`, placa con `validate_plate`, cantidad de placas dentro del rango del tipo, dueño y relación si es gestor; placa o licencia repetida dentro del envío. Una pérdida no exige ningún archivo. |
-| `submit_declaration(conn, inp, *, today=None)` | Aplica las reglas de abajo y devuelve `SubmitResult(declaration_id, status, flags)`. `today` por defecto es la fecha de Bogotá. |
-| `approve_declaration(conn, id, reviewer_user_id, *, reassign_card_ids=(), note=None)` | Solo desde `pending_review`. Crea/enlaza el gestor (si lo hay) y, por **cada** tarjeta, su dueño y su tarjeta de propiedad. `reassign_card_ids` son ids de `declaration_cards` cuya tarjeta existente es de otro cliente y se puede mover. Un cliente existente con tipo `NULL` pasa al tipo esperado; con otro tipo, `ValueError`. Tarjeta de otro dueño sin estar en `reassign_card_ids`: `ValueError`; licencia/placa que no cuadran: siempre `ValueError`. Todo es verificado **antes** de escribir (todo o nada); los mensajes nombran la tarjeta y su placa. |
+| `submit_declaration(conn, inp, *, today=None)` | Calcula las alertas de cada tarjeta, guarda la declaración **siempre** en `pending_review` (con o sin alertas) y **no crea nada** (ni clientes, ni gestor, ni tarjetas de propiedad). Devuelve `SubmitResult(declaration_id, status, flags)`. `today` por defecto es la fecha de Bogotá. |
+| `approve_declaration(conn, id, reviewer_user_id, *, reassign_card_ids=(), note=None)` | Solo desde `pending_review` (el punto de venta la revisa). Aquí es donde se crean/enlazan el gestor (si lo hay) y, por **cada** tarjeta, su dueño y su tarjeta de propiedad; funciona igual con o sin alertas. `reassign_card_ids` son ids de `declaration_cards` cuya tarjeta existente es de otro cliente y se puede mover. Un cliente existente con tipo `NULL` pasa al tipo esperado; con otro tipo, `ValueError`. Tarjeta de otro dueño sin estar en `reassign_card_ids`: `ValueError`; licencia/placa que no cuadran: siempre `ValueError`. Un conflicto que apareció **después** del envío (la declaración se guardó sin alertas) se detecta aquí: `ValueError` claro y no cambia nada. Todo es verificado **antes** de escribir (todo o nada); los mensajes nombran la tarjeta y su placa. |
 | `reject_declaration(conn, id, reviewer_user_id, note)` | Marca `rejected` (nota obligatoria); no crea nada. |
 
-Reglas de `submit_declaration` (se evalúan **por tarjeta**):
+Flujo: **todas las declaraciones llegan «Por revisar»**; el punto de venta las aprueba y solo entonces se crean el cliente y las tarjetas de propiedad. Las alertas (se evalúan **por tarjeta**) solo le indican al revisor qué mirar:
 
-| Situación | Resultado |
+| Situación al enviar | Resultado |
 |---|---|
 | Cualquier alerta (`plate_made_recently`, `card_other_owner`, `card_data_mismatch`, `customer_type_mismatch`, `customer_document_mismatch`) en **alguna** tarjeta | Toda la declaración queda `pending_review`; **no se crea nada** (ni clientes, ni gestor, ni tarjetas); los enlaces quedan `NULL`. Cada tarjeta guarda sus alertas y `declarations.review_flags` es la unión. |
-| Sin alertas: dueños nuevos + tarjetas nuevas | `approved`; en la misma transacción se crean el GESTOR (si hay), los CLIENTES y las tarjetas. |
-| El mismo dueño repetido en varias tarjetas | Un **solo** cliente (se identifica por nombre canónico). |
-| Cliente existente (tipo `CLIENTE`) con otra tarjeta | `approved`; se enlaza el cliente sin modificarlo y se crea la tarjeta nueva. |
-| Mismo cliente, misma licencia y placa, pasados 6 meses | `approved`; se enlaza la tarjeta existente **sin modificarla** (los datos secundarios distintos solo quedan en `submitted_data`). |
-| Cliente/gestor existentes | Solo se enlazan, nunca se modifican. |
+| Sin alertas | También `pending_review`, con `review_flags` vacío; tampoco se crea nada. **No existe aprobación automática.** |
+| Al aprobar: dueños nuevos + tarjetas nuevas | `approved`; en la misma transacción se crean el GESTOR (si hay), los CLIENTES y las tarjetas. |
+| Al aprobar: el mismo dueño repetido en varias tarjetas (o en varias declaraciones) | Un **solo** cliente (se identifica por nombre canónico). |
+| Al aprobar: cliente existente (tipo `CLIENTE`) con otra tarjeta | `approved`; se enlaza el cliente sin modificarlo y se crea la tarjeta nueva. |
+| Al aprobar: mismo cliente, misma licencia y placa, pasados 6 meses | `approved`; se enlaza la tarjeta existente **sin modificarla** (los datos secundarios distintos solo quedan en `submitted_data`). |
+| Al aprobar: cliente/gestor existentes | Solo se enlazan, nunca se modifican. |
 
 `submitted_data` queda con la forma canónica `{"acting_as", "declarant",
 "cards": [{..., "owner", "owner_relation"}], "raw"}` (ver
