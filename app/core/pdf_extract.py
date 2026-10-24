@@ -325,7 +325,7 @@ class ParsedPedido(BaseModel):
         ]
         if missing:
             raise PdfExtractError(
-                "No se pudo leer del PDF: " + ", ".join(missing) + ". Completá esos datos a mano."
+                "No se pudo leer del archivo: " + ", ".join(missing) + ". Completá esos datos a mano."
             )
         assert self.order_date is not None  # narrowed by the `missing` check above
         return [
@@ -394,7 +394,7 @@ def _find_plate_header(rows: list[list[Any]]) -> tuple[int, dict[str, int]]:
                 columns[k] = j
         return i, columns
     raise PdfExtractError(
-        "El PDF no tiene el formato de pedido esperado: no se encontró la tabla de placas "
+        "El archivo no tiene el formato de pedido esperado: no se encontró la tabla de placas "
         "(fila con ITEM / PLACA). Ingresá la orden manualmente."
     )
 
@@ -502,7 +502,18 @@ def parse_pedido_pdf(source: PdfSource) -> ParsedPedido:
             "El PDF no contiene ninguna tabla. Si es un documento escaneado, "
             "ingresá la orden manualmente."
         )
+    return parse_pedido_rows(rows)
 
+
+def parse_pedido_rows(rows: list[list[Any]]) -> ParsedPedido:
+    """Parse the pedido's cell grid (rows of cells) into a ParsedPedido.
+
+    The grid is the same whether it came from a PDF table (`parse_pedido_pdf`)
+    or from the Excel template (`xlsx_extract.parse_pedido_xlsx`): everything
+    below finds fields by their printed labels and the ITEM/PLACA header row,
+    never by position. Raises PdfExtractError if there is no plate table or no
+    plate line.
+    """
     header_index, columns = _find_plate_header(rows)
     header_rows = rows[:header_index]  # fields live above the plate table
     # Fase 4: everything from the TOTAL PEDIDO row onward is the footer block
@@ -537,7 +548,7 @@ def parse_pedido_pdf(source: PdfSource) -> ParsedPedido:
     )
     if not pedido.lines:
         raise PdfExtractError(
-            "No se encontró ninguna placa en el PDF. Revisá el archivo o ingresá la orden manualmente."
+            "No se encontró ninguna placa en el archivo. Revisá el archivo o ingresá la orden manualmente."
         )
     return pedido
 

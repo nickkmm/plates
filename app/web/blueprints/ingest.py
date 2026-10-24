@@ -27,7 +27,8 @@ from app.core.normalize import (
     normalize_requested_by,
     validate_plate,
 )
-from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
+from app.core.pdf_extract import ParsedPedido, PdfExtractError
+from app.core.pedido_upload import parse_uploaded_pedido
 from app.web.auth import pos_allowed
 from app.web.helpers import (
     FORM_PLATE_TYPES,
@@ -655,7 +656,7 @@ def ingest_post():
 @bp.route("/ingest/pdf", methods=["GET", "POST"])
 @pos_allowed
 def ingest_pdf():
-    """Upload a pedido PDF (GET) and review the parse in the normal form (POST).
+    """Upload a pedido, PDF or Excel (.xlsx) (GET), and review the parse in the normal form (POST).
 
     POST intentionally does NOT save: it renders `ingest.html` pre-filled, so
     the person reviews/corrects and then submits to POST /ingest exactly like a
@@ -664,24 +665,24 @@ def ingest_pdf():
     if request.method == "GET":
         return render_template("ingest_pdf.html")
 
-    upload = request.files.get("pdf")
+    upload = request.files.get("file") or request.files.get("pdf")  # "pdf": pages opened before the rename
     if upload is None or not upload.filename:
-        return render_template("ingest_pdf.html", error="Elegí un archivo PDF para subir."), 400
+        return render_template("ingest_pdf.html", error="Elegí un archivo (PDF o Excel) para subir."), 400
 
     try:
-        pedido = parse_pedido_pdf(upload.read())
+        pedido = parse_uploaded_pedido(upload.read())
     except PdfExtractError as e:
         return render_template("ingest_pdf.html", error=str(e)), 400
     except Exception:  # never 500 on a bad upload — always offer manual entry
-        current_app.logger.exception("Unexpected failure parsing uploaded pedido PDF")
+        current_app.logger.exception("Unexpected failure parsing uploaded pedido")
         return render_template(
             "ingest_pdf.html",
-            error="No se pudo procesar el PDF. Ingresá la orden manualmente.",
+            error="No se pudo procesar el archivo. Ingresá la orden manualmente.",
         ), 400
 
     header, lines, notices = _form_from_pedido(pedido)
     with db.get_conn() as conn:
-        # Read-only: surface "esta orden ya existe" as soon as the PDF is
+        # Read-only: surface "esta orden ya existe" as soon as the file is
         # previewed, not only after a first failed POST /ingest save attempt.
         # This route never writes to the DB either way.
         order_duplicates = (

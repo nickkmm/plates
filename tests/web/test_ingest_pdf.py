@@ -15,13 +15,13 @@ from psycopg.rows import tuple_row
 
 from app.core.pdf_extract import parse_pedido_pdf
 from app.web.blueprints.ingest import _STICKY_HEADER_FIELDS, _form_from_pedido, _sticky_header_from_form
-from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf
+from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf, build_pedido_xlsx
 
 
 def upload(client, data: bytes, filename: str = "pedido.pdf"):
     return client.post(
         "/ingest/pdf",
-        data={"pdf": (io.BytesIO(data), filename)},
+        data={"file": (io.BytesIO(data), filename)},
         content_type="multipart/form-data",
     )
 
@@ -80,7 +80,8 @@ class TestUploadForm:
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
         assert 'type="file"' in html
-        assert 'name="pdf"' in html
+        assert 'name="file"' in html
+        assert ".xlsx" in html and ".pdf" in html
         assert 'enctype="multipart/form-data"' in html
 
     def test_manual_form_links_to_the_pdf_upload(self, authenticated_client, clean_db):
@@ -374,3 +375,61 @@ class TestManualFlowUnchanged:
         assert "<tr" not in rendered_line_rows(html)  # empty; JS adds the first row
         assert "Revisá esto antes de guardar" not in html
         assert "— elegí el tipo —" not in html
+
+
+class TestExcelUpload:
+    """The same flow with the Excel template instead of the PDF."""
+
+    def test_xlsx_prefills_the_form_exactly_like_the_pdf(self, authenticated_client, clean_db):
+        from_pdf = upload(authenticated_client, build_pedido_pdf()).get_data(as_text=True)
+        from_xlsx = upload(authenticated_client, build_pedido_xlsx(), "pedido.xlsx").get_data(as_text=True)
+        assert rendered_line_rows(from_xlsx) == rendered_line_rows(from_pdf)
+        for expected in ('name="order_number" value="9001"', 'value="CLIENTE DEMO"', 'value="2026-08-11"'):
+            assert expected in from_xlsx
+
+    def test_the_file_type_is_decided_by_content_not_by_name(self, authenticated_client, clean_db):
+        resp = upload(authenticated_client, build_pedido_xlsx(), "pedido.pdf")
+        assert resp.status_code == 200
+        assert 'value="CLIENTE DEMO"' in resp.get_data(as_text=True)
+        resp = upload(authenticated_client, build_pedido_pdf(), "pedido.xlsx")
+        assert resp.status_code == 200
+
+    def test_the_old_field_name_still_works(self, authenticated_client, clean_db):
+        resp = authenticated_client.post(
+            "/ingest/pdf", data={"pdf": (io.BytesIO(build_pedido_xlsx()), "pedido.xlsx")},
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 200
+
+    def test_saves_nothing_until_the_person_presses_guardar(self, authenticated_client, db_conn):
+        before = order_count(db_conn)
+        upload(authenticated_client, build_pedido_xlsx(), "pedido.xlsx")
+        assert order_count(db_conn) == before
+
+    def test_an_existing_order_number_is_flagged_right_away(self, authenticated_client, db_conn):
+        from datetime import date
+
+        from app.core import db
+        from app.core.models import ExtractedRow
+        db.insert_order(
+            db_conn,
+            row=ExtractedRow(order_number="9001", order_date=date(2026, 1, 1), requested_by="OTRO",
+                              plate_type="MOTO PARTICULAR"),
+            customer_id=None, created_by=None,
+        )
+        html = upload(authenticated_client, build_pedido_xlsx(), "pedido.xlsx").get_data(as_text=True)
+        assert "ya existe" in html.lower()
+
+    def test_legacy_xls_gets_a_clear_message(self, authenticated_client):
+        resp = upload(authenticated_client, b"\xd0\xcf\x11\xe0" + b"\x00" * 64, "viejo.xls")
+        assert resp.status_code == 400
+        assert ".xlsx" in resp.get_data(as_text=True)
+
+    def test_a_zip_that_is_not_an_excel_is_rejected_gracefully(self, authenticated_client):
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("hola.txt", "hola")
+        resp = upload(authenticated_client, buf.getvalue(), "otro.zip")
+        assert resp.status_code == 400
+        assert "Excel" in resp.get_data(as_text=True)

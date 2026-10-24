@@ -41,17 +41,17 @@
   </form>
 
   <form class="search" method="post" action="{{ url_for('records.records_search_pdf') }}" enctype="multipart/form-data">
-    <input type="file" name="pdf" accept="application/pdf,.pdf">
-    <button type="submit">Buscar por PDF</button>
+    <input type="file" name="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx">
+    <button type="submit">Buscar por archivo</button>
   </form>
-  <p class="muted">Subí el PDF del pedido para revisar si esas placas ya existen — no se guarda nada.</p>
+  <p class="muted">Subí el pedido (PDF o Excel) para revisar si esas placas ya existen — no se guarda nada.</p>
 
   {% if pdf_error %}<div class="error">{{ pdf_error }}</div>{% endif %}
   {% if pdf_results is not none %}
     {% if pdf_results %}
-    <p class="muted">Se revisaron {{ pdf_results|length }} placa(s) del PDF "{{ pdf_filename }}".</p>
+    <p class="muted">Se revisaron {{ pdf_results|length }} placa(s) del archivo "{{ pdf_filename }}".</p>
     <table>
-      <thead><tr><th>Placa (del PDF)</th><th>Estado</th></tr></thead>
+      <thead><tr><th>Placa (del archivo)</th><th>Estado</th></tr></thead>
       <tbody>
         {% for r in pdf_results %}
         <tr>
@@ -72,7 +72,7 @@
       </tbody>
     </table>
     {% else %}
-    <p>El PDF no tiene placas para verificar.</p>
+    <p>El archivo no tiene placas para verificar.</p>
     {% endif %}
   {% endif %}
 

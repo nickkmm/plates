@@ -17,13 +17,13 @@ from psycopg.rows import tuple_row
 
 from app.core import db
 from app.core.models import ExtractedRow
-from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf
+from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf, build_pedido_xlsx
 
 
 def upload(client, data: bytes, filename: str = "pedido.pdf"):
     return client.post(
         "/records/search-pdf",
-        data={"pdf": (io.BytesIO(data), filename)},
+        data={"file": (io.BytesIO(data), filename)},
         content_type="multipart/form-data",
     )
 
@@ -205,3 +205,18 @@ class TestProduccionRoleAllowed:
     def test_production_role_can_search_by_pdf(self, produccion_client):
         resp = upload(produccion_client, build_pedido_pdf())
         assert resp.status_code == 200
+
+
+class TestExcelSearch:
+    def test_xlsx_is_searched_like_the_pdf_and_saves_nothing(self, authenticated_client, db_conn):
+        db.insert_order(
+            db_conn, row=ExtractedRow(order_number="55", order_date=date(2026, 1, 1), requested_by="ANA",
+                                       plate_type="MOTO PARTICULAR", plate_number="ABC12D"),
+            customer_id=None, created_by=None,
+        )
+        before = row_counts(db_conn)
+        resp = upload(authenticated_client, build_pedido_xlsx(), "pedido.xlsx")
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        assert "ABC12D" in html and "pedido.xlsx" in html
+        assert row_counts(db_conn) == before

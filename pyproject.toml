@@ -60,7 +60,7 @@ ignore_missing_imports = true
 module = "pandas.*"
 ignore_missing_imports = true
 
-# Neither ships type information (no py.typed, no stubs on PyPI).
+# None of these ships type information (no py.typed, no stubs installed here).
 [[tool.mypy.overrides]]
-module = ["pdfplumber.*", "reportlab.*"]
+module = ["pdfplumber.*", "reportlab.*", "openpyxl.*"]
 ignore_missing_imports = true

@@ -118,6 +118,18 @@ de que llegue a `process_rows`.
 | `parse_pedido_pdf(source)` | Parseo principal: extrae tablas de todas las páginas, ubica la fila de header `ITEM \| PLACA \| ...`, lee los campos de arriba (`_find_header_value`), y parsea las líneas de abajo hasta la fila `TOTAL PEDIDO`. |
 | `extract_rows_from_pdf(source)` | Atajo: `parse_pedido_pdf(source).to_rows()` para llamadores no interactivos. El flujo web usa `parse_pedido_pdf` directo para poder tolerar un header parcial y dejar que la persona complete lo que falta. |
 
+### Pedido en Excel (`xlsx_extract.py`) y despacho (`pedido_upload.py`)
+
+El cliente también puede enviar el **Excel del pedido** (`.xlsx`, la plantilla `FORMATO_PEDIDOS_INGSE_2026_v2/v3`) tal cual. La hoja es la misma
+cuadrícula de celdas que ve el parser en las tablas del PDF, así que **no hay un segundo parser**: `parse_pedido_xlsx` solo convierte las filas de la hoja
+a texto y las pasa a `pdf_extract.parse_pedido_rows` (la misma lógica de etiquetas y de fila `ITEM | PLACA`).
+
+| Función | Qué hace |
+|---|---|
+| `parse_pedido_rows(rows)` (en `pdf_extract.py`) | Núcleo compartido: encuentra el header, los campos de arriba y de pie y las líneas. `parse_pedido_pdf` = tablas del PDF + este núcleo. |
+| `parse_pedido_xlsx(source)` | Valida que sea un `.xlsx` real (zip con `xl/workbook.xml`, tope de 50 MB descomprimido y 1000 entradas: el archivo viene de externos), lo abre con `openpyxl` en solo lectura (`data_only`, máx. 500 filas × 40 columnas) y usa la primera hoja que tenga la tabla de placas (ignora hojas auxiliares como la oculta `LISTAS` de la plantilla v3). Fechas → ISO, `1117521679.0` → `"1117521679"`. |
+| `parse_uploaded_pedido(data)` | Entrada única para las rutas: decide por el contenido (`%PDF` → PDF; zip `PK` → xlsx; `.xls` viejo → "guardalo como .xlsx"; cualquier otro → error). Siempre `PdfExtractError` en español. |
+
 **Lo más difícil de entender:**
 
 - **Por qué `extract_tables()` y nunca `extract_text()`**: decisión

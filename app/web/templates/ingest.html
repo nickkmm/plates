@@ -39,14 +39,14 @@
 <body>
   {% include "_nav.html" %}
   <h1>Registrar producción de placas</h1>
-  <p><a href="{{ url_for('ingest.ingest_pdf') }}" class="btn-link add">Subir PDF</a></p>
+  <p><a href="{{ url_for('ingest.ingest_pdf') }}" class="btn-link add">Subir pedido (PDF o Excel)</a></p>
 
   {% if error %}<div class="error">{{ error }}
     {% if attended_order %}<a class="ver-btn" href="{{ url_for('records.record_detail', order_id=attended_order.id) }}" target="_blank">ver pedido</a>{% endif %}
   </div>{% endif %}
   {% if notices %}
   <div class="notice">
-    <strong>{{ notices_title or 'Revisá esto antes de guardar — los datos vienen del PDF, todavía no se guardó nada.' }}</strong>
+    <strong>{{ notices_title or 'Revisá esto antes de guardar — los datos vienen del archivo, todavía no se guardó nada.' }}</strong>
     <ul>{% for n in notices %}<li>{{ n }}</li>{% endfor %}</ul>
   </div>
   {% endif %}

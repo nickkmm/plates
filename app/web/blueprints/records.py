@@ -18,7 +18,8 @@ from app.core.normalize import (
     normalize_row,
     validate_plate,
 )
-from app.core.pdf_extract import PdfExtractError, parse_pedido_pdf
+from app.core.pdf_extract import PdfExtractError
+from app.core.pedido_upload import parse_uploaded_pedido
 from app.web.auth import consulta_allowed, login_required, pos_allowed
 from app.web.helpers import FORM_PLATE_TYPES, _options, _padded, _validate_order_header, today_iso
 
@@ -256,23 +257,23 @@ def record_save(order_id):
 @bp.post("/records/search-pdf")
 @consulta_allowed
 def records_search_pdf():
-    """Upload a pedido PDF to check its plates against the DB. Consult only:
+    """Upload a pedido (PDF or Excel .xlsx) to check its plates against the DB. Consult only:
     this NEVER inserts/updates/deletes anything, unlike /ingest/pdf which leads
     toward saving. Works even if the PDF's header (order number/date/client) is
     unreadable -- unlike /ingest/pdf's flow, only the plate lines matter here."""
-    upload = request.files.get("pdf")
+    upload = request.files.get("file") or request.files.get("pdf")  # "pdf": pages opened before the rename
     if upload is None or not upload.filename:
         return render_template("records.html", rows=None, query=None,
-                               pdf_error="Elegí un archivo PDF para buscar."), 400
+                               pdf_error="Elegí un archivo (PDF o Excel) para buscar."), 400
 
     try:
-        pedido = parse_pedido_pdf(upload.read())
+        pedido = parse_uploaded_pedido(upload.read())
     except PdfExtractError as e:
         return render_template("records.html", rows=None, query=None, pdf_error=str(e)), 400
     except Exception:
-        current_app.logger.exception("Unexpected failure parsing uploaded pedido PDF for search")
+        current_app.logger.exception("Unexpected failure parsing uploaded pedido for search")
         return render_template("records.html", rows=None, query=None,
-                               pdf_error="No se pudo procesar el PDF."), 400
+                               pdf_error="No se pudo procesar el archivo."), 400
 
     candidates: list[str] = []
     seen: set[str] = set()

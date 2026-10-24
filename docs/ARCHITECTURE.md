@@ -12,11 +12,11 @@ de negocio, siempre pasa por `app/core`:
 flowchart TD
     subgraph Puertas["Puertas de ingesta"]
         M["Formulario manual<br/>(/ingest)"]
-        PDF["Upload de PDF<br/>(/ingest/pdf)"]
+        PDF["Upload de pedido: PDF o Excel<br/>(/ingest/pdf)"]
         MIG["Migración Excel<br/>(app/migrate.py, one-off)"]
     end
     M --> ER["ExtractedRow<br/>(app/core/models.py)"]
-    PDF -->|"pdfplumber.extract_tables()"| ER
+    PDF -->|"pdfplumber.extract_tables() / openpyxl"| ER
     MIG --> ER
     ER --> NORM["normalize_row<br/>(app/core/normalize.py)"]
     NORM --> PROC["process_rows / replace_order<br/>(app/core/ingestion.py)"]
