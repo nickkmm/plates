@@ -29,7 +29,8 @@ client must have it notarized first. Staff download the generated PDF
 authenticated, mark it received (POST .../notarized; .../notarized/undo
 reverts). Until then the "Crear pedido" button is replaced by a note and
 /ingest refuses the declaration (see ingest._check_declaration). Pure-DETERIORO
-declarations are never gated.
+declarations are never gated, but the same PDF can still be downloaded as an
+optional extra.
 """
 
 from __future__ import annotations
@@ -312,7 +313,7 @@ def _render_detail(
         cards=cards, flagged_cards=[c for c in cards if c["record"].review_flags],
         plate_total=sum(c["record"].plate_quantity for c in cards),
         flag_labels=FLAG_LABELS, stage=stage, stage_labels=STAGE_LABELS,
-        error=error, pending_status=STATUS_PENDING_REVIEW, reassign_ids=reassign_ids,
+        error=error, pending_status=STATUS_PENDING_REVIEW, approved_status=STATUS_APPROVED, reassign_ids=reassign_ids,
         attended_order=attended_order,
         needs_notary=needs_notary, notary_received=declaration.notarized_received_at is not None,
         notary_received_by=received_user.username if received_user else None,
@@ -452,17 +453,16 @@ def _read_signature(declaration: db.DeclarationRecord) -> bytes | None:
 @bp.get("/declaraciones/<int:declaration_id>/pdf")
 @pos_allowed
 def declaration_pdf(declaration_id: int):
-    """The sworn declaration as a PDF to print and hand to the client for
-    notarization. Only for APPROVED declarations with a PÉRDIDA card."""
+    """The sworn declaration as a PDF to print and hand to the client. Any
+    APPROVED declaration; it is mandatory (notarization) only with a PÉRDIDA
+    card, for DETERIORO it is an optional extra."""
     with db.get_conn() as conn:
         declaration = db.get_declaration(conn, declaration_id)
         cards = db.list_declaration_cards(conn, declaration_id) if declaration else []
     if declaration is None:
         abort(404, "La declaración no existe.")
     if declaration.status != STATUS_APPROVED:
-        abort(404, "El PDF para autenticación solo está disponible para declaraciones aprobadas.")
-    if not requires_notarization(cards):
-        abort(404, "Esta declaración no tiene tarjetas por pérdida: no requiere autenticación notarial.")
+        abort(404, "El PDF solo está disponible para declaraciones aprobadas.")
     pdf = build_declaration_pdf(
         declaration=declaration, cards=cards, signature_png=_read_signature(declaration),
         issued_at=datetime.now(),

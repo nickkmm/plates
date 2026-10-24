@@ -1103,11 +1103,29 @@ class TestPdf:
         assert authenticated_client.get(f"{_detail(pending_id)}/pdf").status_code == 404
         assert calls == []
 
-    def test_approved_deterioration_only_is_404_with_a_clear_message(self, authenticated_client, db_conn, calls):
-        resp = authenticated_client.get(f"{_detail(_approved(db_conn))}/pdf")
-        assert resp.status_code == 404
-        assert "no requiere autenticación notarial" in resp.data.decode()
-        assert calls == []
+    def test_approved_deterioration_only_can_also_download_the_pdf(self, authenticated_client, db_conn, calls):
+        declaration_id = _approved(db_conn)
+        resp = authenticated_client.get(f"{_detail(declaration_id)}/pdf")
+        assert resp.status_code == 200 and resp.mimetype == "application/pdf"
+        assert len(calls) == 1
+
+    def test_deterioration_detail_shows_an_optional_pdf_button_and_no_notary_block(
+        self, authenticated_client, db_conn,
+    ):
+        declaration_id = _approved(db_conn)
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert 'id="optional-pdf"' in html
+        assert f'href="/declaraciones/{declaration_id}/pdf"' in html
+        assert "Opcional" in html
+        assert "Autenticación notarial" not in html and "/notarized" not in html
+
+    def test_loss_detail_has_no_optional_block(self, authenticated_client, db_conn):
+        html = authenticated_client.get(_detail(_loss_approved(db_conn))).data.decode()
+        assert 'id="optional-pdf"' not in html
+
+    def test_pending_detail_has_no_optional_block(self, authenticated_client, db_conn):
+        html = authenticated_client.get(_detail(_three_cards_one_flagged(db_conn))).data.decode()
+        assert 'id="optional-pdf"' not in html
 
     def test_unknown_declaration_is_404(self, authenticated_client, db_conn, calls):
         assert authenticated_client.get(f"{_detail(9999)}/pdf").status_code == 404
@@ -1147,7 +1165,7 @@ class TestNotarizationDetail:
 
     def test_deterioration_only_has_no_block_and_keeps_the_create_button(self, authenticated_client, db_conn):
         html = authenticated_client.get(_detail(_approved(db_conn))).data.decode()
-        assert "Autenticación notarial" not in html and "Descargar PDF" not in html
+        assert "Autenticación notarial" not in html and "Descargar PDF para autenticación" not in html
         assert "Crear pedido" in html
 
     def test_mixed_declaration_is_gated(self, authenticated_client, db_conn):
