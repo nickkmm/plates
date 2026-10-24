@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Plates — Subir PDF</title>
+  <title>Plates — Subir pedido</title>
   <style>
     :root { --green:#1a9c5b; --blue:#0b6bcb; --red:#d33; --ink:#222; }
     body { font-family: system-ui, sans-serif; max-width: 920px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
@@ -30,20 +30,20 @@
 </head>
 <body>
   {% include "_nav.html" %}
-  <h1>Subir PDF del pedido</h1>
+  <h1>Subir el pedido (PDF o Excel)</h1>
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
   <form id="pdfForm" method="post" action="{{ url_for('ingest.ingest_pdf') }}" enctype="multipart/form-data">
     <fieldset>
       <legend>Archivo</legend>
-      <label>PDF del pedido
-        <input type="file" name="pdf" accept="application/pdf,.pdf" required>
+      <label>Archivo del pedido
+        <input type="file" name="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx" required>
       </label>
-      <p class="muted">Tiene que ser el PDF del formato de pedido (con la tabla de placas).
+      <p class="muted">Puede ser el Excel (.xlsx) del formato de pedido o su PDF (con la tabla de placas).
       No sirve una foto o un escaneo: el PDF debe tener el texto seleccionable.</p>
     </fieldset>
-    <button type="submit" class="submit">Leer PDF</button>
+    <button type="submit" class="submit">Leer archivo</button>
   </form>
 
   <div class="progress-wrap" id="progressWrap">
@@ -52,7 +52,7 @@
   </div>
 
   <ol>
-    <li>Subís el PDF y el sistema lee la orden y las placas.</li>
+    <li>Subís el archivo y el sistema lee la orden y las placas.</li>
     <li>Se abre el formulario de siempre, ya lleno, para que <strong>revises y corrijas</strong>.</li>
     <li>Recién ahí, con "Guardar orden", se registra. Nada se guarda antes de que revises.</li>
   </ol>
@@ -79,7 +79,7 @@
           bar.style.width = pct + "%";
           text.textContent = pct < 100
             ? "Subiendo... " + pct + "% (puede tardar según tu conexión)"
-            : "Archivo recibido, leyendo el PDF...";
+            : "Archivo recibido, leyendo el pedido...";
         });
         xhr.onload = function () {
           document.open();

@@ -14,6 +14,7 @@ file — it is committed.
 from __future__ import annotations
 
 import io
+from datetime import date
 from typing import Any
 
 from reportlab.lib import colors
@@ -73,7 +74,7 @@ def _data_row(spec: dict[str, str]) -> list[str]:
     return row
 
 
-def build_pedido_pdf(
+def pedido_grid(
     *,
     order_number: str = "9001",
     client: str = "CLIENTE DEMO",
@@ -92,8 +93,10 @@ def build_pedido_pdf(
     forma_pago: str = "",
     observaciones: str = "",
     lines: list[dict[str, str]] | None = None,
-) -> bytes:
-    """Render a pedido PDF and return its bytes.
+) -> tuple[list[list[Any]], int, int]:
+    """The pedido's cell grid, shared by the PDF and the .xlsx builders.
+
+    Returns (rows, header_field_row_count, footer_field_count).
 
     `order_date` is written verbatim, so tests can exercise every date format
     the real documents use. `pedido_numero` is the client-facing claim number
@@ -158,8 +161,57 @@ def build_pedido_pdf(
         row = _blank_row()
         row[0] = f"{label} {value}" if value else label
         table.append(row)
+    return table, len(header_rows), len(footer_fields)
 
-    header_field_rows = range(len(header_rows))  # the 'LABEL: value' rows above the plate table
+
+def build_pedido_pdf(
+    *,
+    order_number: str = "9001",
+    client: str = "CLIENTE DEMO",
+    order_date: str = "11/08/2026",
+    pedido_numero: str = "77",
+    order_label: str = "ORDEN DE\nPRODUCCION:",
+    order_row_leaks_bare_pedido_label: bool = False,
+    nit: str = "",
+    nit_value_in_next_row: bool = False,
+    guia: str = "",
+    fecha_entrega: str = "",
+    fecha_pago: str = "",
+    responsable: str = "",
+    telefono: str = "",
+    recibe: str = "",
+    forma_pago: str = "",
+    observaciones: str = "",
+    lines: list[dict[str, str]] | None = None,
+) -> bytes:
+    """Render a pedido PDF and return its bytes.
+
+    `order_date` is written verbatim, so tests can exercise every date format
+    the real documents use. `pedido_numero` is the client-facing claim number
+    that must NEVER be parsed as the production order number. `order_label`
+    lets tests reproduce the older template generation, which called the same
+    field 'NT:'. `order_row_leaks_bare_pedido_label` reproduces a real layout
+    where a colon-less 'PEDIDO #' sits later in the SAME row as the order
+    label -- confirmed happening for real, see pdf_extract._LABEL_PEDIDO_HASH_BARE.
+
+    Fase 4 fields (`nit`/`guia`/`fecha_entrega`/`fecha_pago` above the plate
+    table, `responsable`/`telefono`/`recibe`/`forma_pago`/`observaciones`
+    below it) all default to "" -- that row is simply omitted (header) or left
+    label-only with a blank value (footer), same as today, so every existing
+    test keeps exercising the plain document unless it opts in.
+    `nit_value_in_next_row` reproduces a real merged-cell artifact where the
+    'NIT / CÉDULA:' label's value lands in the row AFTER it instead of
+    alongside it on the same row -- `nit` in that mode is the (misplaced)
+    value, which the parser's "same row only" scan must never pick up.
+    """
+    table, n_header_rows, n_footer_fields = pedido_grid(
+        order_number=order_number, client=client, order_date=order_date, pedido_numero=pedido_numero,
+        order_label=order_label, order_row_leaks_bare_pedido_label=order_row_leaks_bare_pedido_label,
+        nit=nit, nit_value_in_next_row=nit_value_in_next_row, guia=guia, fecha_entrega=fecha_entrega,
+        fecha_pago=fecha_pago, responsable=responsable, telefono=telefono, recibe=recibe,
+        forma_pago=forma_pago, observaciones=observaciones, lines=lines,
+    )
+    header_field_rows = range(n_header_rows)  # the 'LABEL: value' rows above the plate table
     style: list[Any] = [
         ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
         ("FONTSIZE", (0, 0), (-1, -1), 6),
@@ -172,7 +224,7 @@ def build_pedido_pdf(
         style.append(("SPAN", (0, r), (3, r)))
         style.append(("SPAN", (4, r), (9, r)))
     last = len(table) - 1
-    footer_block_len = 1 + len(footer_fields)  # TOTAL PEDIDO + the footer rows
+    footer_block_len = 1 + n_footer_fields  # TOTAL PEDIDO + the footer rows
     for r in range(last - footer_block_len + 1, last + 1):  # span the full width
         style.append(("SPAN", (0, r), (-1, r)))
 
@@ -207,4 +259,41 @@ def build_pdf_with_unrelated_table() -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     doc.build([Table(data, style=TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black)]))])
+    return buffer.getvalue()
+
+
+def build_pedido_xlsx(
+    *, typed_dates: bool = True, extra_sheets_first: bool = False, **kwargs: Any,
+) -> bytes:
+    """The same pedido as an Excel file (what the client fills and sends).
+
+    Takes the same keyword arguments as `build_pedido_pdf`. With `typed_dates`
+    a dd/mm/yyyy `order_date` is written as a real date cell and CANT. as a real
+    number, like Excel does; `extra_sheets_first` puts a helper sheet (no
+    plate table) before the pedido, like the v3 template's hidden lists sheet.
+    """
+    import openpyxl
+
+    table, _n_header, _n_footer = pedido_grid(**kwargs)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "PEDIDO"
+    for row in table:
+        ws.append(list(row))
+    if typed_dates:
+        for row in ws.iter_rows():
+            first = str(row[0].value or "")
+            if first.startswith("FECHA PEDIDO:") and row[4].value:
+                d, m, y = str(row[4].value).split("/")
+                row[4].value = date(int(y), int(m), int(d))
+            if row[3].value and str(row[3].value).isdigit() and row[0].row > 1 and row[1].value is not None:
+                row[3].value = int(row[3].value)
+    if extra_sheets_first:
+        helper = wb.create_sheet("LISTAS", 0)
+        helper.append(["COLOMBIA"])
+        helper.append(["NEIVA"])
+        helper.sheet_state = "hidden"
+    buffer = io.BytesIO()
+    wb.save(buffer)
     return buffer.getvalue()
