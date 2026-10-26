@@ -212,6 +212,8 @@ def _validate_card(card: OwnershipCardInput, *, gestor: bool) -> list[str]:
         errors.append("Falta el tipo de vehículo.")
     elif vehicle_type is None:
         errors.append("El tipo de vehículo no es válido.")
+    if _blank(card.registered_in):
+        errors.append("Falta dónde está matriculado el vehículo.")
     if _blank(card.plate_number):
         errors.append("Falta la placa.")
     elif vehicle_type is not None and vehicle_type in PLATE_PATTERNS:

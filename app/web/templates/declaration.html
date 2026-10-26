@@ -132,7 +132,7 @@
         </select>
       </label>
       <label class="field">Matriculado en
-        <input type="text" name="{{ c }}registered_in" value="{{ f.get(c ~ 'registered_in', '') }}" autocomplete="off" maxlength="100">
+        <input type="text" name="{{ c }}registered_in" value="{{ f.get(c ~ 'registered_in', '') }}" autocomplete="off" maxlength="100" required>
       </label>
       <label class="field">Marca
         <input type="text" name="{{ c }}vehicle_brand" value="{{ f.get(c ~ 'vehicle_brand', '') }}" autocomplete="off" maxlength="100">
