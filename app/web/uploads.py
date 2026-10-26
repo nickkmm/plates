@@ -17,10 +17,14 @@ from typing import Any
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_SIGNATURE_BYTES = 200 * 1024
+MAX_PHOTO_BYTES = 5 * 1024 * 1024
 PDF_MAGIC = b"%PDF-"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 PNG_DATA_URL_PREFIX = "data:image/png;base64,"
-_STORED_NAME_RE = re.compile(r"[0-9a-f]{32}\.(pdf|png)")
+# Photo formats a phone produces, by magic number -> stored extension.
+_PHOTO_MAGICS = ((b"\xff\xd8\xff", "jpg"), (PNG_MAGIC, "png"))
+PHOTO_MIMETYPES = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+_STORED_NAME_RE = re.compile(r"[0-9a-f]{32}\.(pdf|png|jpg|webp)")
 
 
 class UploadError(ValueError):
@@ -75,6 +79,32 @@ def save_signature_png(data_url: str) -> str:
     # Blank-canvas detection is intentionally skipped: it would require
     # decoding the PNG (no imaging dependency); the form enforces "signed" in JS.
     return _store(content, "png")
+
+
+def _photo_extension(content: bytes) -> str | None:
+    for magic, extension in _PHOTO_MAGICS:
+        if content.startswith(magic):
+            return extension
+    if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def save_photo(file_storage: Any, label: str) -> str:
+    """Store one identity photo (JPEG / PNG / WebP, sniffed by content, never
+    by the client's filename or declared type). `label` names the photo in the
+    Spanish error, e.g. "Cédula (frente)"."""
+    if file_storage is None or not getattr(file_storage, "filename", ""):
+        raise UploadError(f"Falta la foto: {label}.")
+    content = file_storage.stream.read(MAX_PHOTO_BYTES + 1)
+    if not content:
+        raise UploadError(f"La foto está vacía: {label}.")
+    if len(content) > MAX_PHOTO_BYTES:
+        raise UploadError(f"La foto supera el tamaño máximo de 5 MB: {label}.")
+    extension = _photo_extension(content)
+    if extension is None:
+        raise UploadError(f"El archivo no es una foto válida (JPG, PNG o WebP): {label}.")
+    return _store(content, extension)
 
 
 def resolve_upload_path(name: str) -> Path:

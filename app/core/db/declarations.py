@@ -81,6 +81,8 @@ class DeclarationRecord:
     production_order_id: int | None    # the order that attended it; NULL = not attended yet
     notarized_received_at: datetime | None   # staff got the notarized copy back; NULL = not yet
     notarized_received_by: int | None
+    declarant_id_front_path: str | None = None   # cédula photos (0012); NULL on older declarations
+    declarant_id_back_path: str | None = None
 
 
 @dataclass
@@ -104,20 +106,22 @@ class DeclarationCardRecord:
     customer_id: int | None
     ownership_card_id: int | None
     review_flags: list[str]
+    card_front_path: str | None = None   # ownership card photos (0012); NULL on older declarations
+    card_back_path: str | None = None
 
 
 _SELECT_COLUMNS = (
     "id, created_at, acting_as, gestor_id, status, review_flags, reviewed_by, "
     "reviewed_at, review_note, submitted_data, notarized_pdf_path, submitter_ip, "
     "user_agent, accepted_terms_at, declarant_signature_path, production_order_id, "
-    "notarized_received_at, notarized_received_by"
+    "notarized_received_at, notarized_received_by, declarant_id_front_path, declarant_id_back_path"
 )
 
 _CARD_SELECT_COLUMNS = (
     "id, declaration_id, position, reason, plate_quantity, plate_number, "
     "transit_license, engine_number, chassis_number, vehicle_type, registered_in, "
     "vehicle_brand, owner_relation, owner_data, customer_id, ownership_card_id, "
-    "review_flags"
+    "review_flags, card_front_path, card_back_path"
 )
 
 
@@ -128,6 +132,7 @@ def insert_declaration(
     declarant_signature_path: str | None = None, notarized_pdf_path: str | None = None,
     submitter_ip: str | None = None, user_agent: str | None = None,
     accepted_terms_at: datetime | None = None,
+    declarant_id_front_path: str | None = None, declarant_id_back_path: str | None = None,
 ) -> int:
     """Insert a declaration header; return its id. Its cards go in with
     insert_declaration_card. No pre-checks (FK violations surface as psycopg
@@ -138,14 +143,16 @@ def insert_declaration(
             INSERT INTO declarations (
                 acting_as, gestor_id, status, review_flags, submitted_data,
                 declarant_signature_path, notarized_pdf_path,
-                submitter_ip, user_agent, accepted_terms_at
+                submitter_ip, user_agent, accepted_terms_at,
+                declarant_id_front_path, declarant_id_back_path
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (acting_as, gestor_id, status, list(review_flags or []), Jsonb(submitted_data),
              declarant_signature_path, notarized_pdf_path,
-             submitter_ip, user_agent, accepted_terms_at),
+             submitter_ip, user_agent, accepted_terms_at,
+             declarant_id_front_path, declarant_id_back_path),
         )
         row = cur.fetchone()
         assert row is not None, "INSERT ... RETURNING id always yields a row"
@@ -160,6 +167,7 @@ def insert_declaration_card(
     registered_in: str | None = None, vehicle_brand: str | None = None,
     owner_relation: str | None = None, review_flags: list[str] | None = None,
     customer_id: int | None = None, ownership_card_id: int | None = None,
+    card_front_path: str | None = None, card_back_path: str | None = None,
 ) -> int:
     """Insert one card of a declaration; return its id. `position` is the
     0-based order inside the declaration (UNIQUE per declaration). While the
@@ -171,15 +179,17 @@ def insert_declaration_card(
                 declaration_id, position, reason, plate_quantity, plate_number,
                 transit_license, engine_number, chassis_number, vehicle_type,
                 registered_in, vehicle_brand, owner_relation, owner_data,
-                customer_id, ownership_card_id, review_flags
+                customer_id, ownership_card_id, review_flags,
+                card_front_path, card_back_path
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (declaration_id, position, reason, plate_quantity, plate_number,
              transit_license, engine_number, chassis_number, vehicle_type,
              registered_in, vehicle_brand, owner_relation, Jsonb(owner_data),
-             customer_id, ownership_card_id, list(review_flags or [])),
+             customer_id, ownership_card_id, list(review_flags or []),
+             card_front_path, card_back_path),
         )
         row = cur.fetchone()
         assert row is not None, "INSERT ... RETURNING id always yields a row"

@@ -47,7 +47,8 @@ def _gestor(**kw: str) -> PersonInput:
 def _card(**kw) -> OwnershipCardInput:
     base = {"plate_number": "ABC123", "transit_license": "LIC-001", "engine_number": "ENG1",
             "chassis_number": "CHA1", "vehicle_type": "CARRO PARTICULAR", "registered_in": "MEDELLÍN",
-            "vehicle_brand": "MAZDA", "reason": "DETERIORO", "plate_quantity": 1}
+            "vehicle_brand": "MAZDA", "reason": "DETERIORO", "plate_quantity": 1,
+            "front_file": "card-front.jpg", "back_file": "card-back.jpg"}
     base.update(kw)
     return OwnershipCardInput(**base)
 
@@ -61,7 +62,8 @@ def _gcard(plate: str = "ABC123", licence: str = "LIC-001", owner: PersonInput |
 
 def _input(**kw) -> DeclarationInput:
     base = {"acting_as": "PROPIETARIO", "declarant": _owner(), "cards": [_card()],
-            "signature_file": "sig.png", "submitter_ip": "1.1.1.1", "user_agent": "UA",
+            "signature_file": "sig.png", "id_front_file": "id-front.jpg",
+            "id_back_file": "id-back.jpg", "submitter_ip": "1.1.1.1", "user_agent": "UA",
             "accepted_terms": True, "submitted_data": {"form": "raw"}}
     base.update(kw)
     return DeclarationInput(**base)
@@ -182,6 +184,18 @@ class TestValidate:
     def test_quantity_at_least_one(self, qty):
         errors = decl.validate_declaration(_input(cards=[_card(plate_quantity=qty)]))
         assert any(e.startswith("Tarjeta 1:") and "cantidad" in e for e in errors)
+
+    @pytest.mark.parametrize("missing", ["id_front_file", "id_back_file"])
+    def test_cedula_photos_are_required(self, missing):
+        errors = decl.validate_declaration(_input(**{missing: None}))
+        side = "frente" if missing == "id_front_file" else "atrás"
+        assert f"Falta la foto de la cédula del declarante ({side})." in errors
+
+    @pytest.mark.parametrize("missing", ["front_file", "back_file"])
+    def test_card_photos_are_required(self, missing):
+        errors = decl.validate_declaration(_input(cards=[_card(**{missing: " "})]))
+        side = "frente" if missing == "front_file" else "atrás"
+        assert f"Tarjeta 1: Falta la foto de la tarjeta de propiedad ({side})." in errors
 
     @pytest.mark.parametrize("registered_in", ["", "   "])
     def test_registered_in_is_required(self, registered_in):
@@ -326,6 +340,8 @@ class TestSubmitThenApprove:
         assert record.gestor_id is None
         assert record.submitter_ip == "1.1.1.1" and record.user_agent == "UA"
         assert record.declarant_signature_path == "sig.png"
+        assert (record.declarant_id_front_path, record.declarant_id_back_path) == (
+            "id-front.jpg", "id-back.jpg")
         assert record.accepted_terms_at is not None
 
     def test_approving_a_clean_declaration_does_not_need_a_note(self, db_conn):
@@ -348,6 +364,7 @@ class TestSubmitThenApprove:
             "CARRO PARTICULAR", "MEDELLÍN", "MAZDA")
         assert row.owner_relation == "DUEÑO"
         assert row.owner_data["name"] == "MARIA LOPEZ"
+        assert (row.card_front_path, row.card_back_path) == ("card-front.jpg", "card-back.jpg")
         assert row.review_flags == []
 
     def test_submitted_data_has_the_canonical_shape(self, db_conn):

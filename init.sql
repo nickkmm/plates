@@ -156,7 +156,9 @@ CREATE TABLE declarations (
     declarant_signature_path TEXT,
     production_order_id INTEGER REFERENCES production_orders(id) ON DELETE SET NULL,  -- the order that attended it (0010); NULL = not attended yet
     notarized_received_at TIMESTAMP,        -- 0011: staff got the notarized copy back (PÉRDIDA declarations); NULL = not yet
-    notarized_received_by INTEGER REFERENCES users(id)
+    notarized_received_by INTEGER REFERENCES users(id),
+    declarant_id_front_path TEXT,           -- 0012: cédula photos of the declarant (stored names); NULL on older declarations
+    declarant_id_back_path TEXT
 );
 CREATE INDEX declarations_production_order_id_idx ON declarations (production_order_id);
 CREATE INDEX declarations_status_idx ON declarations (status);
@@ -181,6 +183,8 @@ CREATE TABLE declaration_cards (
     customer_id INTEGER REFERENCES customers(id),            -- the card's owner (CLIENTE); NULL while pending
     ownership_card_id INTEGER REFERENCES ownership_cards(id),   -- NULL while pending
     review_flags TEXT[] NOT NULL DEFAULT '{}',
+    card_front_path TEXT,                   -- 0012: photos of the ownership card (stored names); NULL on older declarations
+    card_back_path TEXT,
     UNIQUE (declaration_id, position)
 );
 -- UNIQUE (declaration_id, position) already indexes declaration_id lookups.

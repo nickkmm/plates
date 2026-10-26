@@ -141,6 +141,8 @@ class OwnershipCardInput:
     plate_quantity: int = 1             # 1..normalize.max_plates_per_card(vehicle_type)
     owner: PersonInput | None = None
     owner_relation: str = ""            # DUEÑO / POSEEDOR (GESTOR only)
+    front_file: str | None = None       # stored file names of the card photos
+    back_file: str | None = None
 
 
 @dataclass
@@ -153,6 +155,8 @@ class DeclarationInput:
     declarant: PersonInput = field(default_factory=PersonInput)
     cards: list[OwnershipCardInput] = field(default_factory=list)
     signature_file: str | None = None   # stored file name of the declarant's signature PNG
+    id_front_file: str | None = None    # stored file names of the declarant's cédula photos
+    id_back_file: str | None = None
     submitter_ip: str | None = None
     user_agent: str | None = None
     accepted_terms: bool = False
@@ -214,6 +218,10 @@ def _validate_card(card: OwnershipCardInput, *, gestor: bool) -> list[str]:
         errors.append("El tipo de vehículo no es válido.")
     if _blank(card.registered_in):
         errors.append("Falta dónde está matriculado el vehículo.")
+    if _blank(card.front_file):
+        errors.append("Falta la foto de la tarjeta de propiedad (frente).")
+    if _blank(card.back_file):
+        errors.append("Falta la foto de la tarjeta de propiedad (atrás).")
     if _blank(card.plate_number):
         errors.append("Falta la placa.")
     elif vehicle_type is not None and vehicle_type in PLATE_PATTERNS:
@@ -276,6 +284,10 @@ def validate_declaration(inp: DeclarationInput) -> list[str]:
                     seen_licenses[key] = number
             errors += [f"Tarjeta {number}: {message}" for message in card_errors]
 
+    if _blank(inp.id_front_file):
+        errors.append("Falta la foto de la cédula del declarante (frente).")
+    if _blank(inp.id_back_file):
+        errors.append("Falta la foto de la cédula del declarante (atrás).")
     if _blank(inp.signature_file):
         errors.append("Falta la firma del declarante.")
     if not inp.accepted_terms:
@@ -485,6 +497,7 @@ def _insert_card_row(
         registered_in=_clean(card.registered_in), vehicle_brand=_clean(card.vehicle_brand),
         owner_relation=plan.relation, owner_data=_person_dict(plan.owner),
         review_flags=plan.flags, customer_id=customer_id, ownership_card_id=ownership_card_id,
+        card_front_path=card.front_file, card_back_path=card.back_file,
     )
 
 
@@ -507,6 +520,8 @@ def submit_declaration(
         "acting_as": acting_as,
         "submitted_data": _build_submitted_data(inp),
         "declarant_signature_path": inp.signature_file,
+        "declarant_id_front_path": inp.id_front_file,
+        "declarant_id_back_path": inp.id_back_file,
         "submitter_ip": inp.submitter_ip,
         "user_agent": inp.user_agent,
         "accepted_terms_at": datetime.now() if inp.accepted_terms else None,
