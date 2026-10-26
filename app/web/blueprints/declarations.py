@@ -38,6 +38,7 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
+import zipfile
 from datetime import date, datetime
 from typing import Any
 
@@ -392,6 +393,58 @@ def declaration_card_photo(declaration_id: int, card_id: int, side: str):
     if card is None:
         abort(404)
     return _send_stored_file(getattr(card, attribute), None)
+
+
+def _photo_entries(
+    declaration: db.DeclarationRecord, cards: list[db.DeclarationCardRecord],
+) -> list[tuple[str, str]]:
+    """(file name inside the ZIP, stored name) of every photo of a declaration,
+    in reading order: the cédula, then each card (front, back)."""
+    entries: list[tuple[str, str]] = []
+    for label, stored in (("cedula-frente", declaration.declarant_id_front_path),
+                          ("cedula-atras", declaration.declarant_id_back_path)):
+        if stored:
+            entries.append((label, stored))
+    for card in cards:
+        plate = clean_plate(card.plate_number) or "sin-placa"
+        for label, stored in (("frente", card.card_front_path), ("atras", card.card_back_path)):
+            if stored:
+                entries.append((f"tarjeta-{card.position + 1}-{plate}-{label}", stored))
+    return entries
+
+
+@bp.get("/declaraciones/<int:declaration_id>/photos.zip")
+@pos_allowed
+def declaration_photos_zip(declaration_id: int):
+    """Every photo of the declaration (cédula and ownership cards) in one ZIP.
+    Stored names are resolved with resolve_upload_path; a photo whose file is
+    gone is skipped; 404 when there is nothing to download."""
+    with db.get_conn() as conn:
+        declaration = db.get_declaration(conn, declaration_id)
+        cards = db.list_declaration_cards(conn, declaration_id) if declaration else []
+    if declaration is None:
+        abort(404)
+    buffer = io.BytesIO()
+    added = 0
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:   # JPEG/PNG: no gain from deflate
+        for entry_name, stored in _photo_entries(declaration, cards):
+            try:
+                path = resolve_upload_path(stored)
+            except UploadError:
+                continue
+            if path.is_file():
+                archive.write(path, f"{entry_name}{path.suffix}")
+                added += 1
+    if not added:
+        abort(404)
+    buffer.seek(0)
+    response = send_file(
+        buffer, mimetype="application/zip", as_attachment=True,
+        download_name=f"declaracion-{declaration_id}-fotos.zip",
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _send_stored_file(stored_name: str | None, mimetype: str | None):

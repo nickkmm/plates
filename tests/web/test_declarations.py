@@ -32,8 +32,10 @@ tests/conftest.py's clean_db docstring).
 
 from __future__ import annotations
 
+import io
 import re
 import uuid
+import zipfile
 from dataclasses import replace
 from datetime import date, datetime
 
@@ -535,6 +537,43 @@ class TestPhotos:
         html = authenticated_client.get(_detail(declaration_id)).data.decode()
         assert 'href="#card-1"' in html and "Fotos de la tarjeta de propiedad (en cada tarjeta" in html
 
+    def test_zip_has_every_photo_with_readable_names(self, authenticated_client, db_conn, uploads):
+        declaration_id, _, _ = _with_photos(db_conn, uploads)
+        resp = authenticated_client.get(f"{_detail(declaration_id)}/photos.zip")
+        assert resp.status_code == 200 and resp.mimetype == "application/zip"
+        assert f"declaracion-{declaration_id}-fotos.zip" in resp.headers["Content-Disposition"]
+        assert resp.headers["Cache-Control"] == "no-store"
+        with zipfile.ZipFile(io.BytesIO(resp.data)) as archive:
+            names = sorted(archive.namelist())
+            assert names == ["cedula-atras.png", "cedula-frente.jpg",
+                             "tarjeta-1-ABC123-atras.jpg", "tarjeta-1-ABC123-frente.jpg"]
+            assert archive.read("cedula-frente.jpg") == JPEG and archive.read("cedula-atras.png") == PNG
+
+    def test_zip_skips_missing_files_and_is_404_when_nothing_is_left(self, authenticated_client, db_conn, uploads):
+        declaration_id, _, names = _with_photos(db_conn, uploads)
+        (uploads / names["id_front"]).unlink()
+        resp = authenticated_client.get(f"{_detail(declaration_id)}/photos.zip")
+        with zipfile.ZipFile(io.BytesIO(resp.data)) as archive:
+            assert "cedula-frente.jpg" not in archive.namelist() and len(archive.namelist()) == 3
+        for name in ("id_back", "card_front", "card_back"):
+            (uploads / names[name]).unlink()
+        assert authenticated_client.get(f"{_detail(declaration_id)}/photos.zip").status_code == 404
+
+    def test_zip_button_only_when_there_are_photos(self, authenticated_client, db_conn, uploads):
+        declaration_id, _, _ = _with_photos(db_conn, uploads)
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert f"/declaraciones/{declaration_id}/photos.zip" in html and "Descargar todas las fotos" in html
+        with db_conn.cursor() as cur:
+            cur.execute("UPDATE declarations SET declarant_id_front_path = NULL, declarant_id_back_path = NULL")
+            cur.execute("UPDATE declaration_cards SET card_front_path = NULL, card_back_path = NULL")
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert "photos.zip" not in html
+        assert authenticated_client.get(f"{_detail(declaration_id)}/photos.zip").status_code == 404
+
+    def test_production_role_cannot_download_the_zip(self, produccion_client, db_conn, uploads):
+        declaration_id, _, _ = _with_photos(db_conn, uploads)
+        assert produccion_client.get(f"{_detail(declaration_id)}/photos.zip").status_code == 403
+
     def test_a_missing_photo_file_is_404(self, authenticated_client, db_conn, uploads):
         declaration_id, _, names = _with_photos(db_conn, uploads)
         (uploads / names["id_front"]).unlink()
@@ -1009,6 +1048,7 @@ class TestRoles:
     @pytest.mark.parametrize("method,url", [
         ("get", LIST_URL), ("get", "/declaraciones/1"), ("get", "/declaraciones/1/file/signature"),
         ("get", "/declaraciones/1/file/id_front"), ("get", "/declaraciones/1/cards/1/photo/front"),
+        ("get", "/declaraciones/1/photos.zip"),
         ("post", "/declaraciones/1/approve"), ("post", "/declaraciones/1/reject"),
         ("get", "/declaraciones/1/pdf"), ("post", "/declaraciones/1/notarized"),
         ("post", "/declaraciones/1/notarized/undo"),

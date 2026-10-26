@@ -212,6 +212,9 @@
       {% for c in photo_cards %}<a href="#card-{{ c.number }}">Tarjeta {{ c.number }} (placa {{ c.record.plate_number }})</a>{{ ', ' if not loop.last }}{% endfor %}
     </p>
     {% endif %}
+    {% if photo_cards or d.declarant_id_front_path or d.declarant_id_back_path %}
+    <p><a class="back" id="photos-zip" href="{{ url_for('declarations.declaration_photos_zip', declaration_id=d.id) }}">Descargar todas las fotos (ZIP)</a></p>
+    {% endif %}
     {% if not (d.declarant_signature_path or d.notarized_pdf_path or d.declarant_id_front_path or d.declarant_id_back_path or photo_cards) %}
     <p class="muted">Sin archivos adjuntos.</p>
     {% endif %}
