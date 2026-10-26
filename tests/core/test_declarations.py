@@ -183,6 +183,11 @@ class TestValidate:
         errors = decl.validate_declaration(_input(cards=[_card(plate_quantity=qty)]))
         assert any(e.startswith("Tarjeta 1:") and "cantidad" in e for e in errors)
 
+    @pytest.mark.parametrize("registered_in", ["", "   "])
+    def test_registered_in_is_required(self, registered_in):
+        errors = decl.validate_declaration(_input(cards=[_card(registered_in=registered_in)]))
+        assert "Tarjeta 1: Falta dónde está matriculado el vehículo." in errors
+
     @pytest.mark.parametrize("vehicle_type,plate", [
         ("CARRO PARTICULAR", "ABC123"), ("CARRO PÚBLICO", "ABC123")])
     def test_cars_accept_one_or_two_plates(self, vehicle_type, plate):
