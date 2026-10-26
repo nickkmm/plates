@@ -925,13 +925,21 @@ class TestIngestFromDeclaration:
         assert 'value="MAZDA"' in html and 'value="HONDA"' in html
         assert 'name="unit_price" step="1" min="0" value="180000' in html  # CARRO tariff
         assert html.count('name="unit_price" step="1" min="0" value=""') == 1  # MOTO: no tariff
-        assert 'name="city" list="cities" value=""' in html
-        # CARRO PARTICULAR is city-specific -> notice on line 1 only
-        assert "Completá la ciudad de la(s) línea(s) 1:" in html
+        # the city of each line is the card's "matriculado en" (MEDELLÍN in the fixture)
+        assert html.count('name="city" list="cities" value="MEDELLÍN"') == 2
+        assert "Completá la ciudad" not in html
 
         with db.get_conn() as conn, conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_orders")
             assert cur.fetchone()[0] == 0  # the GET saved nothing
+
+    def test_get_asks_for_the_city_when_the_card_has_no_registered_in(self, authenticated_client, db_conn):
+        inp = _input(cards=[_card(plate_number="ABC123", transit_license="LIC-1", registered_in="")])
+        declaration_id = _approved_declaration(db_conn, inp)
+        html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
+        assert 'name="city" list="cities" value=""' in html
+        # CARRO PARTICULAR is city-specific -> notice on line 1
+        assert "Completá la ciudad de la(s) línea(s) 1:" in html
 
     def test_get_for_a_gestor_declaration_uses_the_gestor_customer(self, authenticated_client, db_conn):
         declaration_id = _two_card_declaration(db_conn, gestor=True)

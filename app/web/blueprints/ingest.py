@@ -23,6 +23,7 @@ from app.core.normalize import (
     RECEIPT_TYPES,
     clean_plate,
     normalize_choice,
+    normalize_city,
     normalize_plate_type,
     normalize_requested_by,
     validate_plate,
@@ -418,9 +419,10 @@ def _form_from_declaration(
     /ingest form -- the same shapes as _form_from_pedido, so the person reviews
     the real form pre-filled and nothing is saved by the GET.
 
-    order_number and payment_method stay blank (staff decide them); city stays
-    blank (staff fill it in); unit_price is the current tariff for the card's
-    type when there is one.
+    order_number and payment_method stay blank (staff decide them); the city of
+    each line is the card's "matriculado en" (blank when the card has none, and
+    staff fill it in); unit_price is the current tariff for the card's type
+    when there is one.
     """
     notices = ["Completá el N° de orden y elegí la forma de pago."]
     header = dict.fromkeys(_STICKY_HEADER_FIELDS, "")
@@ -451,15 +453,16 @@ def _form_from_declaration(
     city_specific: list[str] = []
     for number, card in enumerate(cards, start=1):
         plate_type = normalize_plate_type(card.vehicle_type) or ""
+        city = normalize_city(card.registered_in) or ""
         if plate_type not in FORM_PLATE_TYPES:
             plate_type = ""
             unknown_type.append(str(number))
-        elif plate_type in _CITY_SPECIFIC_TYPES:
+        elif plate_type in _CITY_SPECIFIC_TYPES and not city:
             city_specific.append(str(number))
         lines.append({
             "line_type": "placa", "plate_type": plate_type,
             "plate_number": card.plate_number, "plate_to": "",
-            "quantity": card.plate_quantity, "city": "",
+            "quantity": card.plate_quantity, "city": city,
             "reason": card.reason, "vehicle_brand": card.vehicle_brand or "",
             "unit_price": prices.get(plate_type, ""),
         })
