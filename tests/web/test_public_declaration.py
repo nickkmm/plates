@@ -642,6 +642,14 @@ class TestEndToEnd:
         assert db.get_customer_by_name(db_conn, "Maria Lopez") is None
         assert _count(db_conn, "customers") == 0 and _count(db_conn, "ownership_cards") == 0
         assert _suffixes(enabled).count(".png") == 1
+        # the cédula and the card photos reach the database, each file once
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT card_front_path, card_back_path FROM declaration_cards")
+            card = cur.fetchone()
+        stored = {p.name for p in _files(enabled)}
+        photos = [row["declarant_id_front_path"], row["declarant_id_back_path"],
+                  card["card_front_path"], card["card_back_path"]]
+        assert None not in photos and len(set(photos)) == 4 and set(photos) <= stored
         # ... and approving it afterwards creates the customer and the card.
         _approve(db_conn, row["id"])
         customer = db.get_customer_by_name(db_conn, "Maria Lopez")
@@ -742,3 +750,19 @@ class TestEndToEnd:
             first = cur.fetchone()
         assert (first["status"], first["review_flags"]) == ("pending_review", [])
         assert _count(db_conn, "customers") == 0 and _count(db_conn, "ownership_cards") == 0
+
+
+class TestPhotosReachTheStaffView:
+    def test_a_real_submission_shows_the_cedula_and_every_card_photo_to_staff(
+        self, client, authenticated_client, enabled, db_conn,
+    ):
+        assert post(client, _two_cards_form()).status_code == 200
+        declaration_id = _only_declaration_id(db_conn)
+        html = authenticated_client.get(f"/declaraciones/{declaration_id}").get_data(as_text=True)
+        assert f"/declaraciones/{declaration_id}/file/id_front" in html
+        assert f"/declaraciones/{declaration_id}/file/id_back" in html
+        for card in db.list_declaration_cards(db_conn, declaration_id):
+            for side in ("front", "back"):
+                url = f"/declaraciones/{declaration_id}/cards/{card.id}/photo/{side}"
+                assert url in html
+                assert authenticated_client.get(url).data == JPEG
