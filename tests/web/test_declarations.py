@@ -303,7 +303,8 @@ class TestDetail:
     def test_only_the_held_card_is_marked_and_explained(self, authenticated_client, db_conn):
         html = authenticated_client.get(_detail(_three_cards_one_flagged(db_conn))).data.decode()
         assert "Retenida por 1 de 3 tarjetas" in html
-        assert 'href="#card-2"' in html and 'href="#card-1"' not in html
+        summary = html[html.index("Retenida por"):html.index("Archivos")]   # the held-cards box only
+        assert 'href="#card-2"' in summary and 'href="#card-1"' not in summary
         first, second, third = (_section(html, n) for n in (1, 2, 3))
         assert "a nombre de otro cliente" in second and "OTRO DUENO" in second
         assert "Tarjeta de otro dueño" in second
@@ -528,6 +529,11 @@ class TestPhotos:
         for side in ("front", "back"):
             assert f"/declaraciones/{declaration_id}/cards/{card_id}/photo/{side}" in html
         assert all(name not in html for name in names.values())
+
+    def test_the_files_section_links_to_each_card_with_photos(self, authenticated_client, db_conn, uploads):
+        declaration_id, _, _ = _with_photos(db_conn, uploads)
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert 'href="#card-1"' in html and "Fotos de la tarjeta de propiedad (en cada tarjeta" in html
 
     def test_a_missing_photo_file_is_404(self, authenticated_client, db_conn, uploads):
         declaration_id, _, names = _with_photos(db_conn, uploads)

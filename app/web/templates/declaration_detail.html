@@ -204,7 +204,15 @@
       {% endfor %}
     </div>
     {% endif %}
-    {% if not (d.declarant_signature_path or d.notarized_pdf_path or d.declarant_id_front_path or d.declarant_id_back_path) %}
+    {# The card photos are shown inside each card's section below; link to them from here. #}
+    {% set photo_cards = [] %}
+    {% for c in cards %}{% if c.record.card_front_path or c.record.card_back_path %}{% set _ = photo_cards.append(c) %}{% endif %}{% endfor %}
+    {% if photo_cards %}
+    <p>Fotos de la tarjeta de propiedad (en cada tarjeta, más abajo):
+      {% for c in photo_cards %}<a href="#card-{{ c.number }}">Tarjeta {{ c.number }} (placa {{ c.record.plate_number }})</a>{{ ', ' if not loop.last }}{% endfor %}
+    </p>
+    {% endif %}
+    {% if not (d.declarant_signature_path or d.notarized_pdf_path or d.declarant_id_front_path or d.declarant_id_back_path or photo_cards) %}
     <p class="muted">Sin archivos adjuntos.</p>
     {% endif %}
   </fieldset>
