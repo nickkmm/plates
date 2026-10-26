@@ -409,6 +409,7 @@ lugar donde vive la declaración completa (y la evidencia legal).
 | `review_note` | TEXT | nullable | Obligatoria al rechazar. |
 | `submitted_data` | JSONB | NOT NULL | Copia exacta de lo declarado, con la forma canónica `{"acting_as", "declarant": {...}, "cards": [{...}], "raw": {...}}` (ver abajo). |
 | `declarant_signature_path` | TEXT | nullable | Firma única del declarante; cubre todas las tarjetas. Nombre de archivo en el volumen de subidas. |
+| `declarant_id_front_path` / `declarant_id_back_path` | TEXT | nullable | Fotos de la cédula del declarante (frente / atrás), nombres en el volumen de subidas. NULL en las declaraciones anteriores a la migración 0012. |
 | `production_order_id` | INTEGER | FK `production_orders(id)` ON DELETE SET NULL, nullable | Pedido que atendió la declaración ("Crear pedido" desde una declaración aprobada, migración 0010). NULL = por atender; al borrar o reemplazar el pedido vuelve a quedar por atender. Índice `declarations_production_order_id_idx`. |
 | `notarized_pdf_path` | TEXT | nullable | **Sin uso en el flujo público**: el formulario ya no recibe ningún PDF (para una pérdida, el personal entrega la declaración como PDF y el cliente la trae autenticada; ver `notarized_received_*` de la migración 0011). La columna se conserva (nullable, sin migración que la elimine) por compatibilidad con filas existentes; `submit_declaration` ya no la escribe. |
 | `submitter_ip` / `user_agent` | TEXT | nullable | Para el límite por IP y la trazabilidad. |
@@ -450,6 +451,7 @@ tarjeta** y solo sirven para avisarle al revisor: toda declaración queda en
 | `plate_quantity` | INTEGER | NOT NULL | Placas pedidas para esa tarjeta: 1..`normalize.max_plates_per_card(vehicle_type)` (2 para carros, 1 para los demás; validado en código). La cantidad total de la declaración es la suma, nunca se digita. |
 | `plate_number` / `transit_license` | TEXT | NOT NULL | Normalizadas (placa con `clean_plate`, licencia en mayúsculas sin espacios en los extremos). No se repiten dentro de una declaración. |
 | `engine_number` / `chassis_number` / `registered_in` / `vehicle_brand` | TEXT | nullable | Mismos campos que `ownership_cards`. |
+| `card_front_path` / `card_back_path` | TEXT | nullable | Fotos de la tarjeta de propiedad (frente / atrás), nombres en el volumen de subidas. NULL en las declaraciones anteriores a la migración 0012. |
 | `vehicle_type` | TEXT | nullable | Un valor de `normalize.PLATE_TYPES`. |
 | `owner_relation` | TEXT | nullable | `DUEÑO` / `POSEEDOR`: del declarante (`PROPIETARIO` → `DUEÑO`, `POSEEDOR` → `POSEEDOR`) o, si es gestor, el que indicó para esa tarjeta. |
 | `owner_data` | JSONB | NOT NULL | La persona dueña de esa tarjeta (una copia del declarante cuando no es gestor). |

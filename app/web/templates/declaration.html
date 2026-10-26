@@ -24,6 +24,9 @@
     input[type=text], input[type=number], input[type=email], input[type=tel], select {
       padding:.65rem; border:1px solid #ccc; border-radius:7px; font-size:1rem; width:100%; background:#fff; color:var(--ink); }
     input[type=file] { font-size:1rem; width:100%; }
+    .photos { display:grid; grid-template-columns:minmax(0,1fr); gap:0 .8rem; }
+    @media (min-width:520px) { .photos { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+    .photo-info { font-size:.8rem; color:#2a7a4b; min-height:1em; }
     .choice { display:flex; align-items:flex-start; gap:.6rem; padding:.55rem 0; font-size:1rem; }
     .choice input { width:1.3rem; height:1.3rem; margin:.1rem 0 0; flex:none; }
     .row2 { display:grid; grid-template-columns:minmax(0,1fr); gap:0 .8rem; }
@@ -99,6 +102,13 @@
     </label>
   </div>
 {% endmacro %}
+{# One photo input (front or back of a document); the script shrinks the picture before upload. #}
+{% macro photo_field(name, label) %}
+      <label class="field">{{ label }}
+        <input type="file" class="photo-input" name="{{ name }}" accept="image/jpeg,image/png,image/webp" required>
+        <span class="photo-info" aria-live="polite"></span>
+      </label>
+{% endmacro %}
 {# One ownership-card block. `i` is the (stable, possibly sparse) field index; the <template> passes "__I__". #}
 {% macro card_block(i, number) %}
   {% set c = 'card_' ~ i ~ '_' %}
@@ -115,6 +125,10 @@
     <label class="field">Placa
       <input type="text" class="plate-input" name="{{ c }}plate_number" value="{{ f.get(c ~ 'plate_number', '') }}" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="10" required>
     </label>
+    <div class="photos">
+      {{ photo_field(c ~ 'front', 'Foto de la tarjeta de propiedad (frente)') }}
+      {{ photo_field(c ~ 'back', 'Foto de la tarjeta de propiedad (atrás)') }}
+    </div>
     <div class="row2">
       <label class="field">Licencia de tránsito No.
         <input type="text" name="{{ c }}transit_license" value="{{ f.get(c ~ 'transit_license', '') }}" autocomplete="off" autocapitalize="characters" maxlength="40">
@@ -168,7 +182,7 @@
   {% endif %}
   <div class="error" id="clientError" role="alert"></div>
 
-  <form id="declForm" method="post" action="/declaracion" data-max-cards="{{ max_cards_v }}" data-max-by-type='{{ max_by_type|tojson }}'>
+  <form id="declForm" method="post" action="/declaracion" enctype="multipart/form-data" data-max-cards="{{ max_cards_v }}" data-max-by-type='{{ max_by_type|tojson }}'>
     <input type="hidden" name="form_token" value="{{ token }}">
     <div class="hp" aria-hidden="true">
       <label>No llenar este campo <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true"></label>
@@ -185,6 +199,12 @@
       <h2>2. Datos del declarante</h2>
       <p class="lead" style="text-align:left;margin-bottom:.8rem">Es la persona que llena este formulario, firma la declaración y es la titular de todas las tarjetas de propiedad que declares.</p>
       {{ person('declarant') }}
+      <h3>Foto de la cédula</h3>
+      <p class="lead" style="text-align:left;margin-bottom:.8rem">Toma o elige una foto clara de tu cédula, por los dos lados.</p>
+      <div class="photos">
+        {{ photo_field('declarant_id_front', 'Cédula (frente)') }}
+        {{ photo_field('declarant_id_back', 'Cédula (atrás)') }}
+      </div>
     </div>
 
     <div class="card">
@@ -441,6 +461,44 @@
   cardsBox.addEventListener('focusout', function (e) {
     var t = e.target;
     if (t.classList && t.classList.contains('plate-input')) t.value = t.value.toUpperCase().replace(/\s+/g, '');
+  });
+
+  // --- Photos: shrink before upload ---------------------------------------
+  // Phone pictures weigh several MB; re-encode as a JPEG of at most 1600 px so
+  // the form uploads quickly on mobile data. If anything fails the original
+  // file is kept (the server accepts up to 5 MB per photo).
+  var PHOTO_MAX_SIDE = 1600;
+  function shrinkPhoto(input) {
+    var file = input.files && input.files[0];
+    var info = input.parentNode.querySelector('.photo-info');
+    if (!file) { if (info) info.textContent = ''; return; }
+    function show(f) { if (info) info.textContent = '✓ ' + Math.max(1, Math.round(f.size / 1024)) + ' KB'; }
+    show(file);
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type) || !window.URL || !window.DataTransfer || !HTMLCanvasElement.prototype.toBlob) return;
+    var img = new Image();
+    var url = URL.createObjectURL(file);
+    img.onload = function () {
+      URL.revokeObjectURL(url);
+      var scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(img.width, img.height));
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(function (blob) {
+        if (!blob || blob.size >= file.size) return;
+        try {
+          var dt = new DataTransfer();
+          dt.items.add(new File([blob], 'foto.jpg', { type: 'image/jpeg' }));
+          input.files = dt.files;
+          show(dt.files[0]);
+        } catch (err) {}
+      }, 'image/jpeg', 0.82);
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); };
+    img.src = url;
+  }
+  form.addEventListener('change', function (e) {
+    if (e.target && e.target.classList && e.target.classList.contains('photo-input')) shrinkPhoto(e.target);
   });
 
   // --- Submit guard -----------------------------------------------------

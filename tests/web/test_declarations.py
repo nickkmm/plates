@@ -59,6 +59,7 @@ from tests.core.test_declarations import (
 LIST_URL = "/declaraciones"
 PNG = b"\x89PNG\r\n\x1a\n" + b"fake-png-body"
 PDF = b"%PDF-1.4 fake pdf body"
+JPEG = b"\xff\xd8\xff\xe0" + b"fake-jpeg-body"
 
 
 def _detail(declaration_id: int) -> str:
@@ -463,6 +464,80 @@ class TestDetail:
     def test_point_of_sale_sees_flags_context(self, punto_venta_client, db_conn):
         html = punto_venta_client.get(_detail(_pending_recent(db_conn))).data.decode()
         assert "menos de 6 meses" in html
+
+
+def _with_photos(db_conn, uploads) -> tuple[int, int, dict[str, str]]:
+    """An approved declaration with the cédula (front, back) and one card photo
+    pair stored; returns (declaration id, card id, stored names)."""
+    names = {
+        "id_front": _store(uploads, JPEG, "jpg"), "id_back": _store(uploads, PNG, "png"),
+        "card_front": _store(uploads, JPEG, "jpg"), "card_back": _store(uploads, JPEG, "jpg"),
+    }
+    inp = replace(
+        _input(cards=[_card(front_file=names["card_front"], back_file=names["card_back"])]),
+        id_front_file=names["id_front"], id_back_file=names["id_back"],
+    )
+    declaration_id = _submit_approved(db_conn, inp)
+    (card,) = db.list_declaration_cards(db_conn, declaration_id)
+    return declaration_id, card.id, names
+
+
+class TestPhotos:
+    @pytest.mark.parametrize("kind,mimetype,body", [
+        ("id_front", "image/jpeg", JPEG), ("id_back", "image/png", PNG),
+    ])
+    def test_serves_the_cedula_photos(self, authenticated_client, db_conn, uploads, kind, mimetype, body):
+        declaration_id, _, _ = _with_photos(db_conn, uploads)
+        resp = authenticated_client.get(f"{_detail(declaration_id)}/file/{kind}")
+        assert (resp.status_code, resp.mimetype, resp.data) == (200, mimetype, body)
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["Cache-Control"] == "no-store"
+
+    @pytest.mark.parametrize("side", ["front", "back"])
+    def test_serves_the_card_photos(self, punto_venta_client, db_conn, uploads, side):
+        declaration_id, card_id, _ = _with_photos(db_conn, uploads)
+        resp = punto_venta_client.get(f"{_detail(declaration_id)}/cards/{card_id}/photo/{side}")
+        assert (resp.status_code, resp.mimetype, resp.data) == (200, "image/jpeg", JPEG)
+        assert resp.headers["Cache-Control"] == "no-store"
+
+    def test_a_card_of_another_declaration_or_a_bad_side_is_404(self, authenticated_client, db_conn, uploads):
+        declaration_id, card_id, _ = _with_photos(db_conn, uploads)
+        other_id, _, _ = _with_photos(db_conn, uploads)
+        base = _detail(other_id)
+        assert authenticated_client.get(f"{base}/cards/{card_id}/photo/front").status_code == 404
+        assert authenticated_client.get(f"{_detail(declaration_id)}/cards/{card_id}/photo/side").status_code == 404
+        assert authenticated_client.get(f"{_detail(declaration_id)}/cards/999999/photo/front").status_code == 404
+
+    def test_older_declarations_without_photos_are_404_and_show_none(self, authenticated_client, db_conn, uploads):
+        declaration_id = _approved(db_conn)
+        with db_conn.cursor() as cur:   # a declaration made before the form asked for photos
+            cur.execute("UPDATE declarations SET declarant_id_front_path = NULL, declarant_id_back_path = NULL")
+            cur.execute("UPDATE declaration_cards SET card_front_path = NULL, card_back_path = NULL")
+        (card,) = db.list_declaration_cards(db_conn, declaration_id)
+        assert authenticated_client.get(f"{_detail(declaration_id)}/file/id_front").status_code == 404
+        assert authenticated_client.get(f"{_detail(declaration_id)}/cards/{card.id}/photo/back").status_code == 404
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert "Fotos de la tarjeta" not in html and "Cédula del declarante" not in html
+
+    def test_the_detail_shows_the_photos_without_exposing_stored_names(self, authenticated_client, db_conn, uploads):
+        declaration_id, card_id, names = _with_photos(db_conn, uploads)
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert "Cédula del declarante" in html and "Fotos de la tarjeta de propiedad" in html
+        for kind in ("id_front", "id_back"):
+            assert f"/declaraciones/{declaration_id}/file/{kind}" in html
+        for side in ("front", "back"):
+            assert f"/declaraciones/{declaration_id}/cards/{card_id}/photo/{side}" in html
+        assert all(name not in html for name in names.values())
+
+    def test_a_missing_photo_file_is_404(self, authenticated_client, db_conn, uploads):
+        declaration_id, _, names = _with_photos(db_conn, uploads)
+        (uploads / names["id_front"]).unlink()
+        assert authenticated_client.get(f"{_detail(declaration_id)}/file/id_front").status_code == 404
+
+    def test_production_role_cannot_see_the_photos(self, produccion_client, db_conn, uploads):
+        declaration_id, card_id, _ = _with_photos(db_conn, uploads)
+        assert produccion_client.get(f"{_detail(declaration_id)}/file/id_front").status_code == 403
+        assert produccion_client.get(f"{_detail(declaration_id)}/cards/{card_id}/photo/front").status_code == 403
 
 
 class TestFiles:
@@ -927,6 +1002,7 @@ class TestRoles:
 
     @pytest.mark.parametrize("method,url", [
         ("get", LIST_URL), ("get", "/declaraciones/1"), ("get", "/declaraciones/1/file/signature"),
+        ("get", "/declaraciones/1/file/id_front"), ("get", "/declaraciones/1/cards/1/photo/front"),
         ("post", "/declaraciones/1/approve"), ("post", "/declaraciones/1/reject"),
         ("get", "/declaraciones/1/pdf"), ("post", "/declaraciones/1/notarized"),
         ("post", "/declaraciones/1/notarized/undo"),

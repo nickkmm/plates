@@ -155,12 +155,16 @@ def test_hidden_token_honeypot_and_signature_inputs():
     assert html.count("Borrar firma") >= 1
 
 
-def test_there_is_no_file_upload_and_the_form_is_not_multipart():
-    html = render()
-    assert 'type="file"' not in html
-    assert "multipart" not in html
+def test_the_form_is_multipart_and_asks_for_the_cedula_and_card_photos():
+    html = render(form=FULL_FORM)
+    assert 'enctype="multipart/form-data"' in html
+    for name in ("declarant_id_front", "declarant_id_back"):
+        t = tag(html, name)
+        assert 'type="file"' in t and "required" in t and "image/jpeg" in t
+    # one front + one back photo per card block (the <template> included)
+    for block in card_blocks(html):
+        assert block.count('type="file"') == 2
     assert "notarized" not in html.lower() and "autenticado" not in html.lower()
-    assert "adjunt" not in html.lower()
 
 
 def test_loss_note_is_in_every_card_block_and_visible_without_js():

@@ -53,6 +53,10 @@
     .next p { margin:0; flex:1; min-width:200px; font-size:.95rem; }
     a.create { background:#1a9c5b; color:#fff; font-size:1.05rem; font-weight:600; padding:.65rem 1.3rem; }
     .sig { max-width:100%; width:320px; border:1px solid #ddd; background:#fff; display:block; }
+    .photos { display:flex; flex-wrap:wrap; gap:.8rem; margin:.4rem 0 .8rem; }
+    .photos figure { margin:0; }
+    .photos img { max-width:100%; width:240px; border:1px solid #ddd; background:#fff; display:block; }
+    .photos figcaption { font-size:.8rem; color:#555; margin-top:.2rem; }
     label { font-size:.85rem; color:#555; display:block; margin-bottom:.5rem; }
     label.reassign { background:#fff3d6; border:1px solid #e0b040; border-radius:6px; padding:.5rem .6rem; color:#5c3d00; margin:.6rem 0 0; }
     textarea { width:100%; box-sizing:border-box; padding:.4rem; border:1px solid #ccc; border-radius:5px; font:inherit; }
@@ -189,7 +193,18 @@
     <p>PDF de la declaración notariada:
       <a href="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind='notarized_pdf') }}" target="_blank">abrir PDF</a></p>
     {% endif %}
-    {% if not (d.declarant_signature_path or d.notarized_pdf_path) %}
+    {% if d.declarant_id_front_path or d.declarant_id_back_path %}
+    <p>Cédula del declarante:</p>
+    <div class="photos">
+      {% for kind, label, path in (('id_front', 'Frente', d.declarant_id_front_path), ('id_back', 'Atrás', d.declarant_id_back_path)) if path %}
+      <figure>
+        <a href="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind=kind) }}" target="_blank"><img alt="Cédula ({{ label|lower }})" src="{{ url_for('declarations.declaration_file', declaration_id=d.id, kind=kind) }}" loading="lazy"></a>
+        <figcaption>Cédula · {{ label }}</figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if not (d.declarant_signature_path or d.notarized_pdf_path or d.declarant_id_front_path or d.declarant_id_back_path) %}
     <p class="muted">Sin archivos adjuntos.</p>
     {% endif %}
   </fieldset>
@@ -220,6 +235,18 @@
       <dt>N° de motor</dt><dd>{{ card.engine_number or '—' }}</dd>
       <dt>N° de chasis</dt><dd>{{ card.chassis_number or '—' }}</dd>
     </dl>
+
+    {% if card.card_front_path or card.card_back_path %}
+    <h3 class="sub">Fotos de la tarjeta de propiedad</h3>
+    <div class="photos">
+      {% for side, label, path in (('front', 'Frente', card.card_front_path), ('back', 'Atrás', card.card_back_path)) if path %}
+      <figure>
+        <a href="{{ url_for('declarations.declaration_card_photo', declaration_id=d.id, card_id=card.id, side=side) }}" target="_blank"><img alt="Tarjeta de propiedad {{ c.number }} ({{ label|lower }})" src="{{ url_for('declarations.declaration_card_photo', declaration_id=d.id, card_id=card.id, side=side) }}" loading="lazy"></a>
+        <figcaption>Tarjeta {{ c.number }} · {{ label }}</figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <h3 class="sub">Propietario / poseedor{% if card.owner_relation %} ({{ card.owner_relation }}){% endif %}</h3>
     {% if d.acting_as == 'GESTOR' %}

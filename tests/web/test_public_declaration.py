@@ -35,6 +35,12 @@ from tests.conftest import TEST_USERNAME
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 PDF = b"%PDF-1.4\n" + b"x" * 200
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+
+
+def _photo(content: bytes = JPEG, name: str = "foto.jpg"):
+    """A file-input value (what the test client turns into a multipart file)."""
+    return (io.BytesIO(content), name)
 
 
 def _data_url(raw: bytes = PNG) -> str:
@@ -61,6 +67,8 @@ def _card(i: int = 0, **overrides) -> dict:
         "vehicle_brand": "MAZDA",
         "reason": "DETERIORO",
         "plate_quantity": "1",
+        "front": _photo(),
+        "back": _photo(),
     }
     data.update(overrides)
     return {f"card_{i}_{k}": v for k, v in data.items() if v is not None}
@@ -81,6 +89,8 @@ def _form(*cards: dict, **overrides) -> dict:
         "declarant_phone": "3001112233",
         "declarant_email": "maria@example.com",
         "signature": _data_url(),
+        "declarant_id_front": _photo(),
+        "declarant_id_back": _photo(),
         "accept_terms": "1",
         "website": "",
     }
@@ -102,6 +112,10 @@ def _two_cards_form(**overrides) -> dict:
 
 def _files(directory: Path) -> list[Path]:
     return sorted(directory.iterdir())
+
+
+def _suffixes(directory: Path) -> list[str]:
+    return sorted(p.suffix for p in _files(directory))
 
 
 def _count(db_conn, table: str) -> int:
@@ -292,7 +306,7 @@ class TestAntispam:
         resp = post(client, _form(_card(0, reason="PÉRDIDA")))
         assert resp.status_code == 200
         assert len(stub.submitted) == 1
-        assert [p.suffix for p in _files(enabled)] == [".png"]
+        assert _suffixes(enabled) == [".jpg"] * 4 + [".png"]  # cédula x2, card x2, the signature
 
 
 class TestParsing:
@@ -427,7 +441,7 @@ class TestParsing:
 class TestFiles:
     def test_signature_is_stored_once_and_named_on_the_input(self, client, stub, enabled):
         post(client, _two_cards_form())
-        assert len(_files(enabled)) == 1  # ONE signature for every card
+        assert _suffixes(enabled).count(".png") == 1  # ONE signature for every card
         name = stub.inp.signature_file
         assert name is not None and (enabled / name).read_bytes() == PNG
 
@@ -438,8 +452,41 @@ class TestFiles:
             _card(1, plate_number="DEF456", reason="PÉRDIDA"),
             notarized_pdf=(_bytes_io(PDF), "n.pdf"),
         ))
-        assert [p.suffix for p in _files(enabled)] == [".png"]
+        assert ".pdf" not in _suffixes(enabled)
         assert not hasattr(stub.inp, "notarized_pdf_file")
+
+    def test_photos_are_stored_and_named_on_the_input(self, client, stub, enabled):
+        post(client, _two_cards_form())
+        inp = stub.inp
+        names = [inp.id_front_file, inp.id_back_file]
+        for card in inp.cards:
+            names += [card.front_file, card.back_file]
+        assert len(set(names)) == 6 and None not in names
+        for name in names:
+            assert name.endswith(".jpg") and (enabled / name).read_bytes() == JPEG
+
+    def test_the_photo_type_comes_from_the_content_not_the_file_name(self, client, stub, enabled):
+        resp = post(client, _form(_card(0, front=_photo(PNG, "foto.jpg"))))
+        assert resp.status_code == 200
+        assert stub.inp.cards[0].front_file.endswith(".png")
+
+    def test_a_non_image_photo_is_rejected_and_everything_is_cleaned(self, client, stub, enabled):
+        resp = post(client, _form(declarant_id_front=_photo(PDF, "cedula.jpg")))
+        assert resp.status_code == 400
+        assert "Cédula (frente)" in resp.get_data(as_text=True)
+        assert stub.submitted == []
+        assert _files(enabled) == []
+
+    def test_a_photo_over_5_mb_is_rejected(self, client, stub, enabled):
+        big = JPEG + b"\x00" * (5 * 1024 * 1024)
+        resp = post(client, _form(_card(0, back=_photo(big))))
+        assert resp.status_code == 400
+        assert "Tarjeta 1 (atrás)" in resp.get_data(as_text=True)
+        assert _files(enabled) == []
+
+    def test_missing_photos_are_left_unset_for_the_validator(self, client, stub):
+        post(client, _form(_card(0, front=None), declarant_id_back=None))
+        assert stub.inp.cards[0].front_file is None and stub.inp.id_back_file is None
 
     def test_bad_signature_is_rejected_and_cleaned(self, client, stub, enabled):
         resp = post(client, _form(signature="data:image/png;base64,@@@"))
@@ -493,7 +540,7 @@ class TestStickyRerender:
         assert 'data-card="1"' not in html
         assert 'name="card_3_reason" value="PÉRDIDA" checked' in html
         assert "data:image/png" not in html
-        assert "notarizedWrap" not in html and 'type="file"' not in html
+        assert "notarizedWrap" not in html
         assert '<output id="totalPlates" aria-live="polite">3</output>' in html.replace("\n", "")
 
     def test_acting_as_is_kept_on_rerender(self, client, stub):
@@ -545,7 +592,7 @@ class TestSizeLimits:
         assert len(big) > 250_000
         resp = post(client, _two_cards_form(signature=big))
         assert resp.status_code == 200
-        assert len(_files(enabled)) == 1
+        assert _suffixes(enabled).count(".png") == 1
 
     def test_oversized_body_gets_friendly_413(self, client, stub, enabled):
         resp = post(client, _form(_card(0, reason="PÉRDIDA"), junk="z" * (13 * 1024 * 1024)))
@@ -594,7 +641,7 @@ class TestEndToEnd:
         # Nothing is created until the point of sale approves the declaration.
         assert db.get_customer_by_name(db_conn, "Maria Lopez") is None
         assert _count(db_conn, "customers") == 0 and _count(db_conn, "ownership_cards") == 0
-        assert len(_files(enabled)) == 1
+        assert _suffixes(enabled).count(".png") == 1
         # ... and approving it afterwards creates the customer and the card.
         _approve(db_conn, row["id"])
         customer = db.get_customer_by_name(db_conn, "Maria Lopez")
@@ -622,7 +669,7 @@ class TestEndToEnd:
         cards = db.list_ownership_cards_for_customer(db_conn, customer.id)
         assert sorted(c.plate_number for c in cards) == ["ABC123", "DEF45G"]
         assert _count(db_conn, "customers") == 1
-        assert len(_files(enabled)) == 1  # one signature for the whole declaration
+        assert _suffixes(enabled).count(".png") == 1  # one signature for the whole declaration
 
     def test_gestor_posted_by_hand_is_rejected_without_touching_the_db(self, client, enabled, db_conn):
         resp = post(client, _two_cards_form(acting_as="GESTOR", declarant_name="Juan Gestor"))
@@ -650,7 +697,7 @@ class TestEndToEnd:
             assert cur.fetchone()["notarized_pdf_path"] is None
             cur.execute("SELECT reason FROM declaration_cards ORDER BY id")
             assert [r["reason"] for r in cur.fetchall()] == ["DETERIORO", "PÉRDIDA"]
-        assert [p.suffix for p in _files(enabled)] == [".png"]  # only the signature
+        assert ".pdf" not in _suffixes(enabled)  # no notarized PDF; the signature and photos only
 
     def test_missing_signature_is_rejected(self, client, enabled, db_conn):
         resp = post(client, _form(signature=None))

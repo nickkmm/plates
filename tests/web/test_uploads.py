@@ -135,3 +135,36 @@ def test_resolve_rejects_bad_names(name):
 def test_resolve_rejects_non_string():
     with pytest.raises(UploadError):
         uploads.resolve_upload_path(None)  # type: ignore[arg-type]
+
+
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+WEBP = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 16
+
+
+@pytest.mark.parametrize("content,extension", [(JPEG, ".jpg"), (PNG, ".png"), (WEBP, ".webp")])
+def test_save_photo_sniffs_the_type_from_the_content(upload_root, content, extension):
+    name = uploads.save_photo(_fs(content, "whatever.txt"), "Cédula (frente)")
+    assert name.endswith(extension)
+    assert (upload_root / name).read_bytes() == content
+    assert uploads.resolve_upload_path(name) == upload_root / name
+
+
+@pytest.mark.parametrize("storage", [None, FileStorage(stream=io.BytesIO(b""), filename="")])
+def test_save_photo_missing(storage):
+    with pytest.raises(UploadError, match="Falta la foto: Cédula"):
+        uploads.save_photo(storage, "Cédula (frente)")
+
+
+def test_save_photo_empty():
+    with pytest.raises(UploadError, match="vacía"):
+        uploads.save_photo(_fs(b"", "a.jpg"), "Cédula (frente)")
+
+
+def test_save_photo_rejects_a_pdf_named_jpg():
+    with pytest.raises(UploadError, match="no es una foto válida"):
+        uploads.save_photo(_fs(b"%PDF-1.4 x", "a.jpg"), "Cédula (frente)")
+
+
+def test_save_photo_too_big():
+    with pytest.raises(UploadError, match="5 MB"):
+        uploads.save_photo(_fs(JPEG + b"\x00" * uploads.MAX_PHOTO_BYTES, "a.jpg"), "Cédula (frente)")

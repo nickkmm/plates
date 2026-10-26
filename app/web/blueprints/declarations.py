@@ -79,7 +79,7 @@ from app.core.db.declarations import (
 from app.core.declaration_pdf import build_declaration_pdf
 from app.core.normalize import clean_plate, normalize_requested_by
 from app.web.auth import pos_allowed
-from app.web.uploads import UploadError, resolve_upload_path
+from app.web.uploads import PHOTO_MIMETYPES, UploadError, resolve_upload_path
 
 bp = Blueprint("declarations", __name__)
 
@@ -116,10 +116,15 @@ FLAG_LABELS = {
     FLAG_CUSTOMER_DOCUMENT_MISMATCH: "Documento distinto",
 }
 # kind -> (DeclarationRecord attribute holding the stored name, mimetype)
+# A None mimetype means "a photo": taken from the stored file's extension.
 FILE_KINDS = {
     "signature": ("declarant_signature_path", "image/png"),
     "notarized_pdf": ("notarized_pdf_path", "application/pdf"),
+    "id_front": ("declarant_id_front_path", None),
+    "id_back": ("declarant_id_back_path", None),
 }
+# side -> DeclarationCardRecord attribute holding the stored name of the card photo
+CARD_PHOTO_SIDES = {"front": "card_front_path", "back": "card_back_path"}
 # Approve-form checkbox: reassign_<declaration_cards.id>.
 _REASSIGN_FIELD = re.compile(r"reassign_(\d+)")
 # Plates shown in the list's compact summary before collapsing into "+N".
@@ -371,7 +376,28 @@ def declaration_file(declaration_id: int, kind: str):
         declaration = db.get_declaration(conn, declaration_id)
     if declaration is None:
         abort(404)
-    stored_name = getattr(declaration, attribute)
+    return _send_stored_file(getattr(declaration, attribute), mimetype)
+
+
+@bp.get("/declaraciones/<int:declaration_id>/cards/<int:card_id>/photo/<side>")
+@pos_allowed
+def declaration_card_photo(declaration_id: int, card_id: int, side: str):
+    """The front or back photo of one ownership card of the declaration."""
+    attribute = CARD_PHOTO_SIDES.get(side)
+    if attribute is None:
+        abort(404)
+    with db.get_conn() as conn:
+        cards = db.list_declaration_cards(conn, declaration_id)
+    card = next((c for c in cards if c.id == card_id), None)
+    if card is None:
+        abort(404)
+    return _send_stored_file(getattr(card, attribute), None)
+
+
+def _send_stored_file(stored_name: str | None, mimetype: str | None):
+    """Serve an upload by its stored name (never a client-supplied path):
+    inline, `nosniff`, `no-store`; 404 when there is none or it is gone.
+    `mimetype=None` means a photo, typed by the stored extension."""
     if not stored_name:
         abort(404)
     try:
@@ -380,6 +406,10 @@ def declaration_file(declaration_id: int, kind: str):
         abort(404)
     if not path.is_file():
         abort(404)
+    if mimetype is None:
+        mimetype = PHOTO_MIMETYPES.get(path.suffix.lstrip("."))
+        if mimetype is None:
+            abort(404)
     response = send_file(path, mimetype=mimetype, as_attachment=False)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Cache-Control"] = "no-store"
