@@ -174,7 +174,8 @@ class TestValidate:
         assert decl.DATA_POLICY_TITLE == "AUTORIZACIÓN DE TRATAMIENTO DE DATOS PERSONALES"
         assert decl.DATA_POLICY_PARAGRAPH_1.startswith("En cumplimiento de la Ley 1581 de 2012, quien suscribe")
         assert "INGENIERÍA DE SEÑALIZACIÓN S.A.S. (NIT 900.773.756-0, Calle 42 # 41-47, Palmira)" in decl.DATA_POLICY_PARAGRAPH_1
-        assert decl.DATA_POLICY_PARAGRAPH_1.endswith("bajo deber de confidencialidad.")
+        assert decl.DATA_POLICY_PARAGRAPH_1.endswith("y tributarias. Los datos no serán compartidos con terceros.")
+        assert "proveedores" not in decl.DATA_POLICY_PARAGRAPH_1
         assert "a través del correo ovelez@ingse.co. La Política de Tratamiento de Datos está disponible en https://placasvehiculares.ingse.co/#placas. Los datos se conservarán" in decl.DATA_POLICY_PARAGRAPH_2
         assert decl.DATA_POLICY_PARAGRAPH_2_PARTS[1] == decl.DATA_POLICY_EMAIL
         assert decl.DATA_POLICY_PARAGRAPH_2_PARTS[3] == decl.DATA_POLICY_URL
