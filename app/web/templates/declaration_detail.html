@@ -120,7 +120,7 @@
   <div class="notary{{ ' done' if notary_received }}" id="notarization">
     <h2>Autenticación notarial</h2>
     {% if notary_received %}
-    <p><strong>Autenticación recibida</strong> el {{ d.notarized_received_at.strftime('%d/%m/%Y %H:%M') }}{% if notary_received_by %} (registrada por {{ notary_received_by }}){% endif %}.</p>
+    <p><strong>Autenticación recibida</strong> el {{ d.notarized_received_at | bogota }}{% if notary_received_by %} (registrada por {{ notary_received_by }}){% endif %}.</p>
     {% else %}
     <p><strong>Pendiente.</strong> Esta declaración tiene tarjetas por pérdida y debe autenticarse en una notaría antes de crear el pedido.
       Descargue el PDF, entréguelo al cliente y, cuando el cliente regrese con la declaración autenticada, márquela como recibida.</p>
@@ -166,11 +166,11 @@
   <fieldset>
     <legend>Declaración</legend>
     <dl>
-      <dt>Fecha de envío</dt><dd>{{ d.created_at.strftime('%d/%m/%Y %H:%M') }}</dd>
+      <dt>Fecha de envío</dt><dd>{{ d.created_at | bogota }}</dd>
       <dt>Actúa como</dt><dd>{{ d.acting_as }}</dd>
       <dt>Tarjetas de propiedad</dt><dd>{{ cards | length }}</dd>
       <dt>Total de placas</dt><dd>{{ plate_total }}</dd>
-      <dt>Tratamiento de datos</dt><dd>{% if d.accepted_data_policy_at %}Autorizado el {{ d.accepted_data_policy_at.strftime('%d/%m/%Y %H:%M') }}{% else %}No registrada{% endif %}</dd>
+      <dt>Tratamiento de datos</dt><dd>{% if d.accepted_data_policy_at %}Autorizado el {{ d.accepted_data_policy_at | bogota }}{% else %}No registrada{% endif %}</dd>
       <dt>Información comercial</dt><dd>{% if d.accepts_marketing is none %}No registrada{% elif d.accepts_marketing %}Sí{% else %}No{% endif %}</dd>
     </dl>
   </fieldset>
@@ -289,7 +289,7 @@
   <fieldset>
     <legend>Resultado de la revisión</legend>
     <dl>
-      {% if d.reviewed_at %}<dt>Revisada el</dt><dd>{{ d.reviewed_at.strftime('%d/%m/%Y %H:%M') }}</dd>{% endif %}
+      {% if d.reviewed_at %}<dt>Revisada el</dt><dd>{{ d.reviewed_at | bogota }}</dd>{% endif %}
       {% if d.review_note %}<dt>Nota</dt><dd>{{ d.review_note }}</dd>{% endif %}
     </dl>
   </fieldset>

@@ -44,7 +44,7 @@
             <span class="sin-tarifa">sin tarifa</span>
           {% endif %}
         </td>
-        <td>{{ r.updated_at.strftime("%Y-%m-%d %H:%M") if r.updated_at else "" }}</td>
+        <td>{{ r.updated_at | bogota("%Y-%m-%d %H:%M") }}</td>
         <td>{{ r.updated_by or "" }}</td>
         <td class="actions">
           <form method="post" action="{{ url_for('pricing.precios_update', plate_type=r.plate_type) }}" style="display:flex; gap:.4rem; align-items:center">

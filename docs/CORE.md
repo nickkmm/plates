@@ -512,6 +512,14 @@ que `db/*` (recibe `conn` abierto, nunca comitea).
 Dinero (`Decimal`) de punta a punta, nunca mezclado con `float` — ver
 [`DATABASE.md`](DATABASE.md) para las columnas `NUMERIC` involucradas.
 
+### `timezones.py` (hora de Colombia)
+
+Los contenedores y PostgreSQL corren en UTC y las columnas son `TIMESTAMP` sin
+zona, así que **toda marca de tiempo guardada es UTC**. Se guarda en UTC y se
+convierte solo al mostrarla: `to_bogota` (PDF) y el filtro de Jinja `bogota`
+(`format_bogota`, en las pantallas). `utc_now()` da la hora tal como se guarda.
+Las fechas de negocio (`order_date` y demás columnas `DATE`) no se convierten.
+
 ### `declaration_pdf.py` (declaración juramentada en PDF)
 
 Función pura (sin Flask ni DB) que genera, con `reportlab`, la declaración

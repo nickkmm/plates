@@ -44,6 +44,7 @@ import pytest
 from app.core import db
 from app.core import declarations as decl
 from app.core.models import ExtractedRow
+from app.core.timezones import utc_now
 from tests.conftest import PUNTO_VENTA_USERNAME, TEST_USERNAME
 from tests.core.test_declarations import (
     TODAY,
@@ -294,6 +295,22 @@ class TestDetail:
         html = authenticated_client.get(_detail(declaration_id)).data.decode()
         assert re.search(r"Tratamiento de datos</dt><dd>Autorizado el \d{2}/\d{2}/\d{4} \d{2}:\d{2}</dd>", html)
         assert f"Información comercial</dt><dd>{label}</dd>" in html
+
+    def test_times_are_shown_in_colombia_time(self, authenticated_client, db_conn):
+        declaration_id = _submit(db_conn, _input())
+        with db_conn.cursor() as cur:
+            # 01:30 UTC on the 8th is still 20:30 on the 7th in Colombia.
+            cur.execute(
+                "UPDATE declarations SET created_at = %s, accepted_data_policy_at = %s, "
+                "reviewed_at = %s, notarized_received_at = %s WHERE id = %s",
+                (*[datetime(2026, 11, 8, 1, 30)] * 4, declaration_id),
+            )
+        detail = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert "Fecha de envío</dt><dd>07/11/2026 20:30</dd>" in detail
+        assert "Autorizado el 07/11/2026 20:30" in detail
+        assert "08/11/2026 01:30" not in detail
+        listing = authenticated_client.get("/declaraciones").data.decode()
+        assert "07/11/2026 20:30" in listing and "08/11/2026 01:30" not in listing
 
     def test_older_declaration_shows_not_registered(self, authenticated_client, db_conn):
         declaration_id = _submit(db_conn, _input(accepted_data_policy=False, accepts_marketing=None))
@@ -1207,7 +1224,7 @@ class TestPdf:
         assert call["declaration"].id == declaration_id
         assert [c.id for c in call["cards"]] == [c.id for c in _cards_of(db_conn, declaration_id)]
         assert call["signature_png"] == PNG
-        assert abs((datetime.now() - call["issued_at"]).total_seconds()) < 60
+        assert abs((utc_now() - call["issued_at"]).total_seconds()) < 60
 
     @pytest.mark.parametrize("mode", ["no_path", "missing_file", "traversal"])
     def test_signature_is_none_when_unavailable(self, authenticated_client, db_conn, uploads, calls, mode):

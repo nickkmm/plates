@@ -42,6 +42,7 @@ import sentry_sdk
 from flask import Flask, redirect
 from sentry_sdk.integrations.flask import FlaskIntegration
 
+from app.core.timezones import format_bogota
 from app.web import auth
 from app.web.auth import consulta_allowed
 from app.web.blueprints.auth_routes import bp as auth_routes_bp
@@ -123,6 +124,7 @@ def _inject_full_access_roles() -> dict:
 
 
 app.jinja_env.filters["cop"] = format_cop
+app.jinja_env.filters["bogota"] = format_bogota
 
 
 @app.get("/")

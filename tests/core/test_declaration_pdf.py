@@ -282,6 +282,18 @@ def test_missing_optional_data_and_no_cards() -> None:
     assert _build(declaration, []).startswith(b"%PDF-")
 
 
+def test_stored_times_print_as_the_colombian_date() -> None:
+    # Naive = stored = UTC: 01:30 on the 8th is still the evening of the 7th here.
+    stored = datetime(2026, 11, 8, 1, 30)
+    declaration = _declaration(accepted_data_policy_at=stored, accepts_marketing=True)
+    declaration.created_at = stored
+    text = _text(build_declaration_pdf(declaration=declaration, cards=[_card()], signature_png=None, issued_at=stored))
+    assert "Fecha de emisión 07/11/2026" in text
+    assert "Declarada el 07/11/2026" in text
+    assert "Autorización aceptada el 07/11/2026." in text
+    assert "08/11/2026" not in text
+
+
 def test_naive_and_aware_issue_dates() -> None:
     from zoneinfo import ZoneInfo
     declaration = _declaration()
