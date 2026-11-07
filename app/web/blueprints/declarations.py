@@ -39,7 +39,7 @@ import io
 import re
 import unicodedata
 import zipfile
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 
 import psycopg
@@ -79,6 +79,7 @@ from app.core.db.declarations import (
 )
 from app.core.declaration_pdf import build_declaration_pdf
 from app.core.normalize import clean_plate, normalize_requested_by
+from app.core.timezones import utc_now
 from app.web.auth import pos_allowed
 from app.web.uploads import PHOTO_MIMETYPES, UploadError, resolve_upload_path
 
@@ -548,7 +549,7 @@ def declaration_pdf(declaration_id: int):
         abort(404, "El PDF solo está disponible para declaraciones aprobadas.")
     pdf = build_declaration_pdf(
         declaration=declaration, cards=cards, signature_png=_read_signature(declaration),
-        issued_at=datetime.now(),
+        issued_at=utc_now(),
     )
     response = send_file(
         io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True,

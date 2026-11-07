@@ -91,6 +91,7 @@ from app.core.normalize import (
     normalize_requested_by,
     validate_plate,
 )
+from app.core.timezones import utc_now
 
 # Re-exported so callers of the logic layer need only this module.
 PLATE_MADE_RECENTLY = FLAG_PLATE_MADE_RECENTLY
@@ -576,8 +577,8 @@ def submit_declaration(
         "declarant_id_back_path": inp.id_back_file,
         "submitter_ip": inp.submitter_ip,
         "user_agent": inp.user_agent,
-        "accepted_terms_at": datetime.now() if inp.accepted_terms else None,
-        "accepted_data_policy_at": datetime.now() if inp.accepted_data_policy else None,
+        "accepted_terms_at": utc_now() if inp.accepted_terms else None,
+        "accepted_data_policy_at": utc_now() if inp.accepted_data_policy else None,
         "accepts_marketing": inp.accepts_marketing,
     }
 

@@ -26,7 +26,6 @@ import unicodedata
 from datetime import datetime
 from typing import Any
 from xml.sax.saxutils import escape
-from zoneinfo import ZoneInfo
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
@@ -52,8 +51,7 @@ from app.core.declarations import (
     DATA_POLICY_TITLE,
     MARKETING_STATEMENT,
 )
-
-BOGOTA_TZ = ZoneInfo("America/Bogota")
+from app.core.timezones import to_bogota
 
 COMPANY_NAME = "INGSE SAS"
 COMPANY_TAGLINE = "NIT 900.773.756-0 · Fabricante autorizado de la Placa Única Nacional para Vehículos"
@@ -165,9 +163,7 @@ def _text(data: dict[str, Any] | None, key: str) -> str:
 
 
 def _format_date(value: datetime) -> str:
-    if value.tzinfo is not None:
-        value = value.astimezone(BOGOTA_TZ)
-    return value.strftime("%d/%m/%Y")
+    return to_bogota(value).strftime("%d/%m/%Y")
 
 
 def _document(data: dict[str, Any] | None) -> str:

@@ -85,7 +85,7 @@
       {% set s = row.summary %}
       <tr>
         <td data-label="#">{{ d.id }}</td>
-        <td data-label="Fecha">{{ d.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+        <td data-label="Fecha">{{ d.created_at | bogota }}</td>
         <td data-label="Declarante">{{ row.declarant.get('name') or '—' }}<br><span class="muted">{{ d.acting_as }}</span></td>
         <td data-label="Tarjetas">{{ s.card_count }}</td>
         <td data-label="Placas">{{ s.plate_total }}</td>
