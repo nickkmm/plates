@@ -404,7 +404,7 @@ Constantes: `STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` y
 
 | Función | Qué hace |
 |---|---|
-| `insert_declaration(conn, *, acting_as, status, submitted_data, review_flags=None, gestor_id=None, declarant_signature_path=None, notarized_pdf_path=None, submitter_ip=None, user_agent=None, accepted_terms_at=None)` | Inserta el encabezado y devuelve el `id`. |
+| `insert_declaration(conn, *, acting_as, status, submitted_data, review_flags=None, gestor_id=None, declarant_signature_path=None, notarized_pdf_path=None, submitter_ip=None, user_agent=None, accepted_terms_at=None, declarant_id_front_path=None, declarant_id_back_path=None, accepted_data_policy_at=None, accepts_marketing=None)` | Inserta el encabezado y devuelve el `id`. |
 | `insert_declaration_card(conn, declaration_id, *, position, reason, plate_quantity, plate_number, transit_license, owner_data, engine_number=None, ..., owner_relation=None, review_flags=None, customer_id=None, ownership_card_id=None)` | Inserta una tarjeta de la declaración y devuelve el `id`. |
 | `get_declaration(conn, declaration_id)` | `DeclarationRecord` o `None`. |
 | `list_declaration_cards(conn, declaration_id)` | Las tarjetas de una declaración, ordenadas por `position`. |
@@ -424,7 +424,16 @@ placas `is_voided` o `is_plate_annulled`; `None` si nunca se fabricó.
 Lógica de negocio sin Flask; recibe `conn` y nunca hace commit/rollback.
 
 Modelo de entrada: `DeclarationInput(acting_as, declarant: PersonInput, cards:
-list[OwnershipCardInput], signature_file, ...)`. Hay **un
+list[OwnershipCardInput], signature_file, ...)`, que además trae
+`accepted_data_policy: bool = False` y `accepts_marketing: bool | None = None`
+(autorización de tratamiento de datos de la Ley 1581 y SÍ/NO a información
+comercial; `submit_declaration` guarda `accepted_data_policy_at` y
+`accepts_marketing`). El texto legal de esa autorización está **una sola vez**
+en constantes de este módulo (`DATA_POLICY_TITLE`, `DATA_POLICY_PARAGRAPH_1`,
+`DATA_POLICY_PARAGRAPH_2` y `_PARTS`, `DATA_POLICY_EMAIL`, `DATA_POLICY_URL`,
+`MARKETING_STATEMENT`, `MARKETING_LINE`), que leen el formulario y el PDF;
+`parse_marketing_choice` convierte `SI`/`NO` del formulario en `True`/`False` y
+todo lo demás en `None`. Hay **un
 solo declarante** (el propietario/poseedor mismo, o un gestor) y **una sola
 firma**, que cubre todas las tarjetas. **No se sube ningún PDF con la
 declaración**: para una pérdida, el personal entrega la declaración como PDF,
@@ -439,7 +448,7 @@ tarjetas por declaración.
 
 | Función | Qué hace |
 |---|---|
-| `validate_declaration(inp)` | Lista de errores en español (vacía = válida): declarante (el nombre, de declarante o de dueño, no puede contener números, igual que "Solicitado por" en `/ingest`), firma única y términos siempre; 1..`MAX_CARDS` tarjetas; por tarjeta (con prefijo `Tarjeta N: `): obligatorios (incluido «Matriculado en» y las fotos frente/atrás de la tarjeta; a nivel de declaración, las de la cédula), vocabulario con `normalize_choice`, placa con `validate_plate`, cantidad de placas dentro del rango del tipo, dueño y relación si es gestor; placa o licencia repetida dentro del envío. Una pérdida no exige ningún archivo. |
+| `validate_declaration(inp)` | Lista de errores en español (vacía = válida): declarante (el nombre, de declarante o de dueño, no puede contener números, igual que "Solicitado por" en `/ingest`), firma única, términos, autorización de tratamiento de datos («Debe autorizar el tratamiento de datos personales.») y respuesta SÍ/NO a información comercial («Indique si autoriza el envío de información comercial.») siempre; 1..`MAX_CARDS` tarjetas; por tarjeta (con prefijo `Tarjeta N: `): obligatorios (incluido «Matriculado en» y las fotos frente/atrás de la tarjeta; a nivel de declaración, las de la cédula), vocabulario con `normalize_choice`, placa con `validate_plate`, cantidad de placas dentro del rango del tipo, dueño y relación si es gestor; placa o licencia repetida dentro del envío. Una pérdida no exige ningún archivo. |
 | `submit_declaration(conn, inp, *, today=None)` | Calcula las alertas de cada tarjeta, guarda la declaración **siempre** en `pending_review` (con o sin alertas) y **no crea nada** (ni clientes, ni gestor, ni tarjetas de propiedad). Devuelve `SubmitResult(declaration_id, status, flags)`. `today` por defecto es la fecha de Bogotá. |
 | `approve_declaration(conn, id, reviewer_user_id, *, reassign_card_ids=(), note=None)` | Solo desde `pending_review` (el punto de venta la revisa). Aquí es donde se crean/enlazan el gestor (si lo hay) y, por **cada** tarjeta, su dueño y su tarjeta de propiedad; funciona igual con o sin alertas. `reassign_card_ids` son ids de `declaration_cards` cuya tarjeta existente es de otro cliente y se puede mover. Un cliente existente con tipo `NULL` pasa al tipo esperado; con otro tipo, `ValueError`. Tarjeta de otro dueño sin estar en `reassign_card_ids`: `ValueError`; licencia/placa que no cuadran: siempre `ValueError`. Un conflicto que apareció **después** del envío (la declaración se guardó sin alertas) se detecta aquí: `ValueError` claro y no cambia nada. Todo es verificado **antes** de escribir (todo o nada); los mensajes nombran la tarjeta y su placa. |
 | `reject_declaration(conn, id, reviewer_user_id, note)` | Marca `rejected` (nota obligatoria); no crea nada. |
@@ -512,7 +521,7 @@ Notaría. La ruta de descarga la llama; este módulo no toca la base de datos.
 
 | Función | Qué hace |
 |---|---|
-| `build_declaration_pdf(*, declaration, cards, signature_png, issued_at) -> bytes` | PDF tamaño carta: encabezado INGSE, número y fecha, calidad en la que actúa (PROPIETARIO / POSEEDOR / GESTOR), datos del declarante (de `submitted_data["declarant"]`), un bloque por tarjeta de propiedad (con el propietario de cada una si es GESTOR), los textos legales, la firma del declarante con su nombre y documento, y un recuadro en blanco para la autenticación notarial. Pie "Declaración N° X — página i de n" en todas las páginas; el bloque de firma no se parte entre páginas. Si `signature_png` es `None` o no se puede leer, se omite la imagen y queda el espacio para firmar a mano. |
+| `build_declaration_pdf(*, declaration, cards, signature_png, issued_at) -> bytes` | PDF tamaño carta: encabezado INGSE, número y fecha, calidad en la que actúa (PROPIETARIO / POSEEDOR / GESTOR), datos del declarante (de `submitted_data["declarant"]`), un bloque por tarjeta de propiedad (con el propietario de cada una si es GESTOR), los textos legales, la sección 7 «Autorización de tratamiento de datos personales» (texto de `app/core/declarations.py`, fecha de aceptación y `[X] SÍ / [ ] NO` según `accepts_marketing`; **solo** si `accepted_data_policy_at` no es NULL), la firma del declarante (sección 8, o «7. FIRMA» sin autorización registrada: las declaraciones anteriores se imprimen igual que antes) con su nombre y documento, y un recuadro en blanco para la autenticación notarial. Pie "Declaración N° X — página i de n" en todas las páginas; el bloque de firma no se parte entre páginas. Si `signature_png` es `None` o no se puede leer, se omite la imagen y queda el espacio para firmar a mano. |
 
 Notas: todo texto del usuario se escapa (el `Paragraph` de reportlab
 interpreta marcado) y se reduce a caracteres que las fuentes estándar pueden

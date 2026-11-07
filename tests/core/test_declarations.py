@@ -64,7 +64,8 @@ def _input(**kw) -> DeclarationInput:
     base = {"acting_as": "PROPIETARIO", "declarant": _owner(), "cards": [_card()],
             "signature_file": "sig.png", "id_front_file": "id-front.jpg",
             "id_back_file": "id-back.jpg", "submitter_ip": "1.1.1.1", "user_agent": "UA",
-            "accepted_terms": True, "submitted_data": {"form": "raw"}}
+            "accepted_terms": True, "accepted_data_policy": True, "accepts_marketing": False,
+            "submitted_data": {"form": "raw"}}
     base.update(kw)
     return DeclarationInput(**base)
 
@@ -148,6 +149,37 @@ class TestValidate:
 
     def test_accepted_terms_required(self):
         assert any("términos" in e for e in decl.validate_declaration(_input(accepted_terms=False)))
+
+    def test_data_policy_authorization_required(self):
+        errors = decl.validate_declaration(_input(accepted_data_policy=False))
+        assert errors == ["Debe autorizar el tratamiento de datos personales."]
+
+    def test_marketing_answer_required_but_either_answer_is_valid(self):
+        errors = decl.validate_declaration(_input(accepts_marketing=None))
+        assert errors == ["Indique si autoriza el envío de información comercial."]
+        assert decl.validate_declaration(_input(accepts_marketing=True)) == []
+        assert decl.validate_declaration(_input(accepts_marketing=False)) == []
+
+    def test_both_missing_reports_both_errors(self):
+        errors = decl.validate_declaration(_input(accepted_data_policy=False, accepts_marketing=None))
+        assert len(errors) == 2
+
+    def test_parse_marketing_choice(self):
+        assert decl.parse_marketing_choice("SI") is True
+        assert decl.parse_marketing_choice(" NO ") is False
+        for bad in (None, "", "si", "SÍ", "YES", "1", "true", "SI,NO"):
+            assert decl.parse_marketing_choice(bad) is None
+
+    def test_data_policy_text_is_verbatim(self):
+        assert decl.DATA_POLICY_TITLE == "AUTORIZACIÓN DE TRATAMIENTO DE DATOS PERSONALES"
+        assert decl.DATA_POLICY_PARAGRAPH_1.startswith("En cumplimiento de la Ley 1581 de 2012, quien suscribe")
+        assert "INGENIERÍA DE SEÑALIZACIÓN S.A.S. (NIT 900.773.756-0, Calle 42 # 41-47, Palmira)" in decl.DATA_POLICY_PARAGRAPH_1
+        assert decl.DATA_POLICY_PARAGRAPH_1.endswith("y tributarias. Los datos no serán compartidos con terceros.")
+        assert "proveedores" not in decl.DATA_POLICY_PARAGRAPH_1
+        assert "a través del correo ovelez@ingse.co. La Política de Tratamiento de Datos está disponible en https://placasvehiculares.ingse.co/#placas. Los datos se conservarán" in decl.DATA_POLICY_PARAGRAPH_2
+        assert decl.DATA_POLICY_PARAGRAPH_2_PARTS[1] == decl.DATA_POLICY_EMAIL
+        assert decl.DATA_POLICY_PARAGRAPH_2_PARTS[3] == decl.DATA_POLICY_URL
+        assert decl.MARKETING_LINE == "SÍ / NO autorizo el envío de información comercial y ofertas."
 
     def test_zero_cards_rejected(self):
         errors = decl.validate_declaration(_input(cards=[]))
@@ -343,6 +375,8 @@ class TestSubmitThenApprove:
         assert (record.declarant_id_front_path, record.declarant_id_back_path) == (
             "id-front.jpg", "id-back.jpg")
         assert record.accepted_terms_at is not None
+        assert record.accepted_data_policy_at is not None
+        assert record.accepts_marketing is False
 
     def test_approving_a_clean_declaration_does_not_need_a_note(self, db_conn):
         declaration_id = _submit_pending(db_conn)
@@ -545,6 +579,28 @@ class TestSubmitThenApprove:
 
 
 # ------------------------------------------------- submit: with conflicts (flags)
+
+class TestDataPolicyStored:
+    def test_yes_is_stored_with_the_acceptance_time(self, db_conn):
+        declaration_id = _submit_pending(db_conn, _input(accepts_marketing=True))
+        record = db.get_declaration(db_conn, declaration_id)
+        assert record is not None
+        assert record.accepts_marketing is True
+        assert record.accepted_data_policy_at is not None
+
+    def test_no_is_stored_as_false_not_null(self, db_conn):
+        declaration_id = _submit_pending(db_conn, _input(accepts_marketing=False))
+        record = db.get_declaration(db_conn, declaration_id)
+        assert record is not None
+        assert record.accepts_marketing is False
+
+    def test_not_accepted_leaves_both_columns_null(self, db_conn):
+        declaration_id = _submit_pending(
+            db_conn, _input(accepted_data_policy=False, accepts_marketing=None))
+        record = db.get_declaration(db_conn, declaration_id)
+        assert record is not None
+        assert record.accepted_data_policy_at is None and record.accepts_marketing is None
+
 
 class TestSubmitPending:
     def _assert_nothing_created(self, db_conn, result, flags):

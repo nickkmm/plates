@@ -8,11 +8,18 @@ from __future__ import annotations
 
 import json
 import re
+from html import escape
 
 import pytest
 from flask import render_template
 
-from app.core.declarations import MAX_CARDS
+from app.core.declarations import (
+    DATA_POLICY_PARAGRAPH_1,
+    DATA_POLICY_PARAGRAPH_2_PARTS,
+    DATA_POLICY_TITLE,
+    MARKETING_STATEMENT,
+    MAX_CARDS,
+)
 from app.core.normalize import DOCUMENT_TYPES, PLATE_TYPES, max_plates_per_card
 from app.web.app import app as flask_app
 
@@ -38,6 +45,8 @@ FULL_FORM = {
     "card_2_reason": "PÉRDIDA",
     "card_2_plate_quantity": "2",
     "accept_terms": "1",
+    "accept_data_policy": "1",
+    "marketing_consent": "NO",
 }
 
 
@@ -56,6 +65,12 @@ def render(**overrides) -> str:
         "max_cards": MAX_CARDS,
         "max_plates_by_type": {t: max_plates_per_card(t) for t in VEHICLE_TYPES},
         "total_plates": 1,
+        "data_policy_title": DATA_POLICY_TITLE,
+        "data_policy_paragraph_1": DATA_POLICY_PARAGRAPH_1,
+        "data_policy_paragraph_2_parts": DATA_POLICY_PARAGRAPH_2_PARTS,
+        "marketing_statement": MARKETING_STATEMENT,
+        "marketing_choice_yes": "SI",
+        "marketing_choice_no": "NO",
     }
     ctx.update(overrides)
     with flask_app.test_request_context("/declaracion"):
@@ -94,7 +109,7 @@ def card_names(i) -> list[str]:
 
 ALL_FIELDS = [
     "acting_as", *[f"declarant_{s}" for s in PERSON_LEAVES], *card_names(0),
-    "signature", "accept_terms", "form_token", "website",
+    "signature", "accept_terms", "accept_data_policy", "marketing_consent", "form_token", "website",
 ]
 
 
@@ -193,7 +208,8 @@ def test_real_document_wording_present():
     for text in (
         "1. Calidad en la que actúa", "2. Datos del declarante", "3. Tarjetas de propiedad",
         "4. DECLARACIÓN Y AUTORIZACIÓN", "5. AVISO LEGAL", "6. COMPROMISOS Y RESPONSABILIDAD DEL CLIENTE",
-        "7. Firma", "señalada(s) en la sección 3",
+        "7. Autorización de tratamiento de datos personales", "8. Firma",
+        "señalada(s) en la sección 3",
         "Falsedad en documento privado (art. 289 C.P.)", "NIT 900.773.756-0",
         "servicioalcliente@ingse.co", "Calle 42 # 41-47",
         "He leído y entiendo el aviso legal y acepto la declaración",
@@ -201,6 +217,28 @@ def test_real_document_wording_present():
         "Total de placas a fabricar",
     ):
         assert text in html, text
+
+
+def test_data_policy_section_text_links_and_required_controls():
+    html = render()
+    # the legal text is verbatim and comes from the shared constants
+    assert escape(DATA_POLICY_TITLE) in html
+    assert escape(DATA_POLICY_PARAGRAPH_1) in html
+    assert "quien suscribe, en nombre propio y/o en representación de EL CLIENTE" in html
+    assert "INGENIERÍA DE SEÑALIZACIÓN S.A.S. (NIT 900.773.756-0, Calle 42 # 41-47, Palmira)" in html
+    assert "Los datos se conservarán durante la relación comercial y el tiempo que exija la ley." in html
+    assert "SÍ" in html and "NO" in html and "autorizo el envío de información comercial y ofertas." in html
+    # the e-mail and the policy are links
+    assert '<a href="mailto:ovelez@ingse.co">ovelez@ingse.co</a>' in html
+    assert ('<a href="https://placasvehiculares.ingse.co/#placas" target="_blank" rel="noopener">'
+            'https://placasvehiculares.ingse.co/#placas</a>') in html
+    # mandatory and nothing pre-chosen on an empty form
+    checkbox = tag(html, "accept_data_policy")
+    assert 'type="checkbox"' in checkbox and "required" in checkbox and "checked" not in checkbox
+    radios = re.findall(r'<input[^>]*name="marketing_consent"[^>]*>', html)
+    assert [re.search(r'value="(\w+)"', r).group(1) for r in radios] == ["SI", "NO"]
+    assert all("checked" not in r for r in radios)
+    assert "required" in radios[0]   # one required radio makes the whole group required
 
 
 def test_form_is_only_for_individuals_no_gestor_or_per_card_owner_ui():
@@ -215,7 +253,8 @@ def test_form_is_only_for_individuals_no_gestor_or_per_card_owner_ui():
     # the five numbered sections are all still there, in order
     positions = [html.index(t) for t in (
         "1. Calidad en la que actúa", "2. Datos del declarante", "3. Tarjetas de propiedad",
-        "4. DECLARACIÓN Y AUTORIZACIÓN", "5. AVISO LEGAL", "6. COMPROMISOS", "7. Firma")]
+        "4. DECLARACIÓN Y AUTORIZACIÓN", "5. AVISO LEGAL", "6. COMPROMISOS",
+        "7. Autorización de tratamiento de datos personales", "8. Firma")]
     assert positions == sorted(positions)
 
 
@@ -245,6 +284,9 @@ def test_populated_form_is_sticky_with_sparse_indices():
     assert re.search(r'name="acting_as" value="POSEEDOR" checked', html)
     assert not re.search(r'name="acting_as" value="PROPIETARIO"[^>]*checked', html)
     assert "checked" in tag(html, "accept_terms")
+    assert "checked" in tag(html, "accept_data_policy")
+    assert re.search(r'name="marketing_consent" value="NO"[^>]*\bchecked', html)
+    assert not re.search(r'name="marketing_consent" value="SI"[^>]*\bchecked', html)
     blocks = card_blocks(html)
     assert [re.match(r'<div class="card-block" data-card="(\d+)"', b).group(1) for b in blocks] == ["0", "2"]
     first, second = blocks
@@ -322,7 +364,8 @@ def test_turnstile_with_and_without_site_key():
 def test_no_external_resources_besides_turnstile():
     html = render()
     assert re.findall(r'(?:src|href)="https?://[^"]+"', html) == [
-        'src="https://challenges.cloudflare.com/turnstile/v0/api.js"'
+        'src="https://challenges.cloudflare.com/turnstile/v0/api.js"',
+        'href="https://placasvehiculares.ingse.co/#placas"',   # the data policy: a link, loads nothing
     ]
 
 

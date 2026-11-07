@@ -29,6 +29,10 @@
     .photo-info { font-size:.8rem; color:#2a7a4b; min-height:1em; }
     .choice { display:flex; align-items:flex-start; gap:.6rem; padding:.55rem 0; font-size:1rem; }
     .choice input { width:1.3rem; height:1.3rem; margin:.1rem 0 0; flex:none; }
+    .marketing { border:0; padding:0; margin:.4rem 0 0; display:flex; flex-wrap:wrap; align-items:center; gap:.2rem .6rem; }
+    .marketing .choice { padding:.3rem 0; }
+    .marketing .marketing-text { flex:1 1 14rem; }
+    .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
     .row2 { display:grid; grid-template-columns:minmax(0,1fr); gap:0 .8rem; }
     @media (min-width:520px) { .row2 { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
     .plate-input { text-transform:uppercase; letter-spacing:1px; }
@@ -249,7 +253,24 @@
     </div>
 
     <div class="card">
-      <h2>7. Firma</h2>
+      <h2>7. Autorización de tratamiento de datos personales</h2>
+      <div class="legal data-policy" tabindex="0" aria-label="{{ data_policy_title }}">
+        <h3>{{ data_policy_title }}</h3>
+        <p>{{ data_policy_paragraph_1 }}</p>
+        <p>{% for part in data_policy_paragraph_2_parts %}{% if loop.index0 == 1 %}<a href="mailto:{{ part }}">{{ part }}</a>{% elif loop.index0 == 3 %}<a href="{{ part }}" target="_blank" rel="noopener">{{ part }}</a>{% else %}{{ part }}{% endif %}{% endfor %}</p>
+      </div>
+      <label class="choice"><input type="checkbox" name="accept_data_policy" value="1" required{% if f.get('accept_data_policy') %} checked{% endif %}> Autorizo el tratamiento de mis datos personales en los términos descritos</label>
+      <fieldset class="marketing">
+        <legend class="sr-only">Información comercial</legend>
+        <label class="choice"><input type="radio" name="marketing_consent" value="{{ marketing_choice_yes }}" required{% if f.get('marketing_consent') == marketing_choice_yes %} checked{% endif %}> SÍ</label>
+        <span aria-hidden="true">/</span>
+        <label class="choice"><input type="radio" name="marketing_consent" value="{{ marketing_choice_no }}"{% if f.get('marketing_consent') == marketing_choice_no %} checked{% endif %}> NO</label>
+        <span class="marketing-text">{{ marketing_statement }}</span>
+      </fieldset>
+    </div>
+
+    <div class="card">
+      <h2>8. Firma</h2>
       {% if errors %}<div class="note">Vuelve a firmar.</div>{% endif %}
       <div class="pad-wrap">
         <div class="pad-label">Firma del declarante (cubre todas las tarjetas de propiedad de esta declaración)</div>
