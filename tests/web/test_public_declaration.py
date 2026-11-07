@@ -92,6 +92,8 @@ def _form(*cards: dict, **overrides) -> dict:
         "declarant_id_front": _photo(),
         "declarant_id_back": _photo(),
         "accept_terms": "1",
+        "accept_data_policy": "1",
+        "marketing_consent": "SI",
         "website": "",
     }
     for card in cards or (_card(0),):
@@ -219,6 +221,19 @@ class TestAvailabilityGate:
         assert client.get("/declaracion").status_code == 200
 
 
+def test_get_renders_the_data_policy_section_required_and_unchecked(client, enabled):
+    html = client.get("/declaracion").get_data(as_text=True)
+    assert "7. Autorización de tratamiento de datos personales" in html
+    assert "AUTORIZACIÓN DE TRATAMIENTO DE DATOS PERSONALES" in html
+    assert "Ley 1581 de 2012" in html and "ovelez@ingse.co" in html
+    assert html.index("7. Autorización de tratamiento") < html.index("8. Firma")
+    checkbox = re.search(r'<input[^>]*name="accept_data_policy"[^>]*>', html).group(0)
+    assert "required" in checkbox and "checked" not in checkbox
+    radios = re.findall(r'<input[^>]*name="marketing_consent"[^>]*>', html)
+    assert len(radios) == 2 and all("checked" not in r for r in radios)
+    assert "required" in radios[0]
+
+
 def test_get_renders_form_with_token_and_headers(client, enabled):
     resp = client.get("/declaracion")
     assert resp.status_code == 200
@@ -326,6 +341,7 @@ class TestParsing:
         assert inp.declarant.name == "Maria Lopez" and inp.declarant.document_type == "CÉDULA"
         assert inp.declarant.phone == "3001112233" and inp.declarant.email == "maria@example.com"
         assert inp.submitter_ip == "7.7.7.7" and inp.accepted_terms is True
+        assert inp.accepted_data_policy is True and inp.accepts_marketing is True
         assert len(inp.cards) == 1
         card = inp.cards[0]
         assert (card.plate_number, card.transit_license, card.engine_number) == ("ABC123", "LIC-0001", "MOT1")
@@ -551,6 +567,36 @@ class TestStickyRerender:
         assert 'name="acting_as" value="PROPIETARIO" required checked' in html
 
 
+class TestDataPolicyParsing:
+    @pytest.mark.parametrize(("value", "expected"), [("SI", True), ("NO", False)])
+    def test_si_and_no_are_both_accepted_and_parsed(self, client, stub, value, expected):
+        resp = post(client, _form(marketing_consent=value))
+        assert resp.status_code == 200
+        assert stub.inp.accepts_marketing is expected
+        assert stub.inp.accepted_data_policy is True
+
+    @pytest.mark.parametrize("value", [None, "", "MAYBE", "si", "SÍ", "1", "true"])
+    def test_any_other_value_counts_as_unanswered(self, client, stub, value):
+        post(client, _form(marketing_consent=value))
+        assert stub.inp.accepts_marketing is None
+
+    def test_missing_checkbox_is_not_accepted(self, client, stub):
+        post(client, _form(accept_data_policy=None))
+        assert stub.inp.accepted_data_policy is False
+
+    def test_choices_are_kept_on_rerender(self, client, stub):
+        stub.validate_errors = ["x"]
+        html = post(client, _form(marketing_consent="NO")).get_data(as_text=True)
+        assert re.search(r'name="accept_data_policy"[^>]*\bchecked', html)
+        assert re.search(r'name="marketing_consent" value="NO"[^>]*\bchecked', html)
+        assert not re.search(r'name="marketing_consent" value="SI"[^>]*\bchecked', html)
+
+    def test_the_raw_copy_keeps_the_answers(self, client, stub):
+        post(client, _form(marketing_consent="NO"))
+        raw = stub.inp.submitted_data
+        assert raw["accept_data_policy"] == "1" and raw["marketing_consent"] == "NO"
+
+
 class TestSubmitRetry:
     def test_unique_violation_is_retried_once(self, client, stub, monkeypatch):
         calls: list[int] = []
@@ -706,6 +752,29 @@ class TestEndToEnd:
             cur.execute("SELECT reason FROM declaration_cards ORDER BY id")
             assert [r["reason"] for r in cur.fetchall()] == ["DETERIORO", "PÉRDIDA"]
         assert ".pdf" not in _suffixes(enabled)  # no notarized PDF; the signature and photos only
+
+    @pytest.mark.parametrize("value", ["SI", "NO"])
+    def test_both_marketing_answers_are_stored(self, client, enabled, db_conn, value):
+        assert post(client, _form(marketing_consent=value)).status_code == 200
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT accepted_data_policy_at, accepts_marketing FROM declarations")
+            row = cur.fetchone()
+        assert row["accepted_data_policy_at"] is not None
+        assert row["accepts_marketing"] is (value == "SI")
+
+    @pytest.mark.parametrize(
+        ("overrides", "message"),
+        [({"accept_data_policy": None}, "Debe autorizar el tratamiento de datos personales."),
+         ({"marketing_consent": None}, "Indique si autoriza el envío de información comercial."),
+         ({"marketing_consent": "TAL VEZ"}, "Indique si autoriza el envío de información comercial.")],
+    )
+    def test_missing_authorization_or_answer_is_rejected_by_the_server(
+        self, client, enabled, db_conn, overrides, message,
+    ):
+        resp = post(client, _form(**overrides))
+        assert resp.status_code == 400
+        assert message in resp.get_data(as_text=True)
+        assert _count(db_conn, "declarations") == 0 and _files(enabled) == []
 
     def test_missing_signature_is_rejected(self, client, enabled, db_conn):
         resp = post(client, _form(signature=None))

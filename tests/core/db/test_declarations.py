@@ -61,9 +61,19 @@ class TestInsertAndGet:
         assert record.created_at is not None
         assert record.reviewed_by is None and record.reviewed_at is None
 
+    def test_data_policy_fields_roundtrip(self, db_conn):
+        accepted = datetime(2026, 11, 7, 10, 30)
+        for marketing in (True, False):
+            record = db.get_declaration(db_conn, _insert(
+                db_conn, accepted_data_policy_at=accepted, accepts_marketing=marketing))
+            assert record is not None
+            assert record.accepted_data_policy_at == accepted
+            assert record.accepts_marketing is marketing
+
     def test_defaults(self, db_conn):
         record = db.get_declaration(db_conn, _insert(db_conn))
         assert record is not None
+        assert record.accepted_data_policy_at is None and record.accepts_marketing is None
         assert record.review_flags == []
         assert record.gestor_id is None
         assert record.declarant_signature_path is None

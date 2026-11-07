@@ -6,8 +6,11 @@ layout follows the paper form (data/DECLARACION_JURAMENTADA_CLIENTE_INGSE_13.doc
 and the legal statements are the ones shown on the public form
 (app/web/templates/declaration.html, "legal" block): the constants below are a
 copy of that text, kept in sync by tests/core/test_declaration_pdf.py (drift
-guard). Section numbers match the form, because its clause 4(b) refers to
-"la sección 3".
+guard). The personal-data authorization (section 7) is NOT copied: it reads
+the same constants as the form (app/core/declarations.py), and it is printed
+only when the declarant accepted it (`accepted_data_policy_at`), so older
+declarations keep their layout, with "7. FIRMA". Section numbers match the
+form, because its clause 4(b) refers to "la sección 3".
 
 Pure function, no Flask and no DB: the caller supplies the records, the
 signature PNG bytes (or None) and the issue timestamp. Standard Helvetica is
@@ -43,6 +46,12 @@ from reportlab.platypus import (
 )
 
 from app.core.db.declarations import DeclarationCardRecord, DeclarationRecord
+from app.core.declarations import (
+    DATA_POLICY_PARAGRAPH_1,
+    DATA_POLICY_PARAGRAPH_2,
+    DATA_POLICY_TITLE,
+    MARKETING_STATEMENT,
+)
 
 BOGOTA_TZ = ZoneInfo("America/Bogota")
 
@@ -87,6 +96,9 @@ COMMITMENTS = (
     "Debe entregar las placas deterioradas en INGSE SAS, o enviarlas a la Calle 42 # 41-47, Barrio "
     "Fray Luis Amigo, Palmira.",
 )
+
+SECTION_DATA_POLICY = f"7. {DATA_POLICY_TITLE}"
+SECTION_SIGNATURE = "FIRMA"
 
 NOTARY_NOTE = (
     "NOTA. Si la placa que se va a fabricar es por PÉRDIDA, este formato debe estar autenticado por Notaría."
@@ -331,6 +343,29 @@ def _legal_flowables(styles: dict[str, ParagraphStyle]) -> list[Flowable]:
     return out
 
 
+def _marketing_line(accepts_marketing: bool | None) -> str:
+    """"[X] SÍ  [ ] NO autorizo ..." -- both boxes empty when not answered."""
+    yes, no = ("X" if accepts_marketing is True else " "), ("X" if accepts_marketing is False else " ")
+    return f"[{yes}] SÍ      [{no}] NO      {MARKETING_STATEMENT}"
+
+
+def _data_policy_flowables(
+    declaration: DeclarationRecord, styles: dict[str, ParagraphStyle],
+) -> list[Flowable]:
+    """Section 7: the personal-data authorization, the date the declarant
+    accepted it and their SÍ / NO to commercial information."""
+    accepted_at = declaration.accepted_data_policy_at
+    assert accepted_at is not None, "only called for declarations that accepted it"
+    return [
+        Paragraph(escape(SECTION_DATA_POLICY), styles["section"]),
+        Paragraph(escape(DATA_POLICY_PARAGRAPH_1), styles["body"]),
+        Paragraph(escape(DATA_POLICY_PARAGRAPH_2), styles["body"]),
+        Paragraph(escape(f"Autorización aceptada el {_format_date(accepted_at)}."), styles["note"]),
+        Spacer(1, 3),
+        Paragraph(escape(_marketing_line(declaration.accepts_marketing)), styles["body"]),
+    ]
+
+
 def _signature_image(signature_png: bytes | None) -> Image | None:
     """The signature as a flowable scaled to fit, or None if absent/unreadable."""
     if not signature_png:
@@ -350,7 +385,7 @@ def _signature_image(signature_png: bytes | None) -> Image | None:
 
 def _signature_block(
     declarant: dict[str, Any] | None, signature_png: bytes | None, acting_as: str,
-    styles: dict[str, ParagraphStyle],
+    section_number: int, styles: dict[str, ParagraphStyle],
 ) -> Flowable:
     image = _signature_image(signature_png)
     role = "Gestor" if acting_as == "GESTOR" else "Declarante"
@@ -375,7 +410,7 @@ def _signature_block(
         "La firma del declarante cubre todas las tarjetas de propiedad de esta declaración."
     )
     return KeepTogether([
-        Paragraph("7. FIRMA", styles["section"]),
+        Paragraph(f"{section_number}. {SECTION_SIGNATURE}", styles["section"]),
         Paragraph(escape(coverage), styles["note"]),
         Spacer(1, 6),
         box,
@@ -437,7 +472,11 @@ def build_declaration_pdf(
     ]
     story += [_card_block(card, i, total_cards, acting_as, styles) for i, card in enumerate(cards, start=1)]
     story += _legal_flowables(styles)
-    story.append(_signature_block(declarant, signature_png, acting_as, styles))
+    signature_section = 7
+    if declaration.accepted_data_policy_at is not None:
+        story += _data_policy_flowables(declaration, styles)
+        signature_section = 8
+    story.append(_signature_block(declarant, signature_png, acting_as, signature_section, styles))
     story.append(_notary_block(styles))
 
     buffer = io.BytesIO()

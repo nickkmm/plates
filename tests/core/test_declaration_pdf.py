@@ -20,6 +20,11 @@ import pdfplumber
 
 from app.core.db.declarations import DeclarationCardRecord, DeclarationRecord
 from app.core.declaration_pdf import build_declaration_pdf
+from app.core.declarations import (
+    DATA_POLICY_PARAGRAPH_1,
+    DATA_POLICY_PARAGRAPH_2,
+    DATA_POLICY_TITLE,
+)
 
 TEMPLATE = Path(__file__).resolve().parents[2] / "app" / "web" / "templates" / "declaration.html"
 ISSUED_AT = datetime(2026, 10, 19, 14, 30)
@@ -38,6 +43,7 @@ def _declarant(**overrides: str) -> dict[str, str]:
 def _declaration(
     *, acting_as: str = "PROPIETARIO", declarant: dict[str, str] | None = None,
     cards_data: list[dict[str, Any]] | None = None,
+    accepted_data_policy_at: datetime | None = None, accepts_marketing: bool | None = None,
 ) -> DeclarationRecord:
     return DeclarationRecord(
         id=57, created_at=datetime(2026, 10, 18, 9, 5), acting_as=acting_as, gestor_id=None,
@@ -47,6 +53,7 @@ def _declaration(
         notarized_pdf_path=None, submitter_ip=None, user_agent=None, accepted_terms_at=None,
         declarant_signature_path=None, production_order_id=None, notarized_received_at=None,
         notarized_received_by=None,
+        accepted_data_policy_at=accepted_data_policy_at, accepts_marketing=accepts_marketing,
     )
 
 
@@ -136,6 +143,40 @@ def test_legal_statements_present() -> None:
         "la sección 3",
     ):
         assert phrase in text
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+ACCEPTED_AT = datetime(2026, 11, 7, 16, 45)
+
+
+def test_data_policy_section_is_printed_when_accepted_and_signature_becomes_8() -> None:
+    pdf = _build(_declaration(accepted_data_policy_at=ACCEPTED_AT, accepts_marketing=True), [_card()])
+    text = _text(pdf)
+    assert f"7. {DATA_POLICY_TITLE}" in text
+    assert _norm(DATA_POLICY_PARAGRAPH_1) in text
+    assert _norm(DATA_POLICY_PARAGRAPH_2) in text
+    assert "ovelez@ingse.co" in text and "https://placasvehiculares.ingse.co/#placas" in text
+    assert "Autorización aceptada el 07/11/2026." in text
+    assert "[X] SÍ [ ] NO autorizo el envío de información comercial y ofertas." in text
+    assert "8. FIRMA" in text and "7. FIRMA" not in text
+    # order: legal sections, then the data policy, then the signature
+    assert text.index("6. COMPROMISOS") < text.index(f"7. {DATA_POLICY_TITLE}") < text.index("8. FIRMA")
+
+
+def test_data_policy_marketing_no_is_marked() -> None:
+    text = _text(_build(_declaration(accepted_data_policy_at=ACCEPTED_AT, accepts_marketing=False), [_card()]))
+    assert "[ ] SÍ [X] NO autorizo el envío de información comercial y ofertas." in text
+
+
+def test_declaration_without_the_authorization_renders_as_before() -> None:
+    text = _text(_build(_declaration(), [_card()]))
+    assert "7. FIRMA" in text and "8. FIRMA" not in text
+    assert DATA_POLICY_TITLE not in text
+    assert "Ley 1581" not in text and "ovelez@ingse.co" not in text
+    assert "Autorización aceptada" not in text and "información comercial" not in text
 
 
 def test_no_notary_note_without_loss() -> None:
@@ -257,7 +298,9 @@ def test_output_is_deterministic() -> None:
 # --- Drift guard: the legal text on the public form == the text in the PDF ---
 
 class _LegalBlockParser(HTMLParser):
-    """Collects the text of every h3 / p / li inside <div class="legal">."""
+    """Collects the text of every h3 / p / li inside <div class="legal">. The
+    data-policy block (class "legal data-policy") is skipped: its text is not
+    copied but read from the shared constants in app.core.declarations."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -271,7 +314,8 @@ class _LegalBlockParser(HTMLParser):
                 self.depth += 1
             if tag in ("h3", "p", "li"):
                 self.current = []
-        elif tag == "div" and "legal" in (dict(attrs).get("class") or "").split():
+        elif tag == "div" and (classes := (dict(attrs).get("class") or "").split()) \
+                and "legal" in classes and "data-policy" not in classes:
             self.depth = 1
 
     def handle_endtag(self, tag: str) -> None:

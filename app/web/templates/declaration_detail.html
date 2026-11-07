@@ -170,6 +170,8 @@
       <dt>Actúa como</dt><dd>{{ d.acting_as }}</dd>
       <dt>Tarjetas de propiedad</dt><dd>{{ cards | length }}</dd>
       <dt>Total de placas</dt><dd>{{ plate_total }}</dd>
+      <dt>Tratamiento de datos</dt><dd>{% if d.accepted_data_policy_at %}Autorizado el {{ d.accepted_data_policy_at.strftime('%d/%m/%Y %H:%M') }}{% else %}No registrada{% endif %}</dd>
+      <dt>Información comercial</dt><dd>{% if d.accepts_marketing is none %}No registrada{% elif d.accepts_marketing %}Sí{% else %}No{% endif %}</dd>
     </dl>
   </fieldset>
 

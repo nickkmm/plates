@@ -286,6 +286,21 @@ class TestDetail:
             assert text in html
         assert "Vehículo (tarjeta" not in html          # never "vehicle" as the entity
 
+    @pytest.mark.parametrize(("marketing", "label"), [(True, "Sí"), (False, "No")])
+    def test_shows_the_data_policy_authorization_and_the_marketing_answer(
+        self, authenticated_client, db_conn, marketing, label,
+    ):
+        declaration_id = _submit(db_conn, _input(accepts_marketing=marketing))
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert re.search(r"Tratamiento de datos</dt><dd>Autorizado el \d{2}/\d{2}/\d{4} \d{2}:\d{2}</dd>", html)
+        assert f"Información comercial</dt><dd>{label}</dd>" in html
+
+    def test_older_declaration_shows_not_registered(self, authenticated_client, db_conn):
+        declaration_id = _submit(db_conn, _input(accepted_data_policy=False, accepts_marketing=None))
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert "Tratamiento de datos</dt><dd>No registrada</dd>" in html
+        assert "Información comercial</dt><dd>No registrada</dd>" in html
+
     def test_unknown_id_redirects_to_list(self, authenticated_client, db_conn):
         resp = authenticated_client.get(_detail(9999))
         assert resp.status_code == 302

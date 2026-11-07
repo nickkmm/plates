@@ -158,7 +158,9 @@ CREATE TABLE declarations (
     notarized_received_at TIMESTAMP,        -- 0011: staff got the notarized copy back (PÉRDIDA declarations); NULL = not yet
     notarized_received_by INTEGER REFERENCES users(id),
     declarant_id_front_path TEXT,           -- 0012: cédula photos of the declarant (stored names); NULL on older declarations
-    declarant_id_back_path TEXT
+    declarant_id_back_path TEXT,
+    accepted_data_policy_at TIMESTAMP,      -- 0013: when the declarant accepted the personal-data authorization (Ley 1581); NULL on older declarations
+    accepts_marketing BOOLEAN               -- 0013: TRUE = SÍ, FALSE = NO to commercial information; NULL on older declarations
 );
 CREATE INDEX declarations_production_order_id_idx ON declarations (production_order_id);
 CREATE INDEX declarations_status_idx ON declarations (status);

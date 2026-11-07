@@ -414,6 +414,8 @@ lugar donde vive la declaración completa (y la evidencia legal).
 | `notarized_pdf_path` | TEXT | nullable | **Sin uso en el flujo público**: el formulario ya no recibe ningún PDF (para una pérdida, el personal entrega la declaración como PDF y el cliente la trae autenticada; ver `notarized_received_*` de la migración 0011). La columna se conserva (nullable, sin migración que la elimine) por compatibilidad con filas existentes; `submit_declaration` ya no la escribe. |
 | `submitter_ip` / `user_agent` | TEXT | nullable | Para el límite por IP y la trazabilidad. |
 | `accepted_terms_at` | TIMESTAMP | nullable | |
+| `accepted_data_policy_at` | TIMESTAMP | nullable | Migración 0013. Cuándo el declarante marcó la autorización de tratamiento de datos personales (Ley 1581 de 2012) en el formulario público. NULL en las declaraciones anteriores a la migración 0013: esas personas nunca firmaron esa autorización, y su PDF no la muestra. |
+| `accepts_marketing` | BOOLEAN | nullable | Migración 0013. Respuesta SÍ / NO a «autorizo el envío de información comercial y ofertas»: `TRUE` = SÍ, `FALSE` = NO, NULL = sin respuesta (declaraciones anteriores a la migración 0013). |
 | `notarized_received_at` | TIMESTAMP | nullable | Migración 0011. Cuándo el personal recibió de vuelta el documento autenticado en notaría (solo declaraciones con alguna tarjeta por PÉRDIDA). NULL = aún no; mientras tanto "Crear pedido" está bloqueado (también en el servidor, en `/ingest`). |
 | `notarized_received_by` | INTEGER | FK `users(id)`, nullable | Quién lo marcó como recibido. |
 

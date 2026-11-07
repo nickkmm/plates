@@ -43,11 +43,18 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from app.core import db, normalize
 from app.core.declarations import (
     ACTING_AS_GESTOR,
+    DATA_POLICY_PARAGRAPH_1,
+    DATA_POLICY_PARAGRAPH_2_PARTS,
+    DATA_POLICY_TITLE,
+    MARKETING_CHOICE_NO,
+    MARKETING_CHOICE_YES,
+    MARKETING_STATEMENT,
     MAX_CARDS,
     DeclarationInput,
     OwnershipCardInput,
     PersonInput,
     SubmitResult,
+    parse_marketing_choice,
     submit_declaration,
     validate_declaration,
 )
@@ -155,6 +162,12 @@ def _render_form(
         max_cards=MAX_CARDS,
         max_plates_by_type={t: normalize.max_plates_per_card(t) for t in vehicle_types},
         total_plates=_total_plates(form, indices),
+        data_policy_title=DATA_POLICY_TITLE,
+        data_policy_paragraph_1=DATA_POLICY_PARAGRAPH_1,
+        data_policy_paragraph_2_parts=DATA_POLICY_PARAGRAPH_2_PARTS,
+        marketing_statement=MARKETING_STATEMENT,
+        marketing_choice_yes=MARKETING_CHOICE_YES,
+        marketing_choice_no=MARKETING_CHOICE_NO,
     )
 
 
@@ -188,6 +201,8 @@ def _build_input(form: Mapping[str, str], indices: list[int]) -> DeclarationInpu
         submitter_ip=antispam.client_ip(request),
         user_agent=(request.headers.get("User-Agent") or "")[:500] or None,
         accepted_terms=bool(form.get("accept_terms", "").strip()),
+        accepted_data_policy=bool(form.get("accept_data_policy", "").strip()),
+        accepts_marketing=parse_marketing_choice(form.get("marketing_consent")),
     )
 
 

@@ -83,6 +83,8 @@ class DeclarationRecord:
     notarized_received_by: int | None
     declarant_id_front_path: str | None = None   # cédula photos (0012); NULL on older declarations
     declarant_id_back_path: str | None = None
+    accepted_data_policy_at: datetime | None = None   # personal-data authorization (0013); NULL on older declarations
+    accepts_marketing: bool | None = None             # TRUE = SÍ, FALSE = NO; NULL on older declarations
 
 
 @dataclass
@@ -114,7 +116,8 @@ _SELECT_COLUMNS = (
     "id, created_at, acting_as, gestor_id, status, review_flags, reviewed_by, "
     "reviewed_at, review_note, submitted_data, notarized_pdf_path, submitter_ip, "
     "user_agent, accepted_terms_at, declarant_signature_path, production_order_id, "
-    "notarized_received_at, notarized_received_by, declarant_id_front_path, declarant_id_back_path"
+    "notarized_received_at, notarized_received_by, declarant_id_front_path, declarant_id_back_path, "
+    "accepted_data_policy_at, accepts_marketing"
 )
 
 _CARD_SELECT_COLUMNS = (
@@ -133,6 +136,7 @@ def insert_declaration(
     submitter_ip: str | None = None, user_agent: str | None = None,
     accepted_terms_at: datetime | None = None,
     declarant_id_front_path: str | None = None, declarant_id_back_path: str | None = None,
+    accepted_data_policy_at: datetime | None = None, accepts_marketing: bool | None = None,
 ) -> int:
     """Insert a declaration header; return its id. Its cards go in with
     insert_declaration_card. No pre-checks (FK violations surface as psycopg
@@ -144,15 +148,17 @@ def insert_declaration(
                 acting_as, gestor_id, status, review_flags, submitted_data,
                 declarant_signature_path, notarized_pdf_path,
                 submitter_ip, user_agent, accepted_terms_at,
-                declarant_id_front_path, declarant_id_back_path
+                declarant_id_front_path, declarant_id_back_path,
+                accepted_data_policy_at, accepts_marketing
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (acting_as, gestor_id, status, list(review_flags or []), Jsonb(submitted_data),
              declarant_signature_path, notarized_pdf_path,
              submitter_ip, user_agent, accepted_terms_at,
-             declarant_id_front_path, declarant_id_back_path),
+             declarant_id_front_path, declarant_id_back_path,
+             accepted_data_policy_at, accepts_marketing),
         )
         row = cur.fetchone()
         assert row is not None, "INSERT ... RETURNING id always yields a row"

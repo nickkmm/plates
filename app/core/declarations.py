@@ -108,6 +108,51 @@ MIN_MONTHS_BETWEEN_PLATES = 6
 MAX_CARDS = 30   # ownership cards per declaration; bounds what the anonymous public form can submit
 BOGOTA_TZ = ZoneInfo("America/Bogota")
 
+# --- Personal-data authorization (Ley 1581 de 2012) -------------------------
+# The ONE copy of the legal text: the public form (declaration.html, through
+# the blueprint) and the PDF (declaration_pdf.py) both read these constants, so
+# they cannot drift. Verbatim from "proteccion resuminda.docx"; do not reword.
+DATA_POLICY_EMAIL = "ovelez@ingse.co"
+DATA_POLICY_URL = "https://placasvehiculares.ingse.co/#placas"
+DATA_POLICY_TITLE = "AUTORIZACIÓN DE TRATAMIENTO DE DATOS PERSONALES"
+DATA_POLICY_PARAGRAPH_1 = (
+    "En cumplimiento de la Ley 1581 de 2012, quien suscribe, en nombre propio y/o en representación "
+    "de EL CLIENTE, autoriza a INGENIERÍA DE SEÑALIZACIÓN S.A.S. (NIT 900.773.756-0, Calle 42 # 41-47, "
+    "Palmira), como Responsable del Tratamiento, para recolectar, almacenar, usar y actualizar los datos "
+    "personales aquí suministrados, con el fin de: gestionar cotizaciones, contratos y facturación; "
+    "administrar pagos y cartera; coordinar la prestación de los servicios; y cumplir obligaciones "
+    "legales, contables y tributarias. Los datos podrán compartirse con proveedores que apoyen estas "
+    "actividades, bajo deber de confidencialidad."
+)
+# Paragraph 2 in pieces so the form can turn the e-mail (index 1) and the
+# policy URL (index 3) into links; DATA_POLICY_PARAGRAPH_2 is the joined text.
+DATA_POLICY_PARAGRAPH_2_PARTS = (
+    "El titular puede conocer, actualizar, rectificar y solicitar la supresión de sus datos, revocar "
+    "esta autorización (salvo deber legal de conservarlos) y presentar quejas ante la SIC, a través "
+    "del correo ",
+    DATA_POLICY_EMAIL,
+    ". La Política de Tratamiento de Datos está disponible en ",
+    DATA_POLICY_URL,
+    ". Los datos se conservarán durante la relación comercial y el tiempo que exija la ley.",
+)
+DATA_POLICY_PARAGRAPH_2 = "".join(DATA_POLICY_PARAGRAPH_2_PARTS)
+MARKETING_STATEMENT = "autorizo el envío de información comercial y ofertas."
+MARKETING_LINE = f"SÍ / NO {MARKETING_STATEMENT}"
+# Form values of the SÍ / NO choice, and what a declaration stores (TRUE / FALSE).
+MARKETING_CHOICE_YES = "SI"
+MARKETING_CHOICE_NO = "NO"
+
+
+def parse_marketing_choice(value: str | None) -> bool | None:
+    """The form's SÍ / NO choice as stored: True (SI), False (NO). Anything
+    else, including a missing or tampered value, is None = not answered."""
+    choice = (value or "").strip()
+    if choice == MARKETING_CHOICE_YES:
+        return True
+    if choice == MARKETING_CHOICE_NO:
+        return False
+    return None
+
 
 @dataclass
 class PersonInput:
@@ -160,6 +205,8 @@ class DeclarationInput:
     submitter_ip: str | None = None
     user_agent: str | None = None
     accepted_terms: bool = False
+    accepted_data_policy: bool = False   # ticked the personal-data authorization (required)
+    accepts_marketing: bool | None = None   # SÍ / NO to commercial information; None = not answered (required)
     submitted_data: dict[str, Any] = field(default_factory=dict)   # raw form copy
 
 
@@ -292,6 +339,10 @@ def validate_declaration(inp: DeclarationInput) -> list[str]:
         errors.append("Falta la firma del declarante.")
     if not inp.accepted_terms:
         errors.append("Debe aceptar los términos de la declaración.")
+    if not inp.accepted_data_policy:
+        errors.append("Debe autorizar el tratamiento de datos personales.")
+    if inp.accepts_marketing is None:
+        errors.append("Indique si autoriza el envío de información comercial.")
     return errors
 
 
@@ -525,6 +576,8 @@ def submit_declaration(
         "submitter_ip": inp.submitter_ip,
         "user_agent": inp.user_agent,
         "accepted_terms_at": datetime.now() if inp.accepted_terms else None,
+        "accepted_data_policy_at": datetime.now() if inp.accepted_data_policy else None,
+        "accepts_marketing": inp.accepts_marketing,
     }
 
     # Every declaration waits for the point of sale to review and approve it
