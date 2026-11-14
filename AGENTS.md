@@ -49,7 +49,7 @@ and `chore/...` for the rest, always in English. PRs target `main`.
 <!-- factory:start -->
 ## Software factory
 
-`/factory run` builds every open GitHub issue labeled `factory` **and assigned to you** through intake → spec → build → gate → review → approve, one PR per issue. A person always reviews and merges the PR: the factory never merges. State is in `factory/jobs/` (gitignored, local to your machine); `factory/bin/job` is its only writer. Checks: `factory/checks.sh`. Dashboard: `cd factory && python -m http.server`, then open http://localhost:8000/dashboard.html (stop the `plates-web` container first, or use another port: it also listens on 8000).
+`/factory run` builds every open GitHub issue labeled `factory` **and assigned to you** through intake → spec → build → gate → review → approve, one PR per issue. A person always reviews and merges the PR: the factory never merges (`auto_merge` is `false` in `factory/config.json`, and the approver always escalates). Never turn it on: merging to `main` deploys to production. State is in `factory/jobs/` (gitignored, local to your machine); `factory/bin/job` is its only writer. Checks: `factory/checks.sh`. Dashboard: `cd factory && python -m http.server`, then open http://localhost:8000/dashboard.html (stop the `plates-web` container first, or use another port: it also listens on 8000).
 
 | Command | What it does |
 |---|---|

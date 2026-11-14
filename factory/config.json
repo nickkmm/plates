@@ -3,6 +3,7 @@
   "max_rounds": 3,
   "base_branch": "main",
   "merge_method": "merge",
+  "auto_merge": false,
   "assigned_only": true,
   "labels": {
     "queue": "factory",

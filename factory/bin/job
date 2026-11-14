@@ -10,7 +10,8 @@ Usage:
   job queue                      what /factory run should do with each labeled issue
   job create <issue>             new job for an open `factory` issue; prints the job id
   job advance <job> <stage>      move a job to <stage>, or refuse
-  job merge <job>                APPROVE → sync with the base branch, gate, merge the PR
+  job merge <job>                APPROVE → sync with the base branch, gate, then merge the PR
+                                 (auto_merge: true) or hand it to a person (default)
   job feedback <job>             needs-human → build, with your feedback (stdin) as feedback-<k>.md
   job reject <job>               needs-info or needs-human → rejected, with your reason (stdin) as rejection.md
   job agents <job> <json>        record the routed agent set (called by factory/bin/route)
@@ -65,6 +66,9 @@ CONCURRENCY = CONFIG["concurrency"]
 # the issues assigned to them, so two factories never build the same issue.
 ASSIGNED_ONLY = CONFIG.get("assigned_only", False)
 GH = os.environ.get("FACTORY_GH", "gh")  # tests point this at a fake gh
+# Off by default: merging to the base branch deploys to production, so a
+# person reviews and merges every PR, even one the approver approved.
+AUTO_MERGE = CONFIG.get("auto_merge", False)
 
 
 class Refused(Exception):
@@ -521,7 +525,8 @@ def advance(job, stage):
         label("issue", job["issue"], remove=LABELS["needs_human"])
 
     if stage == "needs-human":
-        body = f"### Factory: needs a human\n\n{(d / 'decision.md').read_text().split(chr(10), 1)[1].strip()}"
+        title = "Factory: approved, ready for your review" if old == "merging" else "Factory: needs a human"
+        body = f"### {title}\n\n{(d / 'decision.md').read_text().split(chr(10), 1)[1].strip()}"
         if job["pr"]:
             if gh_json("pr", "view", str(job["pr"]), "--json", "isDraft")["isDraft"]:
                 gh("pr", "ready", str(job["pr"]))
@@ -657,6 +662,11 @@ def cmd_merge(job):
                     f"See round-{job['round']}/merge-checks.md.\n\n{gate.stdout.strip()}")
     try:
         git(job, "push", "origin", job["branch"])
+        if not AUTO_MERGE:
+            # needs-human marks the PR ready, posts decision.md and labels the issue.
+            save(advance(sync(job), "needs-human"))
+            print(f"{job['id']}: approved; PR #{job['pr']} is ready for a person to review and merge")
+            return
         if gh_json("pr", "view", str(job["pr"]), "--json", "isDraft")["isDraft"]:
             gh("pr", "ready", str(job["pr"]))
         gh("pr", "merge", str(job["pr"]), f"--{CONFIG['merge_method']}")
