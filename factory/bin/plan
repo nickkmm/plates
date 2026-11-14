@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Turn a planner's task list into GitHub issues, and release them in order.
+
+Usage:
+  plan create <plan-dir>     create the issues in <plan-dir>/tasks.json
+  plan release               label `factory` every open issue whose dependencies are done
+
+<plan-dir> is what the planner wrote: factory/jobs/plans/<slug>/ with plan.md
+(for the human) and tasks.json:
+
+  {
+    "title": "Inventory alerts",
+    "summary": "One paragraph for the tracking issue.",
+    "tasks": [
+      {"key": "threshold", "title": "Store a minimum stock per material", "body": "...",
+       "assignee": "octocat", "depends_on": [], "repo": "owner/other-repo"}
+    ]
+  }
+
+`repo` is optional (default: this repo) and `assignee` is a GitHub login.
+
+`create` opens a tracking issue "Plan: <title>", then every task in dependency
+order, each assigned and linked to the plan. A task with no dependencies gets
+the `factory` label; the rest carry `Depends on #n` lines and wait. Created
+numbers go to <plan-dir>/created.json, so running it again resumes instead of
+duplicating.
+
+`release` reads the `Depends on` lines of every open, unlabeled issue in this
+repo and labels it once each dependency is closed as completed (its PR merged).
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+FACTORY = Path(__file__).resolve().parents[1]
+CONFIG = json.loads((FACTORY / "config.json").read_text())
+QUEUE = CONFIG["labels"]["queue"]
+GH = os.environ.get("FACTORY_GH", "gh")  # tests point this at a fake gh
+DEPENDS = re.compile(r"^Depends on ([\w.-]+/[\w.-]+)?#(\d+)\s*$", re.M)
+
+
+def die(msg):
+    print(f"plan: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def gh(*args):
+    res = subprocess.run([GH, *args], capture_output=True, text=True)
+    if res.returncode != 0:
+        die(f"`gh {' '.join(args)}` failed: {(res.stderr or res.stdout).strip()}")
+    return res.stdout
+
+
+def this_repo():
+    return gh("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner").strip()
+
+
+def issue_number(url):
+    m = re.search(r"/issues/(\d+)\s*$", url.strip())
+    if not m:
+        die(f"unexpected output from gh issue create: {url!r}")
+    return int(m.group(1))
+
+
+def ref(repo, number, home):
+    return f"#{number}" if repo == home else f"{repo}#{number}"
+
+
+def ordered(tasks):
+    """Tasks with every dependency before them; refuses unknown keys and cycles."""
+    by_key = {t["key"]: t for t in tasks}
+    if len(by_key) != len(tasks):
+        die("two tasks share a key")
+    done, out = set(), []
+    while len(out) < len(tasks):
+        ready = [t for t in tasks if t["key"] not in done and set(t.get("depends_on", [])) <= done]
+        if not ready:
+            left = [t["key"] for t in tasks if t["key"] not in done]
+            unknown = {d for t in tasks for d in t.get("depends_on", [])} - set(by_key)
+            die(f"unknown dependencies: {', '.join(sorted(unknown))}" if unknown
+                else f"dependency cycle among: {', '.join(left)}")
+        for t in ready:
+            done.add(t["key"])
+            out.append(t)
+    return out
+
+
+def cmd_create(plan_dir):
+    plan_dir = Path(plan_dir)
+    spec = json.loads((plan_dir / "tasks.json").read_text())
+    for t in spec["tasks"]:
+        missing = [k for k in ("key", "title", "body", "assignee") if not t.get(k)]
+        if missing:
+            die(f"task {t.get('key', '?')} has no {', '.join(missing)}")
+    tasks = ordered(spec["tasks"])
+    home = this_repo()
+    created_path = plan_dir / "created.json"
+    created = json.loads(created_path.read_text()) if created_path.exists() else {}
+
+    def save():
+        created_path.write_text(json.dumps(created, indent=2) + "\n")
+
+    if "plan" not in created:
+        url = gh("issue", "create", "--title", f"Plan: {spec['title']}", "--body",
+                 f"{spec.get('summary', '').strip()}\n\nTasks are listed below as they are created.")
+        created["plan"] = {"repo": home, "number": issue_number(url)}
+        save()
+    plan_ref = created["plan"]["number"]
+
+    for t in tasks:
+        if t["key"] in created:
+            continue
+        repo = t.get("repo") or home
+        deps = [created[d] for d in t.get("depends_on", [])]
+        lines = [t["body"].strip(), "", f"Part of {ref(home, plan_ref, repo)}."]
+        if deps:
+            lines += [""] + [f"Depends on {ref(d['repo'], d['number'], repo)}" for d in deps]
+        args = ["issue", "create", "-R", repo, "--title", t["title"], "--body", "\n".join(lines),
+                "--assignee", t["assignee"]]
+        if not deps:
+            args += ["--label", QUEUE]
+        number = issue_number(gh(*args))
+        created[t["key"]] = {"repo": repo, "number": number}
+        save()
+        print(f"{ref(repo, number, home)}  {t['title']}  @{t['assignee']}"
+              + (f"  waits on {', '.join(ref(d['repo'], d['number'], home) for d in deps)}" if deps
+                 else f"  labeled {QUEUE}"))
+
+    checklist = "\n".join(
+        f"- [ ] {ref(created[t['key']]['repo'], created[t['key']]['number'], home)} {t['title']} (@{t['assignee']})"
+        for t in tasks)
+    gh("issue", "edit", str(plan_ref), "--body",
+       f"{spec.get('summary', '').strip()}\n\n## Tasks\n\n{checklist}\n\n"
+       "Each task becomes one PR. Tasks without dependencies start labeled "
+       f"`{QUEUE}`; `/factory run` labels the others once their dependencies are merged.")
+    print(f"plan #{plan_ref}: {len(tasks)} tasks")
+
+
+def done(repo, number):
+    data = json.loads(gh("issue", "view", str(number), "-R", repo, "--json", "state,stateReason"))
+    return data["state"] == "CLOSED" and data.get("stateReason") in (None, "", "COMPLETED")
+
+
+def cmd_release():
+    home = this_repo()
+    issues = json.loads(gh("issue", "list", "--state", "open", "--limit", "500",
+                           "--json", "number,title,body,labels"))
+    released = 0
+    for issue in issues:
+        if QUEUE in {l["name"] for l in issue["labels"]}:
+            continue
+        deps = [(m.group(1) or home, int(m.group(2))) for m in DEPENDS.finditer(issue["body"] or "")]
+        if not deps:
+            continue
+        waiting = [ref(r, n, home) for r, n in deps if not done(r, n)]
+        if waiting:
+            continue
+        gh("issue", "edit", str(issue["number"]), "--add-label", QUEUE)
+        released += 1
+        print(f"#{issue['number']}  {issue['title']}  released")
+    print(f"released {released}")
+
+
+def main(argv):
+    if len(argv) == 2 and argv[0] == "create":
+        cmd_create(argv[1])
+    elif argv == ["release"]:
+        cmd_release()
+    else:
+        print(__doc__.strip())
+        sys.exit(0 if argv in ([], ["-h"], ["--help"]) else 1)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

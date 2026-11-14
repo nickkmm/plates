@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Generate the Antigravity agents from the Claude Code agents.
+
+Usage:
+  sync-agents            write .agents/agents/<name>.md from .claude/agents/<name>.md
+  sync-agents --check    exit 1 if any generated file is missing or out of date
+
+.claude/agents/ is the source; never edit .agents/agents/ by hand. The body
+is copied as is, with a note on tool names. The frontmatter is translated:
+
+- tools: Claude Code names become Antigravity's native names. Antigravity
+  replaces its default tool list with this one, and an unknown name can hang
+  the agent, so only the names below are emitted.
+- model: Antigravity only takes a tier per agent (inherit, flash_lite, flash,
+  pro); the concrete model is the session's (`agy --model`). Opus-level agents
+  inherit the session model; Sonnet and Haiku agents run on flash.
+- hooks: dropped. Antigravity has no per-agent hooks; the gate still decides.
+"""
+
+import re
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+SRC = REPO / ".claude" / "agents"
+DEST = REPO / ".agents" / "agents"
+
+TOOLS = {
+    "Read": ["view_file"],
+    "Write": ["write_to_file"],
+    "Edit": ["replace_file_content", "multi_replace_file_content"],
+    "Grep": ["grep_search"],
+    "Glob": ["find_by_name", "list_dir"],
+    "Bash": ["run_command"],
+}
+MODELS = {"opus": "inherit", "fable": "inherit", "sonnet": "flash", "haiku": "flash"}
+NOTE = ("> Generated from `.claude/agents/{name}.md` by `factory/bin/sync-agents`; edit that file, not this one.\n"
+        "> Tool names below are Claude Code's. In Antigravity: Read = `view_file`, Write = `write_to_file`, "
+        "Edit = `replace_file_content`, Grep = `grep_search`, Glob = `find_by_name`, Bash = `run_command`.\n\n")
+
+
+def die(msg):
+    print(f"sync-agents: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def parse(path):
+    m = re.match(r"^---\n(.*?)\n---\n(.*)$", path.read_text(), re.S)
+    if not m:
+        die(f"{path} has no frontmatter")
+    meta = {}
+    for line in m.group(1).splitlines():
+        if line and not line[0].isspace() and ":" in line:
+            key, _, value = line.partition(":")
+            meta[key.strip()] = value.strip()
+    return meta, m.group(2)
+
+
+def render(path):
+    meta, body = parse(path)
+    name = meta.get("name") or die(f"{path} has no name")
+    tools = []
+    for tool in (t.strip() for t in meta.get("tools", "").split(",") if t.strip()):
+        if tool.startswith("mcp__"):
+            continue  # MCP tools are Claude Code-only; Antigravity agents work without them
+        if tool not in TOOLS:
+            die(f"{path}: no Antigravity name for tool {tool!r}; add it to TOOLS")
+        tools += [t for t in TOOLS[tool] if t not in tools]
+    model = MODELS.get(meta.get("model", ""), "inherit")
+    description = meta["description"].replace('"', "'")
+    head = [
+        "---",
+        f"name: {name}",
+        f'description: "{description}"',
+        f"model: {model}",
+        "mainAgent: false",
+        "subagent: true",
+        "tools:",
+        *[f"  - {t}" for t in tools],
+        "---",
+        "",
+    ]
+    return "\n".join(head) + NOTE.format(name=name) + body.lstrip("\n")
+
+
+def main(argv):
+    check = argv == ["--check"]
+    if argv and not check:
+        die(__doc__.strip())
+    sources = sorted(SRC.glob("*.md"))
+    if not sources:
+        die(f"no agents in {SRC}")
+    stale = []
+    for src in sources:
+        out = DEST / src.name
+        text = render(src)
+        if check:
+            if not out.exists() or out.read_text() != text:
+                stale.append(str(out.relative_to(REPO)))
+        else:
+            DEST.mkdir(parents=True, exist_ok=True)
+            out.write_text(text)
+    extra = [p for p in DEST.glob("*.md") if not (SRC / p.name).exists()] if DEST.exists() else []
+    if check:
+        stale += [f"{p.relative_to(REPO)} (no source)" for p in extra]
+        if stale:
+            die("out of date, run factory/bin/sync-agents: " + ", ".join(stale))
+        print(f"sync-agents: {len(sources)} agents up to date")
+    else:
+        for p in extra:
+            p.unlink()
+        print(f"sync-agents: wrote {len(sources)} agents to {DEST.relative_to(REPO)}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Copy a job's record into its PR, so it stays versioned with the code.
+
+Usage: archive <job-id>
+
+Copies the job's Markdown files (issue, intake, spec, build, decision,
+feedback, and each round's checks and reviews) into the job's worktree under
+docs/factory-history/issue-<n>/, commits them on the job branch and pushes.
+Logs, locks and job.json stay local: they hold raw output and machine paths.
+Folders are named by issue number because job ids are local to each machine.
+
+Run it after the approver, before the job goes to needs-human, and again after
+every later round. Reads job.json; never writes it.
+"""
+
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+FACTORY = Path(__file__).resolve().parents[1]
+KEEP = ["issue.md", "intake*.md", "spec.md", "build.md", "decision.md", "feedback-*.md", "rejection.md",
+        "round-*/checks.md", "round-*/merge-checks.md", "round-*/review-*.md"]
+
+
+def die(msg):
+    print(f"archive: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def git(worktree, *args):
+    res = subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True)
+    if res.returncode != 0:
+        die(f"`git {' '.join(args)}` failed: {(res.stderr or res.stdout).strip()}")
+    return res.stdout
+
+
+def main(argv):
+    if len(argv) != 1 or argv[0].startswith("-"):
+        die(__doc__.strip())
+    job_dir = FACTORY / "jobs" / argv[0]
+    if not (job_dir / "job.json").exists():
+        die(f"no job {argv[0]}")
+    job = json.loads((job_dir / "job.json").read_text())
+    worktree = Path(job["worktree"])
+    if not worktree.exists():
+        die(f"{job['id']} has no worktree")
+    if git(worktree, "branch", "--show-current").strip() != job["branch"]:
+        die(f"{worktree} isn't on {job['branch']}")
+
+    rel = Path("docs/factory-history") / f"issue-{job['issue']}"
+    dest = worktree / rel
+    if dest.exists():
+        shutil.rmtree(dest)
+    files = sorted({p for pattern in KEEP for p in job_dir.glob(pattern)})
+    for src in files:
+        target = dest / src.relative_to(job_dir)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, target)
+
+    git(worktree, "add", "--all", "--", str(rel))
+    changed = bool(git(worktree, "status", "--porcelain", "--", str(rel)).strip())
+    if changed:
+        git(worktree, "commit", "-m", f"Record the factory history for #{job['issue']}", "--", str(rel))
+    # Push even when nothing changed: an earlier run may have committed but failed to push.
+    git(worktree, "push", "origin", job["branch"])
+    print(f"{job['id']}: {len(files)} files in {rel}, "
+          + ("committed and pushed" if changed else "already committed; pushed") + f" to {job['branch']}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
