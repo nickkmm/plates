@@ -20,7 +20,6 @@ Usage:
 <job> is a job id (004-dark-mode) or an issue number (12).
 """
 
-import fcntl
 import json
 import os
 import re
@@ -28,6 +27,14 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# On Windows, Python reads and writes files and subprocess output in the
+# locale codepage (cp1252), which garbles Spanish text from issues and specs.
+# Re-run this script in UTF-8 mode there.
+if sys.platform == "win32" and not sys.flags.utf8_mode:
+    import subprocess
+
+    sys.exit(subprocess.call([sys.executable, "-X", "utf8", *sys.argv]))
 
 REPO = Path(__file__).resolve().parents[2]
 FACTORY = REPO / "factory"
@@ -109,6 +116,28 @@ def job_dir(job_id):
 _locks = {}
 
 
+def lock_exclusive(f):
+    """Block until this process holds the exclusive lock on open file f.
+
+    fcntl doesn't exist on Windows; msvcrt locks a byte range instead. Either
+    lock is released when the process exits.
+    """
+    if sys.platform == "win32":
+        import msvcrt
+        import time
+
+        while True:
+            try:
+                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                return
+            except OSError:  # LK_LOCK gives up after ~10 s; keep waiting
+                time.sleep(0.5)
+    else:
+        import fcntl
+
+        fcntl.flock(f, fcntl.LOCK_EX)
+
+
 def load(job_id):
     """Read a job, holding its lock until this process exits."""
     path = job_dir(job_id) / "job.json"
@@ -116,7 +145,7 @@ def load(job_id):
         die(f"no job {job_id}")
     if job_id not in _locks:
         _locks[job_id] = open(job_dir(job_id) / ".lock", "w")
-        fcntl.flock(_locks[job_id], fcntl.LOCK_EX)
+        lock_exclusive(_locks[job_id])
     return json.loads(path.read_text())
 
 

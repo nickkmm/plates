@@ -19,6 +19,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+# On Windows, Python reads and writes files and subprocess output in the
+# locale codepage (cp1252), which garbles Spanish text from issues and specs.
+# Re-run this script in UTF-8 mode there.
+if sys.platform == "win32" and not sys.flags.utf8_mode:
+    import subprocess
+
+    sys.exit(subprocess.call([sys.executable, "-X", "utf8", *sys.argv]))
+
 FACTORY = Path(__file__).resolve().parents[1]
 KEEP = ["issue.md", "intake*.md", "spec.md", "build.md", "decision.md", "feedback-*.md", "rejection.md",
         "round-*/checks.md", "round-*/merge-checks.md", "round-*/review-*.md"]
