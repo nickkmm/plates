@@ -43,3 +43,7 @@ mutants/
 # Dozzle's user store (username + password hash) -- generated once on the
 # VPS, never committed. See docker-compose.yml's dozzle service.
 dozzle_users.yml
+
+# Software factory: local job state and per-job git worktrees
+/factory/jobs/
+/.worktrees/

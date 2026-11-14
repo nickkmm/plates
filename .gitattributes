@@ -1,0 +1,5 @@
+# Factory and shell scripts must keep LF line endings on every checkout
+# (including the factory's per-job worktrees): with CRLF, bash and the
+# "#!/usr/bin/env python3" shebang fail.
+*.sh text eol=lf
+factory/bin/* text eol=lf
