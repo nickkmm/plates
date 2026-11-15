@@ -454,7 +454,7 @@ tarjeta** y solo sirven para avisarle al revisor: toda declaración queda en
 | `plate_number` / `transit_license` | TEXT | NOT NULL | Normalizadas (placa con `clean_plate`, licencia en mayúsculas sin espacios en los extremos). No se repiten dentro de una declaración. |
 | `engine_number` / `chassis_number` / `registered_in` / `vehicle_brand` | TEXT | nullable | Mismos campos que `ownership_cards`. |
 | `card_front_path` / `card_back_path` | TEXT | nullable | Fotos de la tarjeta de propiedad (frente / atrás), nombres en el volumen de subidas. NULL en las declaraciones anteriores a la migración 0012. |
-| `used_plates_photo_path` | TEXT | nullable | Foto de la(s) placa(s) usada(s) que el cliente entrega, nombre en el volumen de subidas. Solo para tarjetas con motivo `DETERIORO` (obligatoria en ese caso); NULL en las tarjetas `PÉRDIDA` y en las declaraciones anteriores a la migración 0014. |
+| `used_plates_photo_path` | TEXT | nullable | Foto de la(s) placa(s) usada(s) que el cliente entrega, nombre en el volumen de subidas. Obligatoria en toda tarjeta, sea el motivo `DETERIORO` o `PÉRDIDA`; NULL en las declaraciones anteriores a la migración 0014. |
 | `vehicle_type` | TEXT | nullable | Un valor de `normalize.PLATE_TYPES`. |
 | `owner_relation` | TEXT | nullable | `DUEÑO` / `POSEEDOR`: del declarante (`PROPIETARIO` → `DUEÑO`, `POSEEDOR` → `POSEEDOR`) o, si es gestor, el que indicó para esa tarjeta. |
 | `owner_data` | JSONB | NOT NULL | La persona dueña de esa tarjeta (una copia del declarante cuando no es gestor). |

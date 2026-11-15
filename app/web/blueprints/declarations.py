@@ -387,7 +387,7 @@ def declaration_file(declaration_id: int, kind: str):
 @pos_allowed
 def declaration_card_photo(declaration_id: int, card_id: int, side: str):
     """The front or back photo of one ownership card of the declaration, or
-    the photo of its used plates (DETERIORO cards)."""
+    the photo of its used plates."""
     attribute = CARD_PHOTO_SIDES.get(side)
     if attribute is None:
         abort(404)

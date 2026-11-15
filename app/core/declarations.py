@@ -12,10 +12,10 @@ acts as PROPIETARIO / POSEEDOR every card belongs to the declarant; if it acts
 as GESTOR the declarant is the GESTOR customer (`declarations.gestor_id`) and
 EACH card has its own owner (a CLIENTE). A declaration carries the signature,
 the photos of the declarant's cédula (front and back), the photos of each
-ownership card (front and back) and, for a DETERIORO card, a photo of the used
-plates the client hands in. A PÉRDIDA card needs no extra file: its
-notarization happens offline (staff hand the client the declaration as a PDF,
-the client gets it notarized and brings it back).
+ownership card (front and back) and a photo of the used plates the client
+hands in for each card, whatever its reason (DETERIORO or PÉRDIDA). A PÉRDIDA
+needs no other file: its notarization happens offline (staff hand the client
+the declaration as a PDF, the client gets it notarized and brings it back).
 
 Decision rules for `submit_declaration` (all decided by the owner of the
 project, see the declarations plan), applied PER CARD:
@@ -105,7 +105,6 @@ CUSTOMER_DOCUMENT_MISMATCH = FLAG_CUSTOMER_DOCUMENT_MISMATCH
 OWNER_TYPE = "CLIENTE"
 GESTOR_TYPE = "GESTOR"
 LOSS_REASON = "PÉRDIDA"
-DETERIORATION_REASON = "DETERIORO"
 ACTING_AS_GESTOR = "GESTOR"
 _RELATION_FOR_ACTING_AS = {"PROPIETARIO": "DUEÑO", "POSEEDOR": "POSEEDOR"}
 MIN_MONTHS_BETWEEN_PLATES = 6
@@ -193,7 +192,7 @@ class OwnershipCardInput:
     owner_relation: str = ""            # DUEÑO / POSEEDOR (GESTOR only)
     front_file: str | None = None       # stored file names of the card photos
     back_file: str | None = None
-    used_plates_file: str | None = None  # stored file name of the used-plates photo (DETERIORO only)
+    used_plates_file: str | None = None  # stored file name of the used-plates photo
 
 
 @dataclass
@@ -260,8 +259,7 @@ def _license_key(value: str) -> str:
 def _validate_card(card: OwnershipCardInput, *, gestor: bool) -> list[str]:
     """Errors of one card, WITHOUT the "Tarjeta N: " prefix."""
     errors: list[str] = []
-    reason = normalize_choice(card.reason, DECLARATION_REASONS)
-    if reason is None:
+    if normalize_choice(card.reason, DECLARATION_REASONS) is None:
         errors.append("El motivo debe ser DETERIORO o PÉRDIDA.")
     if _blank(card.transit_license):
         errors.append("Falta la licencia de tránsito.")
@@ -276,7 +274,7 @@ def _validate_card(card: OwnershipCardInput, *, gestor: bool) -> list[str]:
         errors.append("Falta la foto de la tarjeta de propiedad (frente).")
     if _blank(card.back_file):
         errors.append("Falta la foto de la tarjeta de propiedad (atrás).")
-    if reason == DETERIORATION_REASON and _blank(card.used_plates_file):
+    if _blank(card.used_plates_file):
         errors.append("Falta la foto de la(s) placa(s) usada(s).")
     if _blank(card.plate_number):
         errors.append("Falta la placa.")

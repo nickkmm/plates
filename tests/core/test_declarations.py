@@ -230,16 +230,14 @@ class TestValidate:
         side = "frente" if missing == "front_file" else "atrás"
         assert f"Tarjeta 1: Falta la foto de la tarjeta de propiedad ({side})." in errors
 
+    @pytest.mark.parametrize("reason", ["DETERIORO", "PÉRDIDA"])
     @pytest.mark.parametrize("value", [None, "", "  "])
-    def test_used_plates_photo_is_required_for_deterioration(self, value):
-        errors = decl.validate_declaration(_input(cards=[_card(used_plates_file=value)]))
+    def test_used_plates_photo_is_required_whatever_the_reason(self, reason, value):
+        errors = decl.validate_declaration(_input(cards=[_card(reason=reason, used_plates_file=value)]))
         assert "Tarjeta 1: Falta la foto de la(s) placa(s) usada(s)." in errors
 
-    @pytest.mark.parametrize("reason", ["PÉRDIDA", "perdida", "ROBO"])
-    def test_used_plates_photo_is_not_required_otherwise(self, reason):
-        errors = decl.validate_declaration(
-            _input(cards=[_card(reason=reason, used_plates_file=None)]))
-        assert not any("placa(s) usada(s)" in e for e in errors)
+    def test_a_loss_card_with_the_used_plates_photo_is_valid(self):
+        assert decl.validate_declaration(_input(cards=[_card(reason="PÉRDIDA")])) == []
 
     @pytest.mark.parametrize("registered_in", ["", "   "])
     def test_registered_in_is_required(self, registered_in):

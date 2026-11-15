@@ -110,7 +110,7 @@ class DeclarationCardRecord:
     review_flags: list[str]
     card_front_path: str | None = None   # ownership card photos (0012); NULL on older declarations
     card_back_path: str | None = None
-    used_plates_photo_path: str | None = None   # used-plates photo (0014); DETERIORO cards only
+    used_plates_photo_path: str | None = None   # used-plates photo (0014); NULL on older declarations
 
 
 _SELECT_COLUMNS = (
