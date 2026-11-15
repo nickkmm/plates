@@ -6,14 +6,14 @@ from __future__ import annotations
 from flask import Blueprint, redirect, render_template, request, url_for
 
 from app.core import db
-from app.web.auth import login_required
+from app.web.auth import permission_required
 from app.web.helpers import INVENTORY_CATS
 
 bp = Blueprint("inventory", __name__)
 
 
 @bp.get("/inventory")
-@login_required
+@permission_required("inventory.manage")
 def inventory():
     with db.get_conn() as conn:
         rows = db.inventory_view(conn)
@@ -24,7 +24,7 @@ def inventory():
 
 
 @bp.post("/inventory/alistado")
-@login_required
+@permission_required("inventory.manage")
 def inventory_alistado():
     with db.get_conn() as conn:
         db.insert_blank_preparation(

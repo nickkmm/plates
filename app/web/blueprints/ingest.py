@@ -30,7 +30,7 @@ from app.core.normalize import (
 )
 from app.core.pdf_extract import ParsedPedido, PdfExtractError
 from app.core.pedido_upload import parse_uploaded_pedido
-from app.web.auth import pos_allowed
+from app.web.auth import permission_required
 from app.web.helpers import (
     FORM_PLATE_TYPES,
     _options,
@@ -505,7 +505,7 @@ def _mark_declaration_attended(conn, declaration_id: int, order_number: str) -> 
 
 
 @bp.get("/ingest")
-@pos_allowed
+@permission_required("orders.capture")
 def ingest():
     """The blank form, or -- with `?declaration_id=N` -- the form pre-filled
     from an approved, not yet attended declaration (nothing is saved here)."""
@@ -538,7 +538,7 @@ def ingest():
 
 
 @bp.post("/ingest")
-@pos_allowed
+@permission_required("orders.capture")
 def ingest_post():
     summary = None
     error = None
@@ -657,7 +657,7 @@ def ingest_post():
 
 
 @bp.route("/ingest/pdf", methods=["GET", "POST"])
-@pos_allowed
+@permission_required("orders.capture")
 def ingest_pdf():
     """Upload a pedido, PDF or Excel (.xlsx) (GET), and review the parse in the normal form (POST).
 

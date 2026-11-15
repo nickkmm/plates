@@ -76,7 +76,7 @@
 </head>
 <body>
   {% include "_nav.html" %}
-  {% set is_admin = session.get('role') in full_access_roles %}
+  {% set is_admin = can('customers.manage') %}
 
   {% macro person(p) %}
     <dl>

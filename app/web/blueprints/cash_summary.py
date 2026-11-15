@@ -8,7 +8,7 @@ hasta query params, calls build_cash_summary/render_cash_summary_pdf, and
 renders or streams the result. No SQL here, per docs/CORE.md's rule that no
 query/business rule lives outside app/core/.
 
-@pos_allowed (admin + point_of_sale) on BOTH routes -- the plan is explicit
+@permission_required("cash_summary.view") on BOTH routes -- the plan is explicit
 both the HTML view and the PDF export need it: PTO.V is exactly who reads
 this report daily and prints it for the admin.
 """
@@ -21,7 +21,7 @@ from flask import Blueprint, Response, render_template, request
 
 from app.core import db
 from app.core.cash_summary import build_cash_summary, render_cash_summary_pdf
-from app.web.auth import pos_allowed
+from app.web.auth import permission_required
 from app.web.helpers import today_iso
 
 bp = Blueprint("cash_summary", __name__)
@@ -54,7 +54,7 @@ def _sticky_range() -> tuple[str, str]:
 
 
 @bp.get("/cuadre")
-@pos_allowed
+@permission_required("cash_summary.view")
 def cuadre():
     try:
         desde, hasta = _date_range_from_request()
@@ -74,7 +74,7 @@ def cuadre():
 
 
 @bp.get("/cuadre/pdf")
-@pos_allowed
+@permission_required("cash_summary.view")
 def cuadre_pdf():
     try:
         desde, hasta = _date_range_from_request()

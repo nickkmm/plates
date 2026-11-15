@@ -20,7 +20,7 @@ from app.core.normalize import (
 )
 from app.core.pdf_extract import PdfExtractError
 from app.core.pedido_upload import parse_uploaded_pedido
-from app.web.auth import consulta_allowed, login_required, pos_allowed
+from app.web.auth import permission_required
 from app.web.helpers import FORM_PLATE_TYPES, _options, _padded, _validate_order_header, today_iso
 
 bp = Blueprint("records", __name__)
@@ -110,7 +110,7 @@ def _edit_rows_from_form(form, *, order_number: str, order_date: str, requested_
 
 
 @bp.get("/records")
-@consulta_allowed
+@permission_required("records.view")
 def records():
     query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
@@ -134,7 +134,7 @@ def _order_voided(plates: list[dict]) -> bool:
 
 
 @bp.get("/records/<int:order_id>")
-@consulta_allowed
+@permission_required("records.view")
 def record_detail(order_id):
     # ?q= only ever arrives here as a passthrough from a Registros search
     # result's own "Ver" link (see records.html/_orders_table.html), so
@@ -170,7 +170,7 @@ def _record_detail_error(order_id: int, error: str):
 
 
 @bp.post("/records/<int:order_id>/save")
-@pos_allowed
+@permission_required("orders.capture")
 def record_save(order_id):
     """Save every change made on the Registro detail page in one shot: the
     order header (date/number/solicitado por/anulada/POS fields), edits to
@@ -255,7 +255,7 @@ def record_save(order_id):
 
 
 @bp.post("/records/search-pdf")
-@consulta_allowed
+@permission_required("records.view")
 def records_search_pdf():
     """Upload a pedido (PDF or Excel .xlsx) to check its plates against the DB. Consult only:
     this NEVER inserts/updates/deletes anything, unlike /ingest/pdf which leads
@@ -295,7 +295,7 @@ def records_search_pdf():
 
 
 @bp.post("/records/delete")
-@login_required
+@permission_required("records.delete")
 def records_delete():
     with db.get_conn() as conn:
         db.delete_order(conn, int(request.form["order_id"]))

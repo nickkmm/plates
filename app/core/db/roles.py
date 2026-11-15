@@ -1,6 +1,6 @@
-"""roles / role_permissions reads/writes -- the data layer for a future
-admin role-management screen. Nothing in the web layer consumes it yet:
-access is still decided by app/web/auth.py's hard-coded role sets.
+"""roles / role_permissions reads/writes. app/web/auth.py reads a role's
+permissions (get_role_permissions) on every request to decide route access;
+the writes are the data layer for a future admin role-management screen.
 
 Permission codes are validated against app/core/permissions.py's
 PERMISSION_CODES in Python before anything is written (no CHECK in the DB --

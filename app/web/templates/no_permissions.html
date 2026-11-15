@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Sin permisos</title>
+  <style>
+    :root { --blue:#0b6bcb; --ink:#222; }
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 1.5rem auto; padding: 0 1rem; color: var(--ink); }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:var(--blue); border-bottom:3px solid var(--blue); margin-bottom:-2px; }
+    .muted { color: #777; }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  <p class="muted">Tu usuario no tiene permisos asignados. Pide a un administrador que te asigne un rol.</p>
+</body>
+</html>

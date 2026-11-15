@@ -6,9 +6,9 @@ app/core/db/pricing.py (Fase 2) -- this module only parses/validates the
 POSTed price and calls db.price_list/db.set_price, never touching SQL or
 normalize.PLATE_TYPES directly.
 
-@login_required (admin-only), NOT @pos_allowed -- the plan is explicit that
-'point_of_sale' edits orders/payments, not tariffs, so it must 403 here same
-as 'production'.
+@permission_required("pricing.manage"), seeded for admin only -- the plan is
+explicit that 'point_of_sale' edits orders/payments, not tariffs, so it must
+403 here same as 'production'.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from decimal import Decimal, InvalidOperation
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
 from app.core import db
-from app.web.auth import login_required
+from app.web.auth import permission_required
 
 bp = Blueprint("pricing", __name__)
 
@@ -45,7 +45,7 @@ def _parse_unit_price(raw: str | None) -> Decimal:
 
 
 @bp.get("/precios")
-@login_required
+@permission_required("pricing.manage")
 def precios():
     with db.get_conn() as conn:
         rows = db.price_list(conn)
@@ -53,7 +53,7 @@ def precios():
 
 
 @bp.post("/precios/<plate_type>")
-@login_required
+@permission_required("pricing.manage")
 def precios_update(plate_type: str):
     try:
         unit_price = _parse_unit_price(request.form.get("unit_price"))

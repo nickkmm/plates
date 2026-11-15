@@ -3,8 +3,9 @@
 Pure Python (no Flask, no database). Codes are English identifiers stored in
 `role_permissions.permission`; labels are the Spanish text staff will see.
 Codes are validated here in Python, not with a CHECK in the database (same
-pattern as normalize.PLATE_TYPES and `plate_types`). The routes don't consume
-this yet: access is still decided by app/web/auth.py's hard-coded role sets.
+pattern as normalize.PLATE_TYPES and `plate_types`). Every protected route
+checks one of these codes on each request (app/web/auth.py's
+permission_required), through effective_permissions below.
 """
 
 from __future__ import annotations
