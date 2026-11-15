@@ -113,10 +113,7 @@ def _shift_future_dates(dates: pd.Series, today: pd.Timestamp) -> tuple[pd.Serie
     future = pd.to_datetime(dates, errors="coerce") > today
     shifted = dates.copy()
     if int(future.sum()):
-        # pandas-stubs has no Series-minus-DateOffset overload for a Series of
-        # unspecified (object/mixed) dtype, though this is standard, valid
-        # pandas at runtime.
-        shifted.loc[future] = shifted.loc[future] - pd.DateOffset(years=1)  # type: ignore[operator]
+        shifted.loc[future] = shifted.loc[future] - pd.DateOffset(years=1)
     return shifted, int(future.sum())
 
 
