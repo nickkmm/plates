@@ -5,17 +5,37 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.repository == 'nickkmm/plates'
+    environment: production
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS over SSH
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: ENV_FILE_B64
+          # Per the action's README (v1.2.5), `fingerprint` is optional with
+          # no default: host-key verification is opt-in, and an empty value
+          # skips it (the underlying easyssh-proxy then accepts any host key).
+          # So the deploy keeps working until the owner creates the
+          # VPS_SSH_FINGERPRINT secret, and verifies the host once it exists.
+          fingerprint: ${{ secrets.VPS_SSH_FINGERPRINT }}
+          envs: ENV_FILE_B64,DEPLOY_SHA
           script: |
             set -e
             cd /opt/plates
@@ -23,11 +43,12 @@ jobs:
               git init -q
               git remote add origin git@github.com:nickkmm/plates.git
             fi
-            git fetch --depth 1 origin main
-            git reset --hard origin/main
+            git fetch --depth 1 origin "$DEPLOY_SHA"
+            git reset --hard FETCH_HEAD
             echo "$ENV_FILE_B64" | base64 -d > .env
             docker compose up -d --build
             docker compose exec -T web python -m app.schema_migrate
             docker compose ps
         env:
           ENV_FILE_B64: ${{ secrets.ENV_FILE_B64 }}
+          DEPLOY_SHA: ${{ github.sha }}

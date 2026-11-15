@@ -1,12 +1,22 @@
 name: Test
 
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     # tests/conftest.py hardcodes DB_HOST=127.0.0.1 and DB_PORT=5433 (never
     # overridable via env, on purpose — see the comment there). The Postgres
@@ -37,14 +47,18 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # web.Dockerfile and pyproject.toml ([tool.mypy] python_version,
       # [tool.ruff] target-version) both pin 3.11 — match that here.
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
         run: |
