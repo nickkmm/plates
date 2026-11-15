@@ -126,7 +126,9 @@ FILE_KINDS = {
     "id_back": ("declarant_id_back_path", None),
 }
 # side -> DeclarationCardRecord attribute holding the stored name of the card photo
-CARD_PHOTO_SIDES = {"front": "card_front_path", "back": "card_back_path"}
+CARD_PHOTO_SIDES = {
+    "front": "card_front_path", "back": "card_back_path", "used_plates": "used_plates_photo_path",
+}
 # Approve-form checkbox: reassign_<declaration_cards.id>.
 _REASSIGN_FIELD = re.compile(r"reassign_(\d+)")
 # Plates shown in the list's compact summary before collapsing into "+N".
@@ -384,7 +386,8 @@ def declaration_file(declaration_id: int, kind: str):
 @bp.get("/declaraciones/<int:declaration_id>/cards/<int:card_id>/photo/<side>")
 @pos_allowed
 def declaration_card_photo(declaration_id: int, card_id: int, side: str):
-    """The front or back photo of one ownership card of the declaration."""
+    """The front or back photo of one ownership card of the declaration, or
+    the photo of its used plates (DETERIORO cards)."""
     attribute = CARD_PHOTO_SIDES.get(side)
     if attribute is None:
         abort(404)
@@ -400,7 +403,7 @@ def _photo_entries(
     declaration: db.DeclarationRecord, cards: list[db.DeclarationCardRecord],
 ) -> list[tuple[str, str]]:
     """(file name inside the ZIP, stored name) of every photo of a declaration,
-    in reading order: the cédula, then each card (front, back)."""
+    in reading order: the cédula, then each card (front, back, used plates)."""
     entries: list[tuple[str, str]] = []
     for label, stored in (("cedula-frente", declaration.declarant_id_front_path),
                           ("cedula-atras", declaration.declarant_id_back_path)):
@@ -408,7 +411,8 @@ def _photo_entries(
             entries.append((label, stored))
     for card in cards:
         plate = clean_plate(card.plate_number) or "sin-placa"
-        for label, stored in (("frente", card.card_front_path), ("atras", card.card_back_path)):
+        for label, stored in (("frente", card.card_front_path), ("atras", card.card_back_path),
+                              ("placas-usadas", card.used_plates_photo_path)):
             if stored:
                 entries.append((f"tarjeta-{card.position + 1}-{plate}-{label}", stored))
     return entries
