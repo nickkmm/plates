@@ -9,8 +9,8 @@ knowingly overwrite what's already stored, e.g. fixing a typo or filling
 in one of the 191 customers the pre-POS historical backfill left with
 every attribute NULL (see docs/DATABASE.md).
 
-@login_required (admin-only), same access level as /precios -- master
-data, not order/payment capture, so 'point_of_sale' doesn't get it.
+@permission_required("customers.manage"), seeded for admin only, like /precios
+-- master data, not order/payment capture, so 'point_of_sale' doesn't get it.
 """
 
 from __future__ import annotations
@@ -25,14 +25,14 @@ from app.core.normalize import (
     DOCUMENT_TYPES,
     normalize_requested_by,
 )
-from app.web.auth import login_required
+from app.web.auth import permission_required
 from app.web.helpers import customer_fields_from_form
 
 bp = Blueprint("customers", __name__)
 
 
 @bp.get("/customers")
-@login_required
+@permission_required("customers.manage")
 def customers():
     query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
@@ -44,7 +44,7 @@ def customers():
 
 
 @bp.get("/customers/<int:customer_id>")
-@login_required
+@permission_required("customers.manage")
 def customer_detail(customer_id: int):
     with db.get_conn() as conn:
         customer = db.get_customer(conn, customer_id)
@@ -59,7 +59,7 @@ def customer_detail(customer_id: int):
 
 
 @bp.post("/customers/<int:customer_id>")
-@login_required
+@permission_required("customers.manage")
 def customer_save(customer_id: int):
     def _rerender(error: str):
         with db.get_conn() as conn:

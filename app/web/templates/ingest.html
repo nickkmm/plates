@@ -166,7 +166,7 @@
         autocompletan. Si es nuevo, completalos a mano (todos opcionales). Un dato que el
         cliente ya tiene guardado queda bloqueado acá -- escribir uno distinto no lo cambiaría
         de todas formas (nunca se reemplaza un dato ya guardado desde una orden).
-        {% if session.get('role') in full_access_roles %}
+        {% if can('customers.manage') %}
         Para corregirlo, andá a <a href="{{ url_for('customers.customers') }}">Clientes</a>.
         {% endif %}
       </p>

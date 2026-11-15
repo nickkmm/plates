@@ -26,7 +26,7 @@ def authenticated_client(client, test_credentials):
 
     The session cookie set by the login POST persists on `client` for
     subsequent requests (test_client() preserves cookies across calls within
-    the same `with` block), so routes behind @login_required work directly.
+    the same `with` block), so routes behind @permission_required work directly.
     """
     username, password = test_credentials
     client.post("/login", data={"username": username, "password": password})
@@ -52,8 +52,8 @@ def produccion_client(client, produccion_credentials):
 def punto_venta_client(client, punto_venta_credentials):
     """A test client logged in as the new (Fase 2) 'point_of_sale'-role test
     user (see tests/conftest.py's PUNTO_VENTA_USERNAME/PUNTO_VENTA_PASSWORD)
-    -- POS_ROLES access (admin + point_of_sale), narrower than admin but wider
-    than the read-only 'production' role."""
+    -- its seeded role_permissions give it the point-of-sale screens, narrower
+    than admin but wider than the read-only 'production' role."""
     username, password = punto_venta_credentials
     client.post("/login", data={"username": username, "password": password})
     return client

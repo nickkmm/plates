@@ -6,13 +6,13 @@ from __future__ import annotations
 from flask import Blueprint, redirect, render_template, request, url_for
 
 from app.core import db
-from app.web.auth import login_required
+from app.web.auth import permission_required
 
 bp = Blueprint("review", __name__)
 
 
 @bp.get("/review")
-@login_required
+@permission_required("duplicates.review")
 def review():
     with db.get_conn() as conn:
         rows = db.review_rows(conn)
@@ -20,7 +20,7 @@ def review():
 
 
 @bp.post("/review/update")
-@login_required
+@permission_required("duplicates.review")
 def review_update():
     plate_id = int(request.form["plate_id"])
     plate_number = (request.form.get("plate_number") or "").strip() or None
@@ -39,7 +39,7 @@ def review_update():
 
 
 @bp.post("/review/resolve")
-@login_required
+@permission_required("duplicates.review")
 def review_resolve():
     with db.get_conn() as conn:
         db.resolve_plate(conn, int(request.form["plate_id"]))
@@ -48,7 +48,7 @@ def review_resolve():
 
 
 @bp.post("/review/delete")
-@login_required
+@permission_required("duplicates.review")
 def review_delete():
     with db.get_conn() as conn:
         db.delete_plate(conn, int(request.form["plate_id"]))

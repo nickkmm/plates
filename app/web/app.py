@@ -26,10 +26,12 @@ one module per domain:
                       form, no login; 503 until Turnstile is configured)
 
 All routes except /login, /logout, /healthz and /declaracion require an
-authenticated session. Most also require a full-access role (admin/producción); see
-app.web.auth.login_required. A small allowlist of read-only lookup routes
-(/records, /records/<id>) instead accepts any authenticated role, including
-the read-only 'producción' role -- see app.web.auth.consulta_allowed.
+active logged-in user, checked against the database on every request. Each
+one requires one permission code of the user's role -- see
+app.web.auth.permission_required and app/core/permissions.py. `/` only
+requires a logged-in user (app.web.auth.authenticated) and sends them to the
+first nav entry they may open (app/web/navigation.py), or answers a 403 page
+when their role has no permissions.
 """
 
 from __future__ import annotations
@@ -39,12 +41,12 @@ import os
 from datetime import timedelta
 
 import sentry_sdk
-from flask import Flask, redirect
+from flask import Flask, redirect, render_template, url_for
 from sentry_sdk.integrations.flask import FlaskIntegration
 
 from app.core.timezones import format_bogota
 from app.web import auth
-from app.web.auth import consulta_allowed
+from app.web.auth import authenticated
 from app.web.blueprints.auth_routes import bp as auth_routes_bp
 from app.web.blueprints.cash_summary import bp as cash_summary_bp
 from app.web.blueprints.customers import bp as customers_bp
@@ -56,6 +58,7 @@ from app.web.blueprints.public_declaration import bp as public_declaration_bp
 from app.web.blueprints.records import bp as records_bp
 from app.web.blueprints.review import bp as review_bp
 from app.web.helpers import format_cop
+from app.web.navigation import NAV_ITEMS
 
 # Sentry: only if SENTRY_DSN is set, so dev/local/tests never send anything.
 _SENTRY_DSN = os.environ.get("SENTRY_DSN")
@@ -111,16 +114,14 @@ app.config.update(
 )
 
 @app.context_processor
-def _inject_full_access_roles() -> dict:
-    """Expose auth.FULL_ACCESS_ROLES/POS_ROLES to templates, so they gate
-    edit/delete UI on role membership (not a hardcoded '!= producción') --
-    keeps templates in sync automatically if a role's access level ever
-    changes again. pos_roles (Fase 3) is its own key, not a rename of
-    full_access_roles: admin-only actions (Revisión/Inventario links, the
-    Registros 'Eliminar' button) must stay gated on full_access_roles, while
-    /ingest and /records/<id>/save's edit form are now POS_ROLES (admin +
-    point_of_sale) -- see _nav.html and record_detail.html."""
-    return {"full_access_roles": auth.FULL_ACCESS_ROLES, "pos_roles": auth.POS_ROLES}
+def _inject_permissions() -> dict:
+    """Expose `can(code)` (auth.has_permission) and `nav_items` (the
+    NAV_ITEMS entries the user may open) to templates, so they gate links and
+    edit/delete UI on the same permission the route checks. On pages with no
+    session (login, the public /declaracion) `can` is False and `nav_items`
+    is empty, without touching the database."""
+    nav_items = [item for item in NAV_ITEMS if auth.has_permission(item[2])]
+    return {"can": auth.has_permission, "nav_items": nav_items}
 
 
 app.jinja_env.filters["cop"] = format_cop
@@ -128,9 +129,12 @@ app.jinja_env.filters["bogota"] = format_bogota
 
 
 @app.get("/")
-@consulta_allowed
+@authenticated
 def index():
-    return redirect(auth.landing_url())
+    landing = auth.landing_url()
+    if landing == url_for("index"):
+        return render_template("no_permissions.html"), 403
+    return redirect(landing)
 
 
 @app.get("/healthz")

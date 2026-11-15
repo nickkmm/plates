@@ -13,7 +13,8 @@ Each declaration shows ONE status badge, its derived stage
 (db.declaration_stage): Por revisar / Falta autenticación / Lista para pedido /
 Atendida / Rechazada. The list's tabs (`?stage=`) filter by that stage.
 
-Access: EVERY route is @pos_allowed (admin + point_of_sale); `reviewed_by`
+Access: EVERY route is @permission_required("declarations.review") (seeded
+for admin and point_of_sale); `reviewed_by`
 records the acting session user. The read-only 'production' role gets 403 on
 everything here: it handles identity documents and signatures. The flags
 context (previous owner, fabrication dates) is shown ONLY here, never to the
@@ -80,7 +81,7 @@ from app.core.db.declarations import (
 from app.core.declaration_pdf import build_declaration_pdf
 from app.core.normalize import clean_plate, normalize_requested_by
 from app.core.timezones import utc_now
-from app.web.auth import pos_allowed
+from app.web.auth import permission_required
 from app.web.uploads import PHOTO_MIMETYPES, UploadError, resolve_upload_path
 
 bp = Blueprint("declarations", __name__)
@@ -336,7 +337,7 @@ def _render_detail(
 
 
 @bp.get("/declaraciones")
-@pos_allowed
+@permission_required("declarations.review")
 def declarations():
     stage_values = {value: stage for value, _, stage in STAGE_FILTERS}
     stage_filter = request.args.get("stage") or STAGE_TO_REVIEW
@@ -368,13 +369,13 @@ def declarations():
 
 
 @bp.get("/declaraciones/<int:declaration_id>")
-@pos_allowed
+@permission_required("declarations.review")
 def declaration_detail(declaration_id: int):
     return _render_detail(declaration_id)
 
 
 @bp.get("/declaraciones/<int:declaration_id>/file/<kind>")
-@pos_allowed
+@permission_required("declarations.review")
 def declaration_file(declaration_id: int, kind: str):
     spec = FILE_KINDS.get(kind)
     if spec is None:
@@ -388,7 +389,7 @@ def declaration_file(declaration_id: int, kind: str):
 
 
 @bp.get("/declaraciones/<int:declaration_id>/cards/<int:card_id>/photo/<side>")
-@pos_allowed
+@permission_required("declarations.review")
 def declaration_card_photo(declaration_id: int, card_id: int, side: str):
     """The front or back photo of one ownership card of the declaration, or
     the photo of its used plates."""
@@ -423,7 +424,7 @@ def _photo_entries(
 
 
 @bp.get("/declaraciones/<int:declaration_id>/photos.zip")
-@pos_allowed
+@permission_required("declarations.review")
 def declaration_photos_zip(declaration_id: int):
     """Every photo of the declaration (cédula and ownership cards) in one ZIP.
     Stored names are resolved with resolve_upload_path; a photo whose file is
@@ -518,13 +519,13 @@ def _decide(declaration_id: int, decision: str):
 
 
 @bp.post("/declaraciones/<int:declaration_id>/approve")
-@pos_allowed
+@permission_required("declarations.review")
 def declaration_approve(declaration_id: int):
     return _decide(declaration_id, "approve")
 
 
 @bp.post("/declaraciones/<int:declaration_id>/reject")
-@pos_allowed
+@permission_required("declarations.review")
 def declaration_reject(declaration_id: int):
     return _decide(declaration_id, "reject")
 
@@ -543,7 +544,7 @@ def _read_signature(declaration: db.DeclarationRecord) -> bytes | None:
 
 
 @bp.get("/declaraciones/<int:declaration_id>/pdf")
-@pos_allowed
+@permission_required("declarations.review")
 def declaration_pdf(declaration_id: int):
     """The sworn declaration as a PDF to print and hand to the client. Any
     APPROVED declaration; it is mandatory (notarization) only with a PÉRDIDA
@@ -599,12 +600,12 @@ def _set_notarized(declaration_id: int, *, received: bool):
 
 
 @bp.post("/declaraciones/<int:declaration_id>/notarized")
-@pos_allowed
+@permission_required("declarations.review")
 def declaration_notarized(declaration_id: int):
     return _set_notarized(declaration_id, received=True)
 
 
 @bp.post("/declaraciones/<int:declaration_id>/notarized/undo")
-@pos_allowed
+@permission_required("declarations.review")
 def declaration_notarized_undo(declaration_id: int):
     return _set_notarized(declaration_id, received=False)

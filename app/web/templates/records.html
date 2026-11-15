@@ -115,7 +115,7 @@
     <p>No se encontró ninguna placa ni orden que coincida con "{{ query }}".</p>
     {% endif %}
   {% else %}
-  <p class="muted">Las 50 más recientes (por orden de carga).{% if session.get('role') in full_access_roles %} Eliminar borra la orden y sus placas, y recalcula el inventario.{% endif %}</p>
+  <p class="muted">Las 50 más recientes (por orden de carga).{% if can('records.delete') %} Eliminar borra la orden y sus placas, y recalcula el inventario.{% endif %}</p>
   {% if rows %}
   {% include "_orders_table.html" %}
   {% else %}
