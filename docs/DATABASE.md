@@ -49,6 +49,7 @@ erDiagram
     users ||--o{ production_orders : "created_by (nullable)"
     roles ||--o{ users : "role"
     roles ||--o{ role_permissions : "role"
+    permissions ||--o{ role_permissions : "permission"
     plate_types ||--o{ plates : "plate_type"
     plate_types ||--o{ plate_type_prices : "plate_type (PK)"
     inventory_categories ||--o{ blank_preparations : "category"
@@ -131,9 +132,14 @@ erDiagram
         boolean is_system
         timestamp created_at
     }
+    permissions {
+        text code PK "código de app/core/permissions.py"
+        text label "UNIQUE NOT NULL — etiqueta en español"
+        int sort_order "orden de PERMISSIONS"
+    }
     role_permissions {
         text role PK, FK
-        text permission PK "código de app/core/permissions.py"
+        text permission PK, FK "código de permissions"
     }
     plate_type_prices {
         text plate_type PK, FK "uno de normalize.PLATE_TYPES"
@@ -349,6 +355,31 @@ agregar `users_role_fkey`, la migración `0015` inserta cada valor de
 `label = name` y sin permisos, para que la FK nunca falle por datos
 inesperados de producción.
 
+### `permissions`
+
+*Agregada en la migración `0017` (`app/migrations/0017_permissions.sql`).*
+El catálogo de permisos que se le pueden conceder a un rol: un espejo en la
+base de datos de `app/core/permissions.py::PERMISSIONS`. Creada en
+`init.sql` antes de `role_permissions`, para que `role_permissions.permission`
+la referencie directamente. Las rutas siguen revisando los códigos de Python;
+esta tabla es la base para la futura pantalla de gestión de roles
+(`db.list_permissions`).
+
+| Columna | Tipo | Constraint/Default | Nota |
+|---|---|---|---|
+| `code` | TEXT | PK | Identificador interno en inglés (`orders.capture`, `records.view`, ...): es lo que guarda `role_permissions.permission`. |
+| `label` | TEXT | NOT NULL UNIQUE | Texto en español que verá el personal (`Registrar y editar órdenes`, ...). |
+| `sort_order` | INTEGER | NOT NULL | Posición del código en la tupla `PERMISSIONS` (1 a 13). |
+
+Sembrada desde `init.sql`/la migración `0017` con los 13 códigos de
+`PERMISSIONS`, con la misma etiqueta y en el mismo orden (`ON CONFLICT DO
+NOTHING`). `sort_order` existe para que la futura pantalla de roles muestre
+los permisos en un orden estable, el mismo de la tupla, sin depender del
+orden alfabético de los códigos. Un test
+(`tests/test_schema_migrate.py::TestPermissions`) exige que la tabla y la
+tupla sean idénticas: agregar un código requiere una migración nueva **y**
+una entrada en `PERMISSIONS`.
+
 ### `role_permissions`
 
 *Agregada en la migración `0015`.* Un renglón por permiso concedido a un rol.
@@ -356,7 +387,7 @@ inesperados de producción.
 | Columna | Tipo | Constraint/Default | Nota |
 |---|---|---|---|
 | `role` | TEXT | NOT NULL, PK, FK → `roles(name)` `ON DELETE CASCADE ON UPDATE CASCADE` | Borrar un rol borra sus permisos. |
-| `permission` | TEXT | NOT NULL, PK | Un código del catálogo `app/core/permissions.py::PERMISSIONS` (`orders.capture`, `records.view`, ...). Validado en Python (`app/core/db/roles.py`), sin `CHECK` — mismo patrón que `normalize.PLATE_TYPES`. |
+| `permission` | TEXT | NOT NULL, PK, FK → `permissions(code)` `ON DELETE CASCADE ON UPDATE CASCADE` (`role_permissions_permission_fkey`, migración `0017`) | Un código del catálogo `app/core/permissions.py::PERMISSIONS` (`orders.capture`, `records.view`, ...). Se sigue validando en Python (`app/core/db/roles.py`) antes de escribir, lo que da un `ValueError` claro; desde la migración `0017` la FK además hace que Postgres rechace cualquier código desconocido. Antes de agregar la FK, `0017` borra los renglones con códigos que no están en el catálogo (hoy no conceden nada: `effective_permissions` los descarta, así que nadie cambia de acceso). |
 
 La siembra reproduce el acceso de hoy, más los códigos de producción:
 `admin` tiene los 13 códigos (informativo: `effective_permissions` siempre
