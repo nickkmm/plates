@@ -205,6 +205,9 @@ def test_used_plates_photo_is_required_in_every_card_block():
     hint = "Toma una foto donde se vean las placas que vas a entregar."
     for block in card_blocks(html):
         assert "Foto de la(s) placa(s) usada(s)" in block and hint in block
+        # the third photo spans both columns of the photo grid instead of sitting alone
+        assert '<label class="field photo-wide">Foto de la(s) placa(s) usada(s)' in block
+        assert block.count("photo-wide") == 1
     assert 'name="card___I___used_plates"' in split(html)[1]
 
 
