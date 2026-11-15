@@ -82,6 +82,28 @@ class TestInsertAndGet:
         assert db.get_declaration(db_conn, 999999) is None
 
 
+class TestListDeclarationsByProductionOrder:
+    def test_lists_the_linked_declarations_by_id_and_empty_for_none(self, db_conn):
+        from datetime import date
+
+        from app.core.models import ExtractedRow
+
+        def order(number: str) -> int:
+            return db.insert_order(db_conn, row=ExtractedRow(
+                order_number=number, order_date=date(2026, 9, 1), requested_by="ANA",
+                plate_type="CARRO PARTICULAR"), customer_id=None, created_by=None)
+
+        order_id, other_id, empty_id = order("9101"), order("9102"), order("9103")
+        first, second, other = (_insert(db_conn, status="approved") for _ in range(3))
+        _insert(db_conn)  # not attended by any order
+        for declaration_id, target in ((second, order_id), (first, order_id), (other, other_id)):
+            db.set_declaration_production_order(db_conn, declaration_id, target)
+
+        assert [d.id for d in db.list_declarations_by_production_order(db_conn, order_id)] == [first, second]
+        assert [d.id for d in db.list_declarations_by_production_order(db_conn, other_id)] == [other]
+        assert db.list_declarations_by_production_order(db_conn, empty_id) == []
+
+
 class TestDeclarationCards:
     def test_roundtrips_every_field(self, db_conn):
         owner_id = db.resolve_or_create_customer(db_conn, "ANA")
