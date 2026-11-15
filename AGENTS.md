@@ -15,7 +15,7 @@ without exception. In short:
 
 plates is the internal plate-production and point-of-sale app for INGSE
 (Colombia): Flask + PostgreSQL, deployed to a VPS by
-`.github/workflows/deploy.yml` on every push to `main`. Overview in
+`.github/workflows/deploy.yml` on pushes to `main`, once `test.yml` passes. Overview in
 `README.md`; architecture, schema and request flows in `docs/` (start at
 `docs/README.md`, local-dev gotchas in `docs/LOCAL_DEVELOPMENT.md`).
 

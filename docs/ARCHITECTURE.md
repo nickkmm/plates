@@ -87,13 +87,26 @@ correr agentes/tests en paralelo) en
 
 | Workflow | Trigger | Pasos |
 |---|---|---|
-| `.github/workflows/test.yml` | cada `push` y `pull_request` | Levanta Postgres 16 como servicio (puerto 5433) → `pip install -r requirements-dev.txt` → `ruff check app/` → `mypy app/` → `pytest --cov=app --cov-report=term-missing` |
-| `.github/workflows/deploy.yml` | push a `main`, o `workflow_dispatch` manual | SSH al VPS (`appleboy/ssh-action`) → en `/opt/plates`: `git fetch --depth 1 origin main` → `git reset --hard origin/main` → decodifica el secreto `ENV_FILE_B64` a `.env` → `docker compose up -d --build` → `docker compose exec -T web python -m app.schema_migrate` |
+| `.github/workflows/test.yml` | `pull_request` (cualquier rama), push a `main`, y `workflow_call` (lo reutiliza `deploy.yml`) | Levanta Postgres 16 como servicio (puerto 5433) → `pip install -r requirements-dev.txt` (con caché de pip) → `ruff check app/` → `mypy app/` → `pytest --cov=app --cov-report=term-missing` |
+| `.github/workflows/deploy.yml` | push a `main`, o `workflow_dispatch` manual | Job `test` (reutiliza `test.yml`) → job `deploy` (solo si pasó `test`, solo en `main` de `nickkmm/plates`, en el environment `production`) → SSH al VPS (`appleboy/ssh-action`, verificando la huella del host si existe `VPS_SSH_FINGERPRINT`) → en `/opt/plates`: `git fetch --depth 1 origin "$DEPLOY_SHA"` → `git reset --hard FETCH_HEAD` (el commit exacto que se probó) → decodifica el secreto `ENV_FILE_B64` a `.env` → `docker compose up -d --build` → `docker compose exec -T web python -m app.schema_migrate` |
+| `.github/workflows/codeql.yml` | `pull_request` a `main`, push a `main`, y semanal (`schedule`) | Análisis CodeQL de `python` y `actions` (sin build) → resultados en la pestaña *Security* |
 
-`deploy.yml` **no vuelve a correr los tests** — el gate real es que
-`test.yml` ya haya pasado en el push/PR que llega a `main` (no hay branch
-protection que lo fuerce a nivel de este workflow). El VPS usa una **deploy
-key** de solo lectura registrada en este repo (privado) para poder hacer
+Todos los workflows declaran `permissions` mínimos (`contents: read`, más
+`security-events: write` y `actions: read` en CodeQL) y fijan cada action de
+terceros a un SHA de commit completo (con un comentario `# vX.Y.Z`).
+Dependabot (`.github/dependabot.yml`) revisa cada semana `pip`,
+`github-actions` y `docker` (`web.Dockerfile`), y agrupa las actualizaciones
+minor y patch en un solo PR por ecosistema.
+
+El deploy ya no depende de que alguien haya mirado los tests: `deploy.yml`
+corre `test.yml` como su primer job y el job `deploy` tiene `needs: test`,
+así que si los tests fallan no se despliega nada. Además, el deploy solo
+corre para `main` de `nickkmm/plates` (nunca desde un fork o desde otra
+rama), pasa por el environment `production` (cuyos secretos solo ve `main`
+una vez aplicada la configuración de abajo), y despliega el SHA exacto que
+se probó, no lo que `main` tenga en ese momento. Los deploys no se cancelan
+entre sí: se encolan (`concurrency: deploy-production`). El VPS usa una
+**deploy key** de solo lectura registrada en este repo para poder hacer
 `git fetch` sin credenciales de escritura.
 
 El paso final (`schema_migrate`) aplica cualquier migración pendiente de
@@ -101,6 +114,29 @@ El paso final (`schema_migrate`) aplica cualquier migración pendiente de
 registrándola en `schema_migrations` — correr el runner dos veces es un
 no-op. Ver [`DATABASE.md`](DATABASE.md) para el runner y el historial de
 migraciones ya aplicadas.
+
+### Configuración manual en GitHub
+
+El repo es público. Esto no se puede hacer desde un workflow ni un PR: lo
+aplica a mano el dueño del repo en la configuración de GitHub.
+
+- [ ] **Ruleset sobre `main`**: exigir PR para mergear, check obligatorio
+  `test`, revisión de code owners (`.github/CODEOWNERS`), y bloquear force
+  pushes y borrado de la rama.
+- [ ] **Secret scanning** activado, con **push protection**.
+- [ ] **Dependabot alerts** y **Dependabot security updates** activados.
+- [ ] **Private vulnerability reporting** activado (ver `SECURITY.md`).
+- [ ] **Actions**: exigir aprobación para workflows de colaboradores
+  externos, y exigir que las actions estén fijadas a un SHA completo.
+- [ ] **Environment `production`** restringido a la rama `main`, con los
+  secretos `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `ENV_FILE_B64` y
+  `VPS_SSH_FINGERPRINT`, y borrar las copias de esos secretos a nivel de
+  repo. La huella se obtiene con
+  `ssh-keyscan -t ed25519 <host> | ssh-keygen -lf -` (el secreto es solo el
+  campo `SHA256:...` de la salida). Mientras `VPS_SSH_FINGERPRINT` no
+  exista, el deploy funciona pero no verifica la clave del host.
+- [ ] **Usuario de deploy no-root en el VPS**: `VPS_USER` debe ser un
+  usuario sin privilegios de root (con acceso a `/opt/plates` y a Docker).
 
 ## Monitoreo y observabilidad (Fase 1e)
 
