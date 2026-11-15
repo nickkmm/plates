@@ -69,3 +69,12 @@ and `chore/...` for the rest, always in English. PRs target `main`.
 - **Antigravity.** Use the App or the CLI (custom subagents aren't in the IDE yet), from the repo root: `agy --model <id>`, with an id from `agy models` (Gemini 4 Argon if your plan has it, otherwise Gemini 3.8 Flash), then the same `/factory` commands. The agents in `.agents/agents/` are generated from `.claude/agents/` by `factory/bin/sync-agents`; edit the `.claude/agents/` file and run it, never edit `.agents/agents/` by hand.
 - **License.** The factory comes from ZazenCodes' software factory v2 (GPLv3, see `factory/LICENSE`).
 <!-- factory:end -->
+
+## Team
+
+| GitHub login | Owns |
+|---|---|
+| `nickkmm` | everything: every issue, PR and factory task |
+
+`Meyi96` is listed as a collaborator on GitHub but does no work here: never
+assign them anything (see `CLAUDE.md`, "Ownership").
