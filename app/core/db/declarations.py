@@ -110,6 +110,7 @@ class DeclarationCardRecord:
     review_flags: list[str]
     card_front_path: str | None = None   # ownership card photos (0012); NULL on older declarations
     card_back_path: str | None = None
+    used_plates_photo_path: str | None = None   # used-plates photo (0014); DETERIORO cards only
 
 
 _SELECT_COLUMNS = (
@@ -124,7 +125,7 @@ _CARD_SELECT_COLUMNS = (
     "id, declaration_id, position, reason, plate_quantity, plate_number, "
     "transit_license, engine_number, chassis_number, vehicle_type, registered_in, "
     "vehicle_brand, owner_relation, owner_data, customer_id, ownership_card_id, "
-    "review_flags, card_front_path, card_back_path"
+    "review_flags, card_front_path, card_back_path, used_plates_photo_path"
 )
 
 
@@ -174,6 +175,7 @@ def insert_declaration_card(
     owner_relation: str | None = None, review_flags: list[str] | None = None,
     customer_id: int | None = None, ownership_card_id: int | None = None,
     card_front_path: str | None = None, card_back_path: str | None = None,
+    used_plates_photo_path: str | None = None,
 ) -> int:
     """Insert one card of a declaration; return its id. `position` is the
     0-based order inside the declaration (UNIQUE per declaration). While the
@@ -186,16 +188,16 @@ def insert_declaration_card(
                 transit_license, engine_number, chassis_number, vehicle_type,
                 registered_in, vehicle_brand, owner_relation, owner_data,
                 customer_id, ownership_card_id, review_flags,
-                card_front_path, card_back_path
+                card_front_path, card_back_path, used_plates_photo_path
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (declaration_id, position, reason, plate_quantity, plate_number,
              transit_license, engine_number, chassis_number, vehicle_type,
              registered_in, vehicle_brand, owner_relation, Jsonb(owner_data),
              customer_id, ownership_card_id, list(review_flags or []),
-             card_front_path, card_back_path),
+             card_front_path, card_back_path, used_plates_photo_path),
         )
         row = cur.fetchone()
         assert row is not None, "INSERT ... RETURNING id always yields a row"

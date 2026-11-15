@@ -367,6 +367,18 @@ class TestApplySqlMigrations:
             cur.execute(sql)
             cur.execute(sql)
 
+    def test_0014_used_plates_photo_sql_is_safe_to_apply_twice_directly(self, db_conn):
+        sql = (_MIGRATIONS_DIR / "0014_declaration_used_plates_photo.sql").read_text(encoding="utf-8")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(sql)
+            cur.execute(sql)
+            cur.execute(
+                "SELECT data_type, is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'declaration_cards' AND column_name = 'used_plates_photo_path' "
+                "AND table_schema = current_schema()"
+            )
+            assert cur.fetchall() == [("text", "YES")]
+
 
 # --------------------------------------------------------------------------
 # backfill_customers

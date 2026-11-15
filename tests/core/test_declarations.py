@@ -48,7 +48,8 @@ def _card(**kw) -> OwnershipCardInput:
     base = {"plate_number": "ABC123", "transit_license": "LIC-001", "engine_number": "ENG1",
             "chassis_number": "CHA1", "vehicle_type": "CARRO PARTICULAR", "registered_in": "MEDELLÍN",
             "vehicle_brand": "MAZDA", "reason": "DETERIORO", "plate_quantity": 1,
-            "front_file": "card-front.jpg", "back_file": "card-back.jpg"}
+            "front_file": "card-front.jpg", "back_file": "card-back.jpg",
+            "used_plates_file": "used-plates.jpg"}
     base.update(kw)
     return OwnershipCardInput(**base)
 
@@ -229,6 +230,17 @@ class TestValidate:
         side = "frente" if missing == "front_file" else "atrás"
         assert f"Tarjeta 1: Falta la foto de la tarjeta de propiedad ({side})." in errors
 
+    @pytest.mark.parametrize("value", [None, "", "  "])
+    def test_used_plates_photo_is_required_for_deterioration(self, value):
+        errors = decl.validate_declaration(_input(cards=[_card(used_plates_file=value)]))
+        assert "Tarjeta 1: Falta la foto de la(s) placa(s) usada(s)." in errors
+
+    @pytest.mark.parametrize("reason", ["PÉRDIDA", "perdida", "ROBO"])
+    def test_used_plates_photo_is_not_required_otherwise(self, reason):
+        errors = decl.validate_declaration(
+            _input(cards=[_card(reason=reason, used_plates_file=None)]))
+        assert not any("placa(s) usada(s)" in e for e in errors)
+
     @pytest.mark.parametrize("registered_in", ["", "   "])
     def test_registered_in_is_required(self, registered_in):
         errors = decl.validate_declaration(_input(cards=[_card(registered_in=registered_in)]))
@@ -399,6 +411,7 @@ class TestSubmitThenApprove:
         assert row.owner_relation == "DUEÑO"
         assert row.owner_data["name"] == "MARIA LOPEZ"
         assert (row.card_front_path, row.card_back_path) == ("card-front.jpg", "card-back.jpg")
+        assert row.used_plates_photo_path == "used-plates.jpg"
         assert row.review_flags == []
 
     def test_submitted_data_has_the_canonical_shape(self, db_conn):
