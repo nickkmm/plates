@@ -763,6 +763,29 @@ class TestReplaceOrder:
         assert len(summary.review_notes) == 1
         assert "payment_method" in summary.review_notes[0]
 
+    def test_replacing_an_order_with_production_events_starts_the_new_one_pending(self, db_conn):
+        """The old order's events cascade away with it; the replacement is a
+        new order, so it starts pending with no history."""
+        old_id = _insert_order(db_conn, order_number="1074", order_date=date(2026, 1, 1),
+                                  requested_by="PEDRO")
+        db.set_production_status(db_conn, old_id, from_status="pending", to_status="in_progress",
+                                 user_id=None)
+        db.set_production_status(db_conn, old_id, from_status="in_progress", to_status="ready",
+                                 user_id=None)
+        db_conn.commit()
+
+        new_rows = [make_row(order_number="1074", plate_type="CARRO PARTICULAR", plate_number="REP105")]
+        summary = replace_order(db_conn, "1074", new_rows)
+        assert summary.orders_replaced == 1
+
+        (new_order,) = db.find_orders_by_number(db_conn, "1074")
+        assert new_order.id != old_id
+        assert db.get_production_status(db_conn, new_order.id) == "pending"
+        assert db.list_production_events(db_conn, new_order.id) == []
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM production_order_events WHERE order_id = %s", (old_id,))
+            assert cur.fetchone()[0] == 0
+
 
 class TestAtomicity:
     """Fase 1d's whole point for threading `conn` explicitly instead of each

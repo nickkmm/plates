@@ -510,3 +510,21 @@ class TestDeleteOrder:
     def test_nonexistent_order_id_is_a_silent_noop(self, db_conn):
         db.delete_order(db_conn, 999999)  # must not raise
 
+    def test_removes_an_order_with_production_events_and_its_events(self, db_conn):
+        """production_order_events cascades on delete, so delete_order needs no change."""
+        order_id = _insert_order(db_conn, order_number="1003", order_date=date(2026, 1, 1),
+                                 requested_by="PEDRO")
+        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="B2"), is_possible_duplicate=False)
+        db.set_production_status(db_conn, order_id, from_status="pending", to_status="in_progress",
+                                 user_id=None)
+        db.set_production_status(db_conn, order_id, from_status="in_progress", to_status="ready",
+                                 user_id=None)
+
+        db.delete_order(db_conn, order_id)
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT count(*) FROM production_orders WHERE id = %s", (order_id,))
+            assert cur.fetchone()[0] == 0
+            cur.execute("SELECT count(*) FROM production_order_events WHERE order_id = %s", (order_id,))
+            assert cur.fetchone()[0] == 0
+

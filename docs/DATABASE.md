@@ -52,6 +52,8 @@ erDiagram
     plate_types ||--o{ plates : "plate_type"
     plate_types ||--o{ plate_type_prices : "plate_type (PK)"
     inventory_categories ||--o{ blank_preparations : "category"
+    production_orders ||--o{ production_order_events : "order_id (ON DELETE CASCADE)"
+    users ||--o{ production_order_events : "user_id (nullable)"
 
     production_orders {
         int id PK
@@ -70,6 +72,15 @@ erDiagram
         text received_by "nullable"
         text notes "nullable"
         int created_by FK "nullable"
+        text production_status "pending/in_progress/ready/delivered (0016)"
+        timestamp created_at
+    }
+    production_order_events {
+        int id PK
+        int order_id FK
+        text from_status
+        text to_status
+        int user_id FK "nullable"
         timestamp created_at
     }
     plates {
@@ -210,6 +221,7 @@ el primer índice fuera de una PK/UNIQUE — ver rarezas para ambos.
 | `received_by` | TEXT | nullable | Quien recibió físicamente el pedido — distinto de `customer_id`/`requested_by`. Antes de la Fase 1c, `nombre_recibe`. |
 | `notes` | TEXT | nullable | Antes de la Fase 1c, `observaciones`. |
 | `created_by` | INTEGER | FK → `users(id)`, nullable | El usuario logueado que guardó la orden — distinto de `dispatched_by`/`received_by` (datos de la entrega física, no de quién la cargó al sistema). Antes de la Fase 1c, `creado_por`. |
+| `production_status` | TEXT | NOT NULL DEFAULT `'pending'` | *Agregada en la migración `0016`.* Estado de producción de la orden: `pending` → `in_progress` → `ready` → `delivered` (por realizar, en realización, lista para entregar, entregada). Los valores son identificadores en inglés, igual que `users.role`; las etiquetas en español las pone la capa web. Toda orden nueva nace `pending` por el default, sin que `insert_order` lo escriba. Las órdenes que ya existían cuando corrió `0016` quedaron `delivered` (ver rarezas). Con índice (`production_orders_production_status_idx`). Cada cambio queda en `production_order_events`; las reglas viven en `app/core/production.py` (ver [`CORE.md`](CORE.md)). Sin `CHECK`, como el resto del esquema. |
 | `created_at` | TIMESTAMP | DEFAULT now() | Nunca se usa para ordenar por "reciente" (ver `recent_orders` en [`CORE.md`](CORE.md)). |
 
 ### `plates`
@@ -380,6 +392,26 @@ desde `/precios` (Fase 5a, admin-only) — ver [`WEB.md`](WEB.md).
 
 Un `plate_type` sin fila acá significa "sin tarifa configurada", no `0` —
 las lecturas nunca deben usar `COALESCE(unit_price, 0)`.
+
+### `production_order_events`
+
+*Agregada en la migración `0016`.* Historial de estados de producción: un
+renglón por cada cambio de `production_orders.production_status` (avanzar o
+deshacer un paso), escrito por `app/core/db/production.py::set_production_status`
+solo cuando el cambio realmente ocurrió.
+
+| Columna | Tipo | Constraint/Default | Nota |
+|---|---|---|---|
+| `id` | SERIAL | PK | |
+| `order_id` | INTEGER | NOT NULL, FK → `production_orders(id)` `ON DELETE CASCADE` | Borrar una orden borra su historial, así que `delete_order` no cambió. Con índice (`production_order_events_order_id_idx`). |
+| `from_status` | TEXT | NOT NULL | Estado anterior (uno de los valores de `production_status`). |
+| `to_status` | TEXT | NOT NULL | Estado nuevo. |
+| `user_id` | INTEGER | FK → `users(id)`, nullable | Quién hizo el cambio; `NULL` si no se sabe. |
+| `created_at` | TIMESTAMP | NOT NULL DEFAULT now() | Cuándo. El último `created_at` de una orden es su "cambió de estado el...". |
+
+`replace_order` borra la orden vieja (y con ella su historial, por la
+cascada) e inserta una nueva: la orden reemplazada vuelve a `pending` y sin
+historial.
 
 ### `schema_migrations`
 
@@ -633,6 +665,15 @@ Desde la Fase 1b cada espacio de nombres tiene su propia tabla de referencia
 real (`plate_types` para los 7 tipos, `inventory_categories` para los 3
 materiales) — dos tablas *distintas*, no una FK compartida; seguir sin
 confundirlas.
+
+### Las órdenes anteriores a `0016` figuran como `delivered`
+
+La migración `0016_production_status.sql` agregó `production_status` con
+`DEFAULT 'delivered'` y recién después cambió el default a `'pending'`: toda
+orden que ya existía cuando corrió quedó `delivered` (eran historia, ya se
+habían entregado), sin ningún evento en `production_order_events`. Por eso
+una orden `delivered` sin historial no significa que alguien la marcó
+entregada: es anterior al tablero de producción.
 
 ### `order_number` sin `UNIQUE`
 

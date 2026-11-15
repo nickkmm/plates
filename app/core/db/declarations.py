@@ -211,6 +211,18 @@ def get_declaration(conn: psycopg.Connection[DictRow], declaration_id: int) -> D
         return cur.fetchone()
 
 
+def list_declarations_by_production_order(
+    conn: psycopg.Connection[DictRow], order_id: int,
+) -> list[DeclarationRecord]:
+    """The declarations attended by this production order, by id ([] for none)."""
+    with conn.cursor(row_factory=class_row(DeclarationRecord)) as cur:
+        cur.execute(
+            f"SELECT {_SELECT_COLUMNS} FROM declarations WHERE production_order_id = %s ORDER BY id",
+            (order_id,),
+        )
+        return cur.fetchall()
+
+
 def list_declaration_cards(
     conn: psycopg.Connection[DictRow], declaration_id: int,
 ) -> list[DeclarationCardRecord]:

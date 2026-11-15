@@ -34,12 +34,15 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from app import schema_migrate
+from app.core import db
+from app.core.models import ExtractedRow
 from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _INIT_SQL = (_REPO_ROOT / "init.sql").read_text(encoding="utf-8")
 _MIGRATIONS_DIR = _REPO_ROOT / "app" / "migrations"
 _0015_SQL = (_MIGRATIONS_DIR / "0015_roles_and_permissions.sql").read_text(encoding="utf-8")
+_0016_SQL = (_MIGRATIONS_DIR / "0016_production_status.sql").read_text(encoding="utf-8")
 
 # Snapshot of init.sql exactly as it was immediately BEFORE the Fase 1
 # POS-fields schema change (production_orders/plates/inventory_categories/
@@ -95,6 +98,7 @@ _APP_TABLES = (
     "production_orders", "plates", "blank_preparations", "inventory_categories",
     "customers", "users", "plate_type_prices", "schema_migrations", "plate_types",
     "ownership_cards", "declarations", "declaration_cards", "roles", "role_permissions",
+    "production_order_events",
 )
 
 
@@ -396,6 +400,49 @@ class TestApplySqlMigrations:
             cur.execute(_0015_SQL)
             cur.execute(_0015_SQL)
         assert counts() == before
+
+    def test_0016_production_status_backfills_old_orders_as_delivered_and_new_ones_pending(self, db_conn):
+        """An order that exists when 0016 runs becomes delivered; one inserted
+        afterwards through db.insert_order starts pending; a second apply
+        changes neither."""
+
+        def status(order_id: int) -> str:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute("SELECT production_status FROM production_orders WHERE id = %s", (order_id,))
+                row = cur.fetchone()
+                assert row is not None
+                return row[0]
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("DROP TABLE production_order_events")
+            cur.execute("ALTER TABLE production_orders DROP COLUMN production_status")
+        old_id = _insert_order(db_conn, "PEDRO", "1600")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(_0016_SQL)
+        assert status(old_id) == "delivered"
+
+        new_id = db.insert_order(
+            db_conn,
+            row=ExtractedRow(order_number="1601", order_date=date(2026, 1, 2), requested_by="PEDRO",
+                             plate_type="CARRO PARTICULAR"),
+            customer_id=None, created_by=None,
+        )
+        assert status(new_id) == "pending"
+
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(_0016_SQL)
+        assert (status(old_id), status(new_id)) == ("delivered", "pending")
+
+    def test_0016_production_status_sql_is_safe_to_apply_twice_directly(self, db_conn):
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(_0016_SQL)
+            cur.execute(_0016_SQL)
+            cur.execute(
+                "SELECT column_default, is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'production_orders' AND column_name = 'production_status' "
+                "AND table_schema = current_schema()"
+            )
+            assert cur.fetchall() == [("'pending'::text", "NO")]
 
 
 # --------------------------------------------------------------------------
