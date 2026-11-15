@@ -4,8 +4,9 @@
 # The gate runs this script with the job's worktree as the working directory.
 # Same steps as .github/workflows/test.yml (ruff, mypy, pytest), plus a few
 # repo rules. Tests that need Postgres run against plates_test on
-# 127.0.0.1:5433 (tests/conftest.py); without a reachable DB and
-# POSTGRES_PASSWORD they skip, so CI stays the final word on those.
+# 127.0.0.1:5433 (tests/conftest.py). Run by hand without a reachable DB and
+# POSTGRES_PASSWORD they skip; the gate passes the credentials, a per-job
+# TEST_POSTGRES_DB and TEST_REQUIRE_DB=1, so there they must run.
 set -euo pipefail
 
 # A Python that really runs: on Windows `python3` can be the Microsoft Store

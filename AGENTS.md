@@ -39,7 +39,11 @@ python -m venv .venv
 `factory/checks.sh` uses `.venv` when it exists. Database tests need the local
 Postgres from `docker compose up -d db` (host port 5433) and
 `POSTGRES_PASSWORD` set in the environment; without them they skip, and CI
-runs them.
+runs them. In a factory worktree, run them against the job's own database
+so other jobs' migrations don't leak in: `TEST_POSTGRES_DB=plates_test_<n>`
+(`<n>` is the job number, `004` → `plates_test_4`), the same one the gate
+uses. The gate takes the credentials from the main checkout's `.env` and
+stops if Postgres isn't up.
 
 ## Branches
 

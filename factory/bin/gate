@@ -14,7 +14,9 @@ branch modifies or deletes a file matching config.json `protected_paths`
 
 import fnmatch
 import json
+import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -37,6 +39,8 @@ FACTORY = REPO / "factory"
 CONFIG = json.loads((FACTORY / "config.json").read_text())
 CHECKS = FACTORY / "checks.sh"
 TAIL = 80
+# The local Postgres from `docker compose up -d db` (tests/conftest.py forces the same).
+DB_HOST, DB_PORT = "127.0.0.1", 5433
 
 
 def die(msg):
@@ -65,9 +69,35 @@ def protected_changes(worktree):
     return hits
 
 
-def run_checks(worktree):
+def db_env(job_id):
+    """The environment checks.sh needs to run the database tests, or a reason it can't.
+
+    Worktrees have no `.env` (it's gitignored), so the Postgres credentials
+    come from the environment or the main checkout's `.env`. Each job gets its
+    own test database, `plates_test_<n>`, so one branch's migrations never
+    leak into another job's run.
+    """
+    env = dict(os.environ)
+    dotenv = REPO / ".env"
+    if dotenv.exists():
+        for line in dotenv.read_text().splitlines():
+            key, sep, value = line.strip().partition("=")
+            if sep and key.strip() in ("POSTGRES_USER", "POSTGRES_PASSWORD"):
+                env.setdefault(key.strip(), value.strip())
+    if not env.get("POSTGRES_PASSWORD"):
+        return None, "no POSTGRES_PASSWORD in the environment or in the main checkout's .env"
+    try:
+        socket.create_connection((DB_HOST, DB_PORT), timeout=3).close()
+    except OSError:
+        return None, f"Postgres is not reachable at {DB_HOST}:{DB_PORT} (start it: docker compose up -d db)"
+    env["TEST_POSTGRES_DB"] = f"plates_test_{int(job_id.split('-', 1)[0])}"
+    env["TEST_REQUIRE_DB"] = "1"
+    return env, None
+
+
+def run_checks(worktree, env=None):
     start = time.monotonic()
-    res = subprocess.run([BASH, str(CHECKS)], cwd=worktree, capture_output=True, text=True)
+    res = subprocess.run([BASH, str(CHECKS)], cwd=worktree, capture_output=True, text=True, env=env)
     return res.returncode, res.stdout + res.stderr, int(time.monotonic() - start)
 
 
@@ -79,7 +109,11 @@ def gate(job_id, merge):
     round_dir = FACTORY / "jobs" / job_id / f"round-{job['round']}"
     commit = git(worktree, "rev-parse", "HEAD").strip()
     protected = protected_changes(worktree)
-    code, log, seconds = run_checks(worktree)
+    env, problem = db_env(job_id)
+    if problem:
+        # Not the branch's fault: stop rather than FAIL and send the builder to fix code.
+        die(f"can't run the database tests: {problem}")
+    code, log, seconds = run_checks(worktree, env)
     verdict = "PASS" if code == 0 and not protected else "FAIL"
     name = "merge-checks" if merge else "checks"
     (round_dir / f"{name}.log").write_text(log)
@@ -110,7 +144,8 @@ def hook():
     prompt = content if isinstance(content, str) else " ".join(b.get("text", "") for b in content)
     job_id = prompt.split("Job: ", 1)[1].split(".", 1)[0]
     job = json.loads((FACTORY / "jobs" / job_id / "job.json").read_text())
-    code, log, _ = run_checks(job["worktree"])
+    env, _ = db_env(job_id)  # without a DB the hook still runs the rest; the gate insists
+    code, log, _ = run_checks(job["worktree"], env)
     if code != 0:
         tail = "\n".join(log.rstrip().splitlines()[-40:])
         print(f"factory/checks.sh fails in your worktree (exit {code}). The gate will reject this "
