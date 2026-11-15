@@ -309,3 +309,21 @@ ALTER TABLE plates ADD COLUMN ownership_card_id INTEGER REFERENCES ownership_car
 -- plates, joined on order_id.
 CREATE INDEX plates_order_id_idx ON plates(order_id);
 CREATE INDEX plates_ownership_card_id_idx ON plates(ownership_card_id);
+
+-- Production status of every order and its history (see
+-- app/migrations/0016_production_status.sql and docs/DATABASE.md). Added here,
+-- after `users` exists, because production_order_events.user_id references it.
+-- Values are English identifiers (pending / in_progress / ready / delivered);
+-- the Spanish labels belong to the web layer.
+ALTER TABLE production_orders ADD COLUMN production_status TEXT NOT NULL DEFAULT 'pending';
+CREATE INDEX production_orders_production_status_idx ON production_orders (production_status);
+
+CREATE TABLE production_order_events (
+    id SERIAL PRIMARY KEY,
+    order_id INTEGER NOT NULL REFERENCES production_orders(id) ON DELETE CASCADE,
+    from_status TEXT NOT NULL,
+    to_status TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id),   -- who moved it; NULL when unknown
+    created_at TIMESTAMP NOT NULL DEFAULT now()
+);
+CREATE INDEX production_order_events_order_id_idx ON production_order_events (order_id);
