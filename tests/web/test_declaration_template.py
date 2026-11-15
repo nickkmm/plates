@@ -176,9 +176,9 @@ def test_the_form_is_multipart_and_asks_for_the_cedula_and_card_photos():
     for name in ("declarant_id_front", "declarant_id_back"):
         t = tag(html, name)
         assert 'type="file"' in t and "required" in t and "image/jpeg" in t
-    # one front + one back photo per card block (the <template> included)
+    # one front + one back + one used-plates photo per card block (the <template> included)
     for block in card_blocks(html):
-        assert block.count('type="file"') == 2
+        assert block.count('type="file"') == 3
     assert "notarized" not in html.lower() and "autenticado" not in html.lower()
 
 
@@ -194,6 +194,25 @@ def test_loss_note_is_in_every_card_block_and_visible_without_js():
         assert re.search(r'<div class="note loss-note">', block)
     assert "loss-note" in split(html)[1]  # the clone template carries it too
     assert "querySelector('.loss-note')" in html and "note.hidden = " in html
+
+
+def test_used_plates_photo_is_in_every_card_block_and_optional_without_js():
+    html = render(form=FULL_FORM)
+    t = tag(html, "card_0_used_plates")
+    assert 'type="file"' in t and 'class="photo-input"' in t
+    assert 'accept="image/jpeg,image/png,image/webp"' in t
+    assert "required" not in t   # a PÉRDIDA card must submit without JS
+    for name in ("card_0_front", "card_0_back", "card_2_front", "card_2_back"):
+        assert "required" in tag(html, name), name
+    hint = ("Obligatoria si el motivo es deterioro: toma una foto donde se vean las placas "
+            "que vas a entregar.")
+    for block in card_blocks(html):
+        assert "Foto de la(s) placa(s) usada(s)" in block and hint in block
+        assert '<div class="used-plates-field">' in block   # not hidden in the markup
+    tpl = split(html)[1]
+    assert 'name="card___I___used_plates"' in tpl and "used-plates-field" in tpl
+    # the script shows it and makes it required only for DETERIORO
+    assert "querySelector('.used-plates-field')" in html and "input.required = deterioration" in html
 
 
 def test_submit_and_footer():

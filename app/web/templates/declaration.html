@@ -27,6 +27,7 @@
     .photos { display:grid; grid-template-columns:minmax(0,1fr); gap:0 .8rem; }
     @media (min-width:520px) { .photos { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
     .photo-info { font-size:.8rem; color:#2a7a4b; min-height:1em; }
+    .photo-hint { font-size:.8rem; color:#666; }
     .choice { display:flex; align-items:flex-start; gap:.6rem; padding:.55rem 0; font-size:1rem; }
     .choice input { width:1.3rem; height:1.3rem; margin:.1rem 0 0; flex:none; }
     .marketing { border:0; padding:0; margin:.4rem 0 0; display:flex; flex-wrap:wrap; align-items:center; gap:.2rem .6rem; }
@@ -107,9 +108,10 @@
   </div>
 {% endmacro %}
 {# One photo input (front or back of a document); the script shrinks the picture before upload. #}
-{% macro photo_field(name, label) %}
+{% macro photo_field(name, label, required=True, hint='') %}
       <label class="field">{{ label }}
-        <input type="file" class="photo-input" name="{{ name }}" accept="image/jpeg,image/png,image/webp" required>
+        {% if hint %}<span class="photo-hint">{{ hint }}</span>{% endif %}
+        <input type="file" class="photo-input" name="{{ name }}" accept="image/jpeg,image/png,image/webp"{% if required %} required{% endif %}>
         <span class="photo-info" aria-live="polite"></span>
       </label>
 {% endmacro %}
@@ -163,6 +165,10 @@
     </div>
     {# Plain note without JS; the script hides it unless this card's reason is PÉRDIDA. #}
     <div class="note loss-note">Si declaras pérdida, INGSE te entregará este documento en el mostrador para que lo autentiques en una notaría.</div>
+    {# Optional in the HTML (a PÉRDIDA card must submit without JS); the script shows it and makes it required only for DETERIORO. #}
+    <div class="used-plates-field">
+      {{ photo_field(c ~ 'used_plates', 'Foto de la(s) placa(s) usada(s)', required=False, hint='Obligatoria si el motivo es deterioro: toma una foto donde se vean las placas que vas a entregar.') }}
+    </div>
     <label class="field" style="margin-top:.4rem">Cantidad de placas
       <select name="{{ c }}plate_quantity" required>
         <option value="1"{% if q_sel == 1 %} selected{% endif %}>1</option>
@@ -408,12 +414,23 @@
     totalOut.textContent = String(total);
   }
 
-  // --- Conditional part (a card's PÉRDIDA -> notarization note) ----------
+  // --- Conditional parts (a card's PÉRDIDA -> notarization note; DETERIORO -> used-plates photo) ---
   function applyState() {
     var bs = blocks();
     for (var i = 0; i < bs.length; i++) {
+      var reason = checkedValue('card_' + bs[i].getAttribute('data-card') + '_reason');
       var note = bs[i].querySelector('.loss-note');
-      if (note) note.hidden = checkedValue('card_' + bs[i].getAttribute('data-card') + '_reason') !== 'PÉRDIDA';
+      if (note) note.hidden = reason !== 'PÉRDIDA';
+      var used = bs[i].querySelector('.used-plates-field');
+      if (!used) continue;
+      var input = field(bs[i], 'used_plates');
+      var deterioration = reason === 'DETERIORO';
+      used.hidden = !deterioration;
+      input.required = deterioration;
+      if (!deterioration) {
+        input.value = '';
+        used.querySelector('.photo-info').textContent = '';
+      }
     }
   }
 
