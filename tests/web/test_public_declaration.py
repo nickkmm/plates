@@ -510,6 +510,15 @@ class TestFiles:
         name = stub.inp.cards[0].used_plates_file
         assert name is not None and (enabled / name).read_bytes() == JPEG
 
+    def test_plates_lost_is_parsed_per_card(self, client, stub):
+        post(client, _form(_card(0, plates_lost="1"), _card(1, plate_number="DEF456", transit_license="L-2")))
+        assert [c.plates_lost for c in stub.inp.cards] == [True, False]
+
+    def test_a_used_plates_photo_on_a_plates_lost_card_is_never_stored(self, client, stub, enabled):
+        post(client, _form(_card(0, plates_lost="1")))
+        assert stub.inp.cards[0].used_plates_file is None
+        assert _suffixes(enabled) == [".jpg"] * 4 + [".png"]   # cédula x2, card x2, the signature
+
     def test_a_missing_used_plates_photo_is_left_unset_for_the_validator(self, client, stub):
         post(client, _form(_card(0, used_plates=None)))
         assert stub.inp.cards[0].used_plates_file is None
@@ -791,6 +800,17 @@ class TestEndToEnd:
         assert "Tarjeta 1: Falta la foto de la(s) placa(s) usada(s)." in resp.get_data(as_text=True)
         assert _count(db_conn, "declarations") == 0
         assert _files(enabled) == []
+
+    @pytest.mark.parametrize("reason", ["DETERIORO", "PÉRDIDA"])
+    def test_a_plates_lost_card_is_accepted_without_the_used_plates_photo(self, client, enabled, db_conn, reason):
+        resp = post(client, _form(_card(0, reason=reason, used_plates=None, plates_lost="1")))
+        assert resp.status_code == 200
+        assert "Recibimos tu declaración" in resp.get_data(as_text=True)
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT used_plates_photo_path FROM declaration_cards")
+            assert cur.fetchone()["used_plates_photo_path"] is None
+            cur.execute("SELECT submitted_data FROM declarations")
+            assert cur.fetchone()["submitted_data"]["cards"][0]["plates_lost"] is True
 
     @pytest.mark.parametrize("value", ["SI", "NO"])
     def test_both_marketing_answers_are_stored(self, client, enabled, db_conn, value):

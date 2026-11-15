@@ -239,6 +239,11 @@ class TestValidate:
     def test_a_loss_card_with_the_used_plates_photo_is_valid(self):
         assert decl.validate_declaration(_input(cards=[_card(reason="PÉRDIDA")])) == []
 
+    @pytest.mark.parametrize("reason", ["DETERIORO", "PÉRDIDA"])
+    def test_plates_lost_waives_the_used_plates_photo(self, reason):
+        card = _card(reason=reason, used_plates_file=None, plates_lost=True)
+        assert decl.validate_declaration(_input(cards=[card])) == []
+
     @pytest.mark.parametrize("registered_in", ["", "   "])
     def test_registered_in_is_required(self, registered_in):
         errors = decl.validate_declaration(_input(cards=[_card(registered_in=registered_in)]))

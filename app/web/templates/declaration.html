@@ -29,6 +29,7 @@
     .photo-info { font-size:.8rem; color:#2a7a4b; min-height:1em; }
     .photo-hint { font-size:.8rem; color:#666; }
     .photos .photo-wide { grid-column:1 / -1; }
+    .photos .plates-lost { margin:-.6rem 0 .5rem; }
     .choice { display:flex; align-items:flex-start; gap:.6rem; padding:.55rem 0; font-size:1rem; }
     .choice input { width:1.3rem; height:1.3rem; margin:.1rem 0 0; flex:none; }
     .marketing { border:0; padding:0; margin:.4rem 0 0; display:flex; flex-wrap:wrap; align-items:center; gap:.2rem .6rem; }
@@ -135,7 +136,9 @@
     <div class="photos">
       {{ photo_field(c ~ 'front', 'Foto de la tarjeta de propiedad (frente)') }}
       {{ photo_field(c ~ 'back', 'Foto de la tarjeta de propiedad (atrás)') }}
-      {{ photo_field(c ~ 'used_plates', 'Foto de la(s) placa(s) usada(s)', hint='Toma una foto donde se vean las placas que vas a entregar.', wide=True) }}
+      {{ photo_field(c ~ 'used_plates', 'Foto de la(s) placa(s) usada(s)', hint='Toma una foto donde se vean las placas que vas a entregar. Si las perdiste, marca «Perdí mis placas».', wide=True) }}
+      {# Checked: the script disables the used-plates photo, so it is neither required nor sent. #}
+      <label class="choice photo-wide plates-lost"><input type="checkbox" name="{{ c }}plates_lost" value="1"{% if f.get(c ~ 'plates_lost') %} checked{% endif %}> Perdí mis placas</label>
     </div>
     <div class="row2">
       <label class="field">Licencia de tránsito No.
@@ -412,12 +415,19 @@
     totalOut.textContent = String(total);
   }
 
-  // --- Conditional part (a card's PÉRDIDA -> notarization note) ----------
+  // --- Conditional parts (a card's PÉRDIDA -> notarization note; "Perdí mis placas" -> no used-plates photo) ---
   function applyState() {
     var bs = blocks();
     for (var i = 0; i < bs.length; i++) {
       var note = bs[i].querySelector('.loss-note');
       if (note) note.hidden = checkedValue('card_' + bs[i].getAttribute('data-card') + '_reason') !== 'PÉRDIDA';
+      var lost = field(bs[i], 'plates_lost'), photo = field(bs[i], 'used_plates');
+      if (!lost || !photo) continue;
+      photo.disabled = lost.checked;   // a disabled input is neither validated nor submitted
+      if (lost.checked) {
+        photo.value = '';
+        photo.parentNode.querySelector('.photo-info').textContent = '';
+      }
     }
   }
 
@@ -476,7 +486,7 @@
     if (!block) return;
     if (/_vehicle_type$/.test(name)) { applyType(block, true); updateTotal(); }
     else if (/_plate_quantity$/.test(name)) updateTotal();
-    else if (/_reason$/.test(name)) applyState();
+    else if (/_reason$/.test(name) || /_plates_lost$/.test(name)) applyState();
   });
   // Plate: uppercase while typing, strip spaces on blur
   cardsBox.addEventListener('input', function (e) {

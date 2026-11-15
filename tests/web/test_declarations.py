@@ -643,6 +643,16 @@ class TestPhotos:
         assert 'href="#card-1"' in html and "Placas usadas" in html
         assert "Descargar todas las fotos" in html and "Sin archivos adjuntos" not in html
 
+    def test_the_detail_says_when_the_client_marked_plates_lost(self, authenticated_client, db_conn, uploads):
+        note = "Sin foto de las placas usadas: el cliente marcó «Perdí mis placas»."
+        declaration_id, _, _ = _with_photos(db_conn, uploads)
+        assert note not in authenticated_client.get(_detail(declaration_id)).data.decode()
+        inp = _input(cards=[_card(plate_number="DEF456", transit_license="LIC-002",
+                                  used_plates_file=None, plates_lost=True)])
+        lost_id = _submit_approved(db_conn, inp)
+        html = authenticated_client.get(_detail(lost_id)).data.decode()
+        assert note in html
+
     def test_a_missing_photo_file_is_404(self, authenticated_client, db_conn, uploads):
         declaration_id, _, names = _with_photos(db_conn, uploads)
         (uploads / names["id_front"]).unlink()

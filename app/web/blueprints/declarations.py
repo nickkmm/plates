@@ -305,11 +305,15 @@ def _render_detail(
             db.get_user_by_id(conn, declaration.notarized_received_by)
             if declaration.notarized_received_by is not None else None
         )
+        submitted_cards = declaration.submitted_data.get("cards") or []
         cards: list[dict[str, Any]] = []
         for card in card_records:
+            submitted = submitted_cards[card.position] if card.position < len(submitted_cards) else {}
             cards.append({
                 "record": card,
                 "number": card.position + 1,
+                # "Perdí mis placas": the client declared there are no used plates to photograph
+                "plates_lost": bool(submitted.get("plates_lost")) and not card.used_plates_photo_path,
                 "flag_details": _flag_details(conn, declaration, card, card_records) if pending else [],
                 "customer": db.get_customer(conn, card.customer_id) if card.customer_id else None,
                 "ownership_card": (

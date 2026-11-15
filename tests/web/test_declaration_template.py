@@ -202,13 +202,25 @@ def test_used_plates_photo_is_required_in_every_card_block():
         t = tag(html, name)
         assert 'type="file"' in t and 'class="photo-input"' in t and "required" in t, name
         assert 'accept="image/jpeg,image/png,image/webp"' in t
-    hint = "Toma una foto donde se vean las placas que vas a entregar."
+    hint = ("Toma una foto donde se vean las placas que vas a entregar. "
+            "Si las perdiste, marca «Perdí mis placas».")
     for block in card_blocks(html):
         assert "Foto de la(s) placa(s) usada(s)" in block and hint in block
         # the third photo spans both columns of the photo grid instead of sitting alone
         assert '<label class="field photo-wide">Foto de la(s) placa(s) usada(s)' in block
-        assert block.count("photo-wide") == 1
     assert 'name="card___I___used_plates"' in split(html)[1]
+
+
+def test_plates_lost_checkbox_in_every_card_block():
+    html = render(form={**FULL_FORM, "card_2_plates_lost": "1"})
+    first, second = card_blocks(html)
+    assert "> Perdí mis placas</label>" in first and "> Perdí mis placas</label>" in second
+    t = tag(html, "card_0_plates_lost")
+    assert 'type="checkbox"' in t and "required" not in t and "checked" not in t
+    assert "checked" in tag(html, "card_2_plates_lost")   # sticky after a rejected submission
+    assert 'name="card___I___plates_lost"' in split(html)[1]
+    # the script disables (so neither requires nor sends) the photo of a card marked lost
+    assert "photo.disabled = lost.checked" in html and "_plates_lost$" in html
 
 
 def test_submit_and_footer():

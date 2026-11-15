@@ -13,8 +13,9 @@ as GESTOR the declarant is the GESTOR customer (`declarations.gestor_id`) and
 EACH card has its own owner (a CLIENTE). A declaration carries the signature,
 the photos of the declarant's cédula (front and back), the photos of each
 ownership card (front and back) and a photo of the used plates the client
-hands in for each card, whatever its reason (DETERIORO or PÉRDIDA). A PÉRDIDA
-needs no other file: its notarization happens offline (staff hand the client
+hands in for each card, whatever its reason (DETERIORO or PÉRDIDA), unless the
+client marks that card "Perdí mis placas" (`plates_lost`). A PÉRDIDA needs no
+other file: its notarization happens offline (staff hand the client
 the declaration as a PDF, the client gets it notarized and brings it back).
 
 Decision rules for `submit_declaration` (all decided by the owner of the
@@ -193,6 +194,7 @@ class OwnershipCardInput:
     front_file: str | None = None       # stored file names of the card photos
     back_file: str | None = None
     used_plates_file: str | None = None  # stored file name of the used-plates photo
+    plates_lost: bool = False           # "Perdí mis placas": no used-plates photo to send
 
 
 @dataclass
@@ -274,7 +276,7 @@ def _validate_card(card: OwnershipCardInput, *, gestor: bool) -> list[str]:
         errors.append("Falta la foto de la tarjeta de propiedad (frente).")
     if _blank(card.back_file):
         errors.append("Falta la foto de la tarjeta de propiedad (atrás).")
-    if _blank(card.used_plates_file):
+    if not card.plates_lost and _blank(card.used_plates_file):
         errors.append("Falta la foto de la(s) placa(s) usada(s).")
     if _blank(card.plate_number):
         errors.append("Falta la placa.")

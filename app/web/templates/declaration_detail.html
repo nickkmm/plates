@@ -260,6 +260,9 @@
       {% endfor %}
     </div>
     {% endif %}
+    {% if c.plates_lost %}
+    <p class="muted">Sin foto de las placas usadas: el cliente marcó «Perdí mis placas».</p>
+    {% endif %}
 
     <h3 class="sub">Propietario / poseedor{% if card.owner_relation %} ({{ card.owner_relation }}){% endif %}</h3>
     {% if d.acting_as == 'GESTOR' %}
