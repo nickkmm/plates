@@ -9,13 +9,12 @@ migration that originally moved AUTH_USERS/AUTH_ROLES into `users`), so
 their tests stay environment-only, no DB/Flask context needed. is_safe_next
 is pure string/urlparse logic, also no context needed.
 
-The `pos_allowed`/`login_required`/`consulta_allowed` decorators need a real
-Flask request/session context to exercise -- login_required/consulta_allowed
-already get end-to-end coverage through real routes in
-tests/web/test_ingest.py (/ingest) and tests/web/test_records.py (/records);
-pos_allowed has no route wired to it yet (that's
-Fase 3), so it's exercised here against a minimal standalone Flask app built
-just for this test file.
+The `permission_required`/`authenticated` decorators need a real Flask
+request/session context and real `users`/`role_permissions` rows (they read
+both on every request), so they're exercised here against a minimal
+standalone Flask app built just for this test file, on `db_conn`. Route-level
+access per role is covered in tests/web/test_roles.py and
+tests/web/test_permissions.py.
 """
 
 from __future__ import annotations
@@ -241,33 +240,6 @@ class TestRoles:
             )
 
 
-class TestFullAccessRoles:
-    def test_production_is_not_full_access(self):
-        """'production' was demoted to read-only once real usage showed it
-        should only ever look things up -- regression guard against it
-        silently regaining full access."""
-        assert auth.ROLE_PRODUCCION not in auth.FULL_ACCESS_ROLES
-
-    def test_admin_is_full_access(self):
-        assert auth.ROLE_ADMIN in auth.FULL_ACCESS_ROLES
-
-    def test_point_of_sale_is_not_full_access(self):
-        assert auth.ROLE_PUNTO_VENTA not in auth.FULL_ACCESS_ROLES
-
-
-class TestPosRoles:
-    def test_admin_is_pos_allowed(self):
-        assert auth.ROLE_ADMIN in auth.POS_ROLES
-
-    def test_point_of_sale_is_pos_allowed(self):
-        assert auth.ROLE_PUNTO_VENTA in auth.POS_ROLES
-
-    def test_production_is_not_pos_allowed(self):
-        """The existing 'production' role does NOT change -- it stays
-        read-only and must NOT gain POS access."""
-        assert auth.ROLE_PRODUCCION not in auth.POS_ROLES
-
-
 # --------------------------------------------------------------------------
 # is_safe_next -- security-critical open-redirect guard
 # --------------------------------------------------------------------------
@@ -306,22 +278,20 @@ class TestIsSafeNext:
 
 
 # --------------------------------------------------------------------------
-# pos_allowed -- no real route uses this decorator yet (Fase 3's job), so
-# it's exercised here against a tiny standalone Flask app built just for
-# this test file. login_required/consulta_allowed already get real
-# end-to-end route coverage in tests/web/test_login.py, test_records.py,
-# test_ingest.py, and test_roles.py.
+# permission_required / authenticated -- against a tiny standalone Flask app
+# (one dummy view each), with the real test users from tests/conftest.py.
 # --------------------------------------------------------------------------
 
 
 @pytest.fixture
-def pos_app():
-    """A minimal Flask app with one dummy view behind @pos_allowed.
+def guarded_app():
+    """A minimal Flask app with one dummy view behind
+    @permission_required("orders.capture") and one behind @authenticated.
 
     Also registers a stand-in "auth_routes.login" endpoint: auth._redirect_to_login
-    (used internally by pos_allowed for a stale/missing session) builds its
-    redirect with `url_for("auth_routes.login", ...)`, which would otherwise
-    raise BuildError in an app that never registers the real blueprint.
+    (used for a stale/missing session) builds its redirect with
+    `url_for("auth_routes.login", ...)`, which would otherwise raise
+    BuildError in an app that never registers the real blueprint.
     """
     app = flask.Flask(__name__)
     app.secret_key = "test-only"
@@ -334,65 +304,138 @@ def pos_app():
 
     app.register_blueprint(auth_routes)
 
-    @app.get("/pos-only")
-    @auth.pos_allowed
-    def pos_only():
+    @app.get("/capture-only")
+    @auth.permission_required("orders.capture")
+    def capture_only():
+        return "ok"
+
+    @app.get("/any-user")
+    @auth.authenticated
+    def any_user():
         return "ok"
 
     return app
 
 
 @pytest.fixture
-def pos_client(pos_app):
-    with pos_app.test_client() as c:
+def guarded_client(guarded_app):
+    with guarded_app.test_client() as c:
         yield c
 
 
-class TestPosAllowed:
-    def test_no_session_redirects_to_login(self, pos_client):
-        resp = pos_client.get("/pos-only")
+def _log_in_as(client, conn, username):
+    """Put a real `users` row into the client's session, the way POST /login
+    does."""
+    user = db.get_user_by_username(conn, username)
+    assert user is not None
+    with client.session_transaction() as sess:
+        sess["user"] = user.username
+        sess["role"] = user.role
+        sess["user_id"] = user.id
+    return user
+
+
+class TestPermissionRequired:
+    def test_no_session_redirects_to_login(self, guarded_client):
+        resp = guarded_client.get("/capture-only")
         assert resp.status_code == 302
         assert "/login" in resp.headers["Location"]
 
-    def test_session_missing_role_redirects_to_login(self, pos_client):
-        with pos_client.session_transaction() as sess:
+    def test_session_missing_role_redirects_to_login(self, guarded_client):
+        with guarded_client.session_transaction() as sess:
             sess["user"] = "someone"
-        resp = pos_client.get("/pos-only")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
-
-    def test_session_missing_user_id_redirects_to_login(self, pos_client):
-        """Fase 2: a session predating user_id (role+user but no user_id,
-        e.g. a cookie from before this deploy) must be treated as stale,
-        same as a pre-roles cookie -- not crash later when something reads
-        session['user_id']."""
-        with pos_client.session_transaction() as sess:
-            sess["user"] = "someone"
-            sess["role"] = "admin"
-        resp = pos_client.get("/pos-only")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
-
-    def test_admin_role_is_allowed(self, pos_client):
-        with pos_client.session_transaction() as sess:
-            sess["user"] = "admin1"
-            sess["role"] = "admin"
             sess["user_id"] = 1
-        resp = pos_client.get("/pos-only")
-        assert resp.status_code == 200
+        resp = guarded_client.get("/capture-only")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
 
-    def test_point_of_sale_role_is_allowed(self, pos_client):
-        with pos_client.session_transaction() as sess:
-            sess["user"] = "ptov1"
-            sess["role"] = "point_of_sale"
-            sess["user_id"] = 2
-        resp = pos_client.get("/pos-only")
-        assert resp.status_code == 200
+    def test_session_missing_user_id_redirects_to_login(self, guarded_client):
+        """A session predating user_id (role+user but no user_id, e.g. a
+        cookie from before Fase 2) must be treated as stale -- not crash
+        when current_user() reads session['user_id']."""
+        with guarded_client.session_transaction() as sess:
+            sess["user"] = "someone"
+            sess["role"] = "admin"
+        resp = guarded_client.get("/capture-only")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
 
-    def test_production_role_is_forbidden(self, pos_client):
-        with pos_client.session_transaction() as sess:
-            sess["user"] = "production1"
-            sess["role"] = "production"
-            sess["user_id"] = 4
-        resp = pos_client.get("/pos-only")
-        assert resp.status_code == 403
+    def test_user_id_of_no_user_redirects_to_login(self, guarded_client, db_conn):
+        with guarded_client.session_transaction() as sess:
+            sess["user"] = "ghost"
+            sess["role"] = "admin"
+            sess["user_id"] = 999999
+        resp = guarded_client.get("/capture-only")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_user_with_the_permission_is_allowed(self, guarded_client, db_conn):
+        _log_in_as(guarded_client, db_conn, "puntoventauser")
+        assert guarded_client.get("/capture-only").status_code == 200
+
+    def test_admin_is_allowed(self, guarded_client, db_conn):
+        _log_in_as(guarded_client, db_conn, "testuser")
+        assert guarded_client.get("/capture-only").status_code == 200
+
+    def test_user_without_the_permission_is_forbidden(self, guarded_client, db_conn):
+        _log_in_as(guarded_client, db_conn, "produccionuser")
+        assert guarded_client.get("/capture-only").status_code == 403
+
+    def test_inactive_user_redirects_to_login_and_clears_the_session(self, guarded_client, db_conn):
+        user = _log_in_as(guarded_client, db_conn, "puntoventauser")
+        db.update_user(db_conn, user.id, role=user.role, active=False)
+        db_conn.commit()
+        resp = guarded_client.get("/capture-only")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+        with guarded_client.session_transaction() as sess:
+            assert "user_id" not in sess
+
+    def test_role_change_updates_the_session_role(self, guarded_client, db_conn):
+        user = _log_in_as(guarded_client, db_conn, "produccionuser")
+        db.update_user(db_conn, user.id, role="point_of_sale", active=True)
+        db_conn.commit()
+        assert guarded_client.get("/capture-only").status_code == 200
+        with guarded_client.session_transaction() as sess:
+            assert sess["role"] == "point_of_sale"
+
+
+class TestAuthenticated:
+    def test_no_session_redirects_to_login(self, guarded_client):
+        resp = guarded_client.get("/any-user")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_session_missing_role_redirects_to_login(self, guarded_client):
+        with guarded_client.session_transaction() as sess:
+            sess["user"] = "someone"
+            sess["user_id"] = 1
+        resp = guarded_client.get("/any-user")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_session_missing_user_id_redirects_to_login(self, guarded_client):
+        with guarded_client.session_transaction() as sess:
+            sess["user"] = "someone"
+            sess["role"] = "admin"
+        resp = guarded_client.get("/any-user")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_any_active_user_is_allowed_whatever_their_permissions(self, guarded_client, db_conn):
+        _log_in_as(guarded_client, db_conn, "produccionuser")
+        assert guarded_client.get("/any-user").status_code == 200
+
+    def test_inactive_user_redirects_to_login(self, guarded_client, db_conn):
+        user = _log_in_as(guarded_client, db_conn, "produccionuser")
+        db.update_user(db_conn, user.id, role=user.role, active=False)
+        db_conn.commit()
+        resp = guarded_client.get("/any-user")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+
+class TestHasPermission:
+    def test_false_with_no_session(self, guarded_app):
+        with guarded_app.test_request_context("/"):
+            assert auth.has_permission("records.view") is False
