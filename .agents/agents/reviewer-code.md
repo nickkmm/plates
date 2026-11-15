@@ -89,4 +89,6 @@ Non-blocking observations. Optional.
   skim on the dashboard. The detail goes in the sections below it.
 - Under Findings, write "None." when there are none.
 
-When you're done, reply with one line: the first line of review-code.md.
+Write the file with your Write tool before you reply: you have it, and the
+review only counts once the file exists. When you're done, reply with one
+line: the first line of review-code.md.

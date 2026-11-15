@@ -52,6 +52,14 @@ mano igual que el bloque de `cargador.ingse.co`). En local, directo en
   `setdefault`) a `127.0.0.1`/`5433`/`plates_test` sin importar lo que
   diga el entorno, justamente para que un test nunca pueda apuntar por
   accidente a datos de producción.
+- **`TEST_POSTGRES_DB`** cambia el nombre de esa base para checkouts que
+  corren en paralelo (los worktrees de la fábrica usan
+  `plates_test_<n>`), así las migraciones de una rama no se cuelan en la
+  corrida de otra. Tiene que empezar por `plates_test`; cualquier otro
+  nombre hace fallar `conftest.py` al importarse.
+- **`TEST_REQUIRE_DB=1`** convierte "Postgres no disponible" en fallo en
+  vez de skip. El gate de la fábrica lo pone para no aprobar una rama con
+  las pruebas de base de datos saltadas.
 - `SECRET_KEY`/`AUTH_USERS` también se fuerzan al importar `conftest.py`,
   antes de cualquier `from app...` — si no, una corrida local heredaría
   las credenciales reales del `.env` y los logins de test fallarían en

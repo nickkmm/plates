@@ -134,13 +134,21 @@ gate's `round-<N-1>/checks.md`, the reviews in `round-<N-1>/`, or
   resume the builder for the next round with
   `The gate failed: read round-<N-1>/checks.md and checks.log, fix it, push, and update build.md.`
   No reviewer runs on a failing build.
+- Neither (`gate: can't run the database tests: ...`): the machine isn't ready,
+  not the branch. The job stays at `gate`; stop and tell the user what the
+  message says (usually: start Postgres with `docker compose up -d db`). Run
+  the gate again once they say it's fixed.
 
 **review.** Spawn every reviewer in `job.json` `agents.reviewers` **in one
 message**, so they run in parallel: `subagent_type` `reviewer-<r>`, model from
 the same map, prompt `<header> Review round <N>.` plus the port for `ux` and
 `ui`. **WAIT FOR ALL.** Each time one finishes, run
-`factory/bin/job sync <id>` so the dashboard fills in. When every reviewer has
-finished:
+`factory/bin/job sync <id>` so the dashboard fills in. If `sync` still shows
+that reviewer as `pending`, its `review-<r>.md` is missing: resume it once
+with `SendMessage`, `<header> Review round <N>. Write your review to
+round-<N>/review-<r>.md with your Write tool, then reply with its first line.`
+Never write a review yourself. When every reviewer has finished and written
+its file:
 
 - all PASS: `factory/bin/job advance <id> approve`, then spawn `approver` with
   `<header> PR: #<pr>. Final round: <N>.`

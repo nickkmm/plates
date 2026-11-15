@@ -303,13 +303,15 @@ def cost_usd(job):
     factory prompt starts with `Job folder: <path>`, which ties a transcript to
     its job across sessions.
     """
-    needle = f"Job folder: {job_dir(job['id'])}/"
+    # Compare with forward slashes: on Windows the prompt may write the folder
+    # with either separator, or a mix of both.
+    needle = f"Job folder: {job_dir(job['id']).as_posix()}/"
     prices = CONFIG["prices_usd_per_mtok"]
     total = 0.0
     for path in transcripts_dir().glob("*/subagents/agent-*.jsonl"):
         with path.open() as f:
             first = f.readline()
-            if not first or needle not in prompt_text(first):
+            if not first or needle not in prompt_text(first).replace("\\", "/"):
                 continue
             usage_by_message = {}
             for line in f:
@@ -659,7 +661,7 @@ def cmd_merge(job):
     gate = subprocess.run([sys.executable, str(BIN / "gate"), job["id"], "--merge"], capture_output=True, text=True)
     if gate.returncode != 0:
         return fail(f"The gate failed after syncing with {BASE}. "
-                    f"See round-{job['round']}/merge-checks.md.\n\n{gate.stdout.strip()}")
+                    f"See round-{job['round']}/merge-checks.md.\n\n{(gate.stdout + gate.stderr).strip()}")
     try:
         git(job, "push", "origin", job["branch"])
         if not AUTO_MERGE:

@@ -101,8 +101,18 @@ _load_dotenv_defaults(os.path.join(_REPO_ROOT, ".env"))
 # be able to point at the real `plates` database.
 os.environ["DB_HOST"] = "127.0.0.1"
 os.environ["DB_PORT"] = "5433"
-os.environ["POSTGRES_DB"] = "plates_test"
+# TEST_POSTGRES_DB lets parallel checkouts (factory worktrees) each use their
+# own test database, so one branch's migrations never leak into another's
+# run. It must still start with "plates_test": never the real `plates`.
+_TEST_DB = os.environ.get("TEST_POSTGRES_DB", "plates_test")
+if not _TEST_DB.startswith("plates_test") or not _TEST_DB.replace("_", "").isalnum():
+    raise RuntimeError(f"TEST_POSTGRES_DB must be plates_test or plates_test_<suffix>, got {_TEST_DB!r}")
+os.environ["POSTGRES_DB"] = _TEST_DB
 os.environ.setdefault("POSTGRES_USER", "plates_user")
+# TEST_REQUIRE_DB=1 (set by the factory gate) turns "database not reachable"
+# into a failure instead of a skip, so a gate can't pass with the DB tests
+# silently skipped.
+_REQUIRE_DB = os.environ.get("TEST_REQUIRE_DB") == "1"
 # POSTGRES_PASSWORD has no hardcoded fallback here on purpose (never commit a
 # real secret) -- it must come from the environment or the local .env above.
 
@@ -307,7 +317,10 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
     three test identities reliably able to log in regardless of run order.
     """
     if not _db_ready:
-        pytest.skip("Postgres test database not reachable at 127.0.0.1:5433 (plates_test)")
+        reason = f"Postgres test database not reachable at 127.0.0.1:5433 ({os.environ['POSTGRES_DB']})"
+        if _REQUIRE_DB:
+            pytest.fail(reason + " and TEST_REQUIRE_DB=1", pytrace=False)
+        pytest.skip(reason)
 
     pool = db._get_pool()
     conn = pool.getconn()
