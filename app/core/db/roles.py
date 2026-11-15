@@ -1,12 +1,13 @@
-"""roles / role_permissions reads/writes. app/web/auth.py reads a role's
-permissions (get_role_permissions) on every request to decide route access;
-the writes are the data layer for a future admin role-management screen.
+"""roles / role_permissions / permissions reads/writes. app/web/auth.py reads a
+role's permissions (get_role_permissions) on every request to decide route
+access; the writes and list_permissions are the data layer for a future admin
+role-management screen.
 
 Permission codes are validated against app/core/permissions.py's
-PERMISSION_CODES in Python before anything is written (no CHECK in the DB --
-same pattern as pricing.set_price against normalize.PLATE_TYPES). These
-functions don't protect system roles; that guard belongs to the screen that
-manages them.
+PERMISSION_CODES in Python before anything is written, which gives a clean
+ValueError; role_permissions_permission_fkey (a FK to permissions(code)) also
+enforces them in the DB. These functions don't protect system roles; that
+guard belongs to the screen that manages them.
 
 See app/core/db/__init__.py for the module-wide connection/transaction
 contract that applies to every function here.
@@ -33,6 +34,14 @@ class RoleRecord:
     is_system: bool
     permissions: list[str]
     user_count: int
+
+
+@dataclass
+class PermissionRecord:
+    """One `permissions` row: a catalog code and its Spanish label."""
+
+    code: str
+    label: str
 
 
 _SELECT_ROLES = """
@@ -68,6 +77,13 @@ def list_roles(conn: psycopg.Connection[DictRow]) -> list[RoleRecord]:
     """Every role: system roles first, then by label."""
     with conn.cursor(row_factory=class_row(RoleRecord)) as cur:
         cur.execute(f"{_SELECT_ROLES} ORDER BY r.is_system DESC, r.label")
+        return cur.fetchall()
+
+
+def list_permissions(conn: psycopg.Connection[DictRow]) -> list[PermissionRecord]:
+    """Every permission in the catalog, in display order (sort_order)."""
+    with conn.cursor(row_factory=class_row(PermissionRecord)) as cur:
+        cur.execute("SELECT code, label FROM permissions ORDER BY sort_order")
         return cur.fetchall()
 
 

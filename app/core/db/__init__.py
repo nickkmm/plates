@@ -54,8 +54,9 @@ This package replaces what used to be a single flat db.py, split by table:
                      the public form, one declarant and many ownership cards)
                      reads/writes; the decision rules live in app/core/declarations.py.
     users.py      -- users reads/writes (Fase 2; backs app/web/auth.py).
-    roles.py      -- roles / role_permissions reads/writes (the permission
-                     catalog itself lives in app/core/permissions.py).
+    roles.py      -- roles / role_permissions / permissions reads/writes (the
+                     permission catalog itself lives in app/core/permissions.py,
+                     mirrored in the `permissions` table).
     pricing.py    -- plate_type_prices reads/writes (Fase 2).
     production.py -- production_orders.production_status and
                      production_order_events reads/writes; the transition
@@ -166,11 +167,13 @@ from app.core.db.production import (
     set_production_status,
 )
 from app.core.db.roles import (
+    PermissionRecord,
     RoleRecord,
     create_role,
     delete_role,
     get_role,
     get_role_permissions,
+    list_permissions,
     list_roles,
     update_role,
 )
@@ -199,6 +202,7 @@ __all__ = [
     "OrderSummary",
     "OwnershipCardRecord",
     "PRODUCTION_STATUSES",
+    "PermissionRecord",
     "PriceRow",
     "ProductionEvent",
     "ProductionOrderSummary",
@@ -250,6 +254,7 @@ __all__ = [
     "list_declarations",
     "list_declarations_by_production_order",
     "list_ownership_cards_for_customer",
+    "list_permissions",
     "list_production_events",
     "list_production_orders",
     "list_roles",

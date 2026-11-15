@@ -104,9 +104,12 @@ CREATE TABLE customers (
 
 -- Roles and their permissions (see app/migrations/0015_roles_and_permissions.sql
 -- and docs/DATABASE.md). name is the English identifier stored in users.role;
--- label is the Spanish display name. role_permissions.permission holds codes
--- from app/core/permissions.py, validated in Python (no CHECK). Created before
--- `users` so users.role can reference roles(name) directly.
+-- label is the Spanish display name. `permissions` mirrors the catalog in
+-- app/core/permissions.py (same codes, labels and order; see
+-- app/migrations/0017_permissions.sql), and role_permissions.permission is a
+-- FK to permissions(code): codes are validated in Python first and enforced
+-- by the FK. Created before `users` so users.role can reference roles(name)
+-- directly.
 CREATE TABLE roles (
     name TEXT PRIMARY KEY,
     label TEXT NOT NULL UNIQUE,
@@ -114,9 +117,32 @@ CREATE TABLE roles (
     created_at TIMESTAMP DEFAULT now()
 );
 
+CREATE TABLE permissions (
+    code TEXT PRIMARY KEY,
+    label TEXT NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL
+);
+
+INSERT INTO permissions (code, label, sort_order) VALUES
+    ('orders.capture', 'Registrar y editar órdenes', 1),
+    ('cash_summary.view', 'Ver el cuadre de caja', 2),
+    ('declarations.review', 'Revisar declaraciones', 3),
+    ('production.view', 'Ver el tablero de producción', 4),
+    ('production.manage', 'Cambiar el estado de producción', 5),
+    ('production.deliver', 'Marcar órdenes como entregadas', 6),
+    ('records.view', 'Consultar registros', 7),
+    ('records.delete', 'Eliminar órdenes', 8),
+    ('duplicates.review', 'Revisar posibles duplicados', 9),
+    ('inventory.manage', 'Gestionar inventario', 10),
+    ('pricing.manage', 'Editar precios', 11),
+    ('customers.manage', 'Gestionar clientes', 12),
+    ('users.manage', 'Gestionar usuarios y roles', 13)
+ON CONFLICT DO NOTHING;
+
 CREATE TABLE role_permissions (
     role TEXT NOT NULL REFERENCES roles(name) ON DELETE CASCADE ON UPDATE CASCADE,
-    permission TEXT NOT NULL,
+    permission TEXT NOT NULL CONSTRAINT role_permissions_permission_fkey
+        REFERENCES permissions(code) ON DELETE CASCADE ON UPDATE CASCADE,
     PRIMARY KEY (role, permission)
 );
 

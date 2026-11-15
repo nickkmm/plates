@@ -1,7 +1,8 @@
 """Integration tests for app/core/db/roles.py. Needs a real Postgres
-connection (see tests/conftest.py's `db_conn`/`clean_db`). `roles` and
-`role_permissions` hold the three seeded system roles (static seed data, not
-truncated by clean_db); every write here is rolled back after each test."""
+connection (see tests/conftest.py's `db_conn`/`clean_db`). `roles`,
+`role_permissions` and `permissions` hold the three seeded system roles and
+the permission catalog (static seed data, not truncated by clean_db); every
+write here is rolled back after each test."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import pytest
 from psycopg.rows import tuple_row
 
 from app.core import db
+from app.core.permissions import PERMISSIONS
 
 
 def _permission_rows(conn, name: str) -> int:
@@ -34,6 +36,20 @@ class TestListRoles:
         assert clerk.permissions == ["orders.capture", "records.view"]
         assert clerk.user_count == 2
         assert clerk.is_system is False
+
+
+class TestListPermissions:
+    def test_returns_the_catalog_in_order(self, db_conn):
+        permissions = db.list_permissions(db_conn)
+        assert len(permissions) == 13
+        assert all(isinstance(p, db.PermissionRecord) for p in permissions)
+        assert [(p.code, p.label) for p in permissions] == list(PERMISSIONS)
+
+
+class TestRolePermissionsForeignKey:
+    def test_unknown_code_inserted_directly_raises_foreign_key_violation(self, db_conn):
+        with db_conn.cursor() as cur, pytest.raises(psycopg.errors.ForeignKeyViolation):
+            cur.execute("INSERT INTO role_permissions (role, permission) VALUES ('production', 'nope.code')")
 
 
 class TestGetRole:
