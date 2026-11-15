@@ -1,0 +1,13 @@
+# Changes to CI/CD, the factory, agent config, infrastructure, the schema
+# and the repo instructions need a review from the owner.
+/.github/ @nickkmm
+/factory/ @nickkmm
+/.claude/ @nickkmm
+/.agents/ @nickkmm
+/docker-compose.yml @nickkmm
+/web.Dockerfile @nickkmm
+/init.sql @nickkmm
+/app/migrations/ @nickkmm
+/scripts/ @nickkmm
+/AGENTS.md @nickkmm
+/CLAUDE.md @nickkmm
