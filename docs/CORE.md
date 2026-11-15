@@ -504,15 +504,16 @@ verá el personal. `PERMISSION_CODES` es el `frozenset` de esos códigos y
 rol: para `ADMIN_ROLE`, siempre los 13 códigos (sin importar lo que haya
 guardado, así ningún admin queda sin acceso a un permiso nuevo); para
 cualquier otro rol, los códigos guardados que siguen existiendo en el
-catálogo (los desconocidos se descartan). **Las rutas todavía no lo
-usan**: el acceso lo sigue decidiendo `app/web/auth.py` con sus conjuntos
-fijos de roles; aplicarlo por ruta es una tarea posterior.
+catálogo (los desconocidos se descartan). `app/web/auth.py` lo aplica en
+cada request: cada ruta protegida pide un código con
+`@permission_required` (ver [`WEB.md`](WEB.md)).
 
 ### `db/roles.py`
 
 Lectura/escritura de `roles` y `role_permissions` (ver
-[`DATABASE.md`](DATABASE.md)), para una futura pantalla de gestión de roles;
-ninguna ruta lo usa todavía. Los códigos de permiso se validan contra
+[`DATABASE.md`](DATABASE.md)). `app/web/auth.py` lee
+`get_role_permissions` en cada request para decidir el acceso; las
+escrituras son para una futura pantalla de gestión de roles. Los códigos de permiso se validan contra
 `permissions.PERMISSION_CODES` en Python antes de escribir (mismo patrón que
 `pricing.set_price` con `normalize.PLATE_TYPES`). No protege los roles del
 sistema ni al último admin activo: eso lo decidirá la pantalla de gestión
