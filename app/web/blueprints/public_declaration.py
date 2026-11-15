@@ -18,9 +18,10 @@ login decorator and everything else here is defence in depth:
   blocks (`card_<i>_*`, stable and possibly sparse after a removal); the server
   reads whichever indices arrive, in numeric order, and rejects more than
   MAX_CARDS of them BEFORE building the input or storing any file.
-* The only file inputs are the identity photos (the declarant's cédula and
-  each ownership card, front and back, all required). A PÉRDIDA document is
-  notarized offline: staff hand the client the declaration as a PDF. The files
+* The only file inputs are the photos (the declarant's cédula and each
+  ownership card, front and back, all required, plus the used plates of each
+  card, required unless the card is marked "Perdí mis placas"). A PÉRDIDA document is notarized offline: staff hand the client
+  the declaration as a PDF. The files
   (those photos and the signature PNG) are written before validation (the
   validator needs their names); any failure deletes them.
 * Privacy: the response is the same generic page for an approved and for a
@@ -189,6 +190,7 @@ def _build_card(form: Mapping[str, str], i: int) -> OwnershipCardInput:
         vehicle_type=text("vehicle_type"), registered_in=text("registered_in"),
         vehicle_brand=text("vehicle_brand"), reason=text("reason"),
         plate_quantity=_parse_quantity(form.get(f"card_{i}_plate_quantity", "")),
+        plates_lost=bool(text("plates_lost")),
     )
 
 
@@ -232,10 +234,12 @@ def _save_photo(field: str, label: str, saved: list[str], errors: list[str]) -> 
 
 def _save_files(inp: DeclarationInput, saved: list[str], indices: list[int]) -> list[str]:
     """Store the signature (a canvas data URL in a plain form field) and the
-    identity photos (file inputs: the declarant's cédula and each ownership
-    card, front and back), setting their names on `inp`; every stored name is
-    appended to `saved` so the caller can clean up. A missing file is left as
-    None (the validator reports it); only a present-but-bad one errors here."""
+    photos (file inputs: the declarant's cédula, each ownership card, front and
+    back, and the used plates of each card not marked "Perdí mis placas"; on a
+    marked card that upload is never read), setting their names on `inp`;
+    every stored name is appended to `saved` so the caller can clean up. A
+    missing file is left as None (the validator reports it); only a
+    present-but-bad one errors here."""
     errors: list[str] = []
     inp.id_front_file = _save_photo("declarant_id_front", "Cédula (frente)", saved, errors)
     inp.id_back_file = _save_photo("declarant_id_back", "Cédula (atrás)", saved, errors)
@@ -244,6 +248,9 @@ def _save_files(inp: DeclarationInput, saved: list[str], indices: list[int]) -> 
             f"card_{i}_front", f"Tarjeta {number} (frente)", saved, errors)
         card.back_file = _save_photo(
             f"card_{i}_back", f"Tarjeta {number} (atrás)", saved, errors)
+        if not card.plates_lost:
+            card.used_plates_file = _save_photo(
+                f"card_{i}_used_plates", f"Tarjeta {number} (placas usadas)", saved, errors)
     signature = request.form.get("signature", "").strip()
     if signature:
         try:

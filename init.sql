@@ -187,6 +187,7 @@ CREATE TABLE declaration_cards (
     review_flags TEXT[] NOT NULL DEFAULT '{}',
     card_front_path TEXT,                   -- 0012: photos of the ownership card (stored names); NULL on older declarations
     card_back_path TEXT,
+    used_plates_photo_path TEXT,            -- 0014: photo of the used plates (stored name); NULL on older declarations
     UNIQUE (declaration_id, position)
 );
 -- UNIQUE (declaration_id, position) already indexes declaration_id lookups.

@@ -502,14 +502,17 @@ class TestDetail:
 
 
 def _with_photos(db_conn, uploads) -> tuple[int, int, dict[str, str]]:
-    """An approved declaration with the cédula (front, back) and one card photo
-    pair stored; returns (declaration id, card id, stored names)."""
+    """An approved declaration with the cédula (front, back) and one DETERIORO
+    card with its photo pair and its used-plates photo stored; returns
+    (declaration id, card id, stored names)."""
     names = {
         "id_front": _store(uploads, JPEG, "jpg"), "id_back": _store(uploads, PNG, "png"),
         "card_front": _store(uploads, JPEG, "jpg"), "card_back": _store(uploads, JPEG, "jpg"),
+        "used_plates": _store(uploads, PNG, "png"),
     }
     inp = replace(
-        _input(cards=[_card(front_file=names["card_front"], back_file=names["card_back"])]),
+        _input(cards=[_card(front_file=names["card_front"], back_file=names["card_back"],
+                            used_plates_file=names["used_plates"])]),
         id_front_file=names["id_front"], id_back_file=names["id_back"],
     )
     declaration_id = _submit_approved(db_conn, inp)
@@ -547,7 +550,8 @@ class TestPhotos:
         declaration_id = _approved(db_conn)
         with db_conn.cursor() as cur:   # a declaration made before the form asked for photos
             cur.execute("UPDATE declarations SET declarant_id_front_path = NULL, declarant_id_back_path = NULL")
-            cur.execute("UPDATE declaration_cards SET card_front_path = NULL, card_back_path = NULL")
+            cur.execute("UPDATE declaration_cards SET card_front_path = NULL, card_back_path = NULL, "
+                        "used_plates_photo_path = NULL")
         (card,) = db.list_declaration_cards(db_conn, declaration_id)
         assert authenticated_client.get(f"{_detail(declaration_id)}/file/id_front").status_code == 404
         assert authenticated_client.get(f"{_detail(declaration_id)}/cards/{card.id}/photo/back").status_code == 404
@@ -578,7 +582,9 @@ class TestPhotos:
         with zipfile.ZipFile(io.BytesIO(resp.data)) as archive:
             names = sorted(archive.namelist())
             assert names == ["cedula-atras.png", "cedula-frente.jpg",
-                             "tarjeta-1-ABC123-atras.jpg", "tarjeta-1-ABC123-frente.jpg"]
+                             "tarjeta-1-ABC123-atras.jpg", "tarjeta-1-ABC123-frente.jpg",
+                             "tarjeta-1-ABC123-placas-usadas.png"]
+            assert archive.read("tarjeta-1-ABC123-placas-usadas.png") == PNG
             assert archive.read("cedula-frente.jpg") == JPEG and archive.read("cedula-atras.png") == PNG
 
     def test_zip_skips_missing_files_and_is_404_when_nothing_is_left(self, authenticated_client, db_conn, uploads):
@@ -586,8 +592,8 @@ class TestPhotos:
         (uploads / names["id_front"]).unlink()
         resp = authenticated_client.get(f"{_detail(declaration_id)}/photos.zip")
         with zipfile.ZipFile(io.BytesIO(resp.data)) as archive:
-            assert "cedula-frente.jpg" not in archive.namelist() and len(archive.namelist()) == 3
-        for name in ("id_back", "card_front", "card_back"):
+            assert "cedula-frente.jpg" not in archive.namelist() and len(archive.namelist()) == 4
+        for name in ("id_back", "card_front", "card_back", "used_plates"):
             (uploads / names[name]).unlink()
         assert authenticated_client.get(f"{_detail(declaration_id)}/photos.zip").status_code == 404
 
@@ -597,7 +603,8 @@ class TestPhotos:
         assert f"/declaraciones/{declaration_id}/photos.zip" in html and "Descargar todas las fotos" in html
         with db_conn.cursor() as cur:
             cur.execute("UPDATE declarations SET declarant_id_front_path = NULL, declarant_id_back_path = NULL")
-            cur.execute("UPDATE declaration_cards SET card_front_path = NULL, card_back_path = NULL")
+            cur.execute("UPDATE declaration_cards SET card_front_path = NULL, card_back_path = NULL, "
+                        "used_plates_photo_path = NULL")
         html = authenticated_client.get(_detail(declaration_id)).data.decode()
         assert "photos.zip" not in html
         assert authenticated_client.get(f"{_detail(declaration_id)}/photos.zip").status_code == 404
@@ -605,6 +612,46 @@ class TestPhotos:
     def test_production_role_cannot_download_the_zip(self, produccion_client, db_conn, uploads):
         declaration_id, _, _ = _with_photos(db_conn, uploads)
         assert produccion_client.get(f"{_detail(declaration_id)}/photos.zip").status_code == 403
+
+    def test_serves_the_used_plates_photo(self, punto_venta_client, db_conn, uploads):
+        declaration_id, card_id, _ = _with_photos(db_conn, uploads)
+        resp = punto_venta_client.get(f"{_detail(declaration_id)}/cards/{card_id}/photo/used_plates")
+        assert (resp.status_code, resp.mimetype, resp.data) == (200, "image/png", PNG)
+        assert resp.headers["Cache-Control"] == "no-store"
+
+    def test_a_card_without_the_used_plates_photo_is_404(self, punto_venta_client, db_conn, uploads):
+        declaration_id, card_id, _ = _with_photos(db_conn, uploads)
+        with db_conn.cursor() as cur:
+            cur.execute("UPDATE declaration_cards SET used_plates_photo_path = NULL")
+        resp = punto_venta_client.get(f"{_detail(declaration_id)}/cards/{card_id}/photo/used_plates")
+        assert resp.status_code == 404
+
+    def test_the_detail_shows_the_used_plates_photo(self, authenticated_client, db_conn, uploads):
+        declaration_id, card_id, _ = _with_photos(db_conn, uploads)
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert f"/declaraciones/{declaration_id}/cards/{card_id}/photo/used_plates" in html
+        assert "Tarjeta 1 · Placas usadas" in html
+
+    def test_a_card_with_only_the_used_plates_photo_counts_as_having_photos(
+        self, authenticated_client, db_conn, uploads,
+    ):
+        declaration_id, _, _ = _with_photos(db_conn, uploads)
+        with db_conn.cursor() as cur:
+            cur.execute("UPDATE declarations SET declarant_id_front_path = NULL, declarant_id_back_path = NULL")
+            cur.execute("UPDATE declaration_cards SET card_front_path = NULL, card_back_path = NULL")
+        html = authenticated_client.get(_detail(declaration_id)).data.decode()
+        assert 'href="#card-1"' in html and "Placas usadas" in html
+        assert "Descargar todas las fotos" in html and "Sin archivos adjuntos" not in html
+
+    def test_the_detail_says_when_the_client_marked_plates_lost(self, authenticated_client, db_conn, uploads):
+        note = "Sin foto de las placas usadas: el cliente marcó «Perdí mis placas»."
+        declaration_id, _, _ = _with_photos(db_conn, uploads)
+        assert note not in authenticated_client.get(_detail(declaration_id)).data.decode()
+        inp = _input(cards=[_card(plate_number="DEF456", transit_license="LIC-002",
+                                  used_plates_file=None, plates_lost=True)])
+        lost_id = _submit_approved(db_conn, inp)
+        html = authenticated_client.get(_detail(lost_id)).data.decode()
+        assert note in html
 
     def test_a_missing_photo_file_is_404(self, authenticated_client, db_conn, uploads):
         declaration_id, _, names = _with_photos(db_conn, uploads)

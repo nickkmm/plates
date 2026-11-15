@@ -176,9 +176,9 @@ def test_the_form_is_multipart_and_asks_for_the_cedula_and_card_photos():
     for name in ("declarant_id_front", "declarant_id_back"):
         t = tag(html, name)
         assert 'type="file"' in t and "required" in t and "image/jpeg" in t
-    # one front + one back photo per card block (the <template> included)
+    # one front + one back + one used-plates photo per card block (the <template> included)
     for block in card_blocks(html):
-        assert block.count('type="file"') == 2
+        assert block.count('type="file"') == 3
     assert "notarized" not in html.lower() and "autenticado" not in html.lower()
 
 
@@ -194,6 +194,33 @@ def test_loss_note_is_in_every_card_block_and_visible_without_js():
         assert re.search(r'<div class="note loss-note">', block)
     assert "loss-note" in split(html)[1]  # the clone template carries it too
     assert "querySelector('.loss-note')" in html and "note.hidden = " in html
+
+
+def test_used_plates_photo_is_required_in_every_card_block():
+    html = render(form=FULL_FORM)   # card 0 is a DETERIORO, card 2 a PÉRDIDA
+    for name in ("card_0_used_plates", "card_2_used_plates"):
+        t = tag(html, name)
+        assert 'type="file"' in t and 'class="photo-input"' in t and "required" in t, name
+        assert 'accept="image/jpeg,image/png,image/webp"' in t
+    hint = ("Toma una foto donde se vean las placas que vas a entregar. "
+            "Si las perdiste, marca «Perdí mis placas».")
+    for block in card_blocks(html):
+        assert "Foto de la(s) placa(s) usada(s)" in block and hint in block
+        # the third photo spans both columns of the photo grid instead of sitting alone
+        assert '<label class="field photo-wide">Foto de la(s) placa(s) usada(s)' in block
+    assert 'name="card___I___used_plates"' in split(html)[1]
+
+
+def test_plates_lost_checkbox_in_every_card_block():
+    html = render(form={**FULL_FORM, "card_2_plates_lost": "1"})
+    first, second = card_blocks(html)
+    assert "> Perdí mis placas</label>" in first and "> Perdí mis placas</label>" in second
+    t = tag(html, "card_0_plates_lost")
+    assert 'type="checkbox"' in t and "required" not in t and "checked" not in t
+    assert "checked" in tag(html, "card_2_plates_lost")   # sticky after a rejected submission
+    assert 'name="card___I___plates_lost"' in split(html)[1]
+    # the script disables (so neither requires nor sends) the photo of a card marked lost
+    assert "photo.disabled = lost.checked" in html and "_plates_lost$" in html
 
 
 def test_submit_and_footer():

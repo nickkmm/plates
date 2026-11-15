@@ -126,7 +126,9 @@ FILE_KINDS = {
     "id_back": ("declarant_id_back_path", None),
 }
 # side -> DeclarationCardRecord attribute holding the stored name of the card photo
-CARD_PHOTO_SIDES = {"front": "card_front_path", "back": "card_back_path"}
+CARD_PHOTO_SIDES = {
+    "front": "card_front_path", "back": "card_back_path", "used_plates": "used_plates_photo_path",
+}
 # Approve-form checkbox: reassign_<declaration_cards.id>.
 _REASSIGN_FIELD = re.compile(r"reassign_(\d+)")
 # Plates shown in the list's compact summary before collapsing into "+N".
@@ -303,11 +305,15 @@ def _render_detail(
             db.get_user_by_id(conn, declaration.notarized_received_by)
             if declaration.notarized_received_by is not None else None
         )
+        submitted_cards = declaration.submitted_data.get("cards") or []
         cards: list[dict[str, Any]] = []
         for card in card_records:
+            submitted = submitted_cards[card.position] if card.position < len(submitted_cards) else {}
             cards.append({
                 "record": card,
                 "number": card.position + 1,
+                # "Perdí mis placas": the client declared there are no used plates to photograph
+                "plates_lost": bool(submitted.get("plates_lost")) and not card.used_plates_photo_path,
                 "flag_details": _flag_details(conn, declaration, card, card_records) if pending else [],
                 "customer": db.get_customer(conn, card.customer_id) if card.customer_id else None,
                 "ownership_card": (
@@ -384,7 +390,8 @@ def declaration_file(declaration_id: int, kind: str):
 @bp.get("/declaraciones/<int:declaration_id>/cards/<int:card_id>/photo/<side>")
 @pos_allowed
 def declaration_card_photo(declaration_id: int, card_id: int, side: str):
-    """The front or back photo of one ownership card of the declaration."""
+    """The front or back photo of one ownership card of the declaration, or
+    the photo of its used plates."""
     attribute = CARD_PHOTO_SIDES.get(side)
     if attribute is None:
         abort(404)
@@ -400,7 +407,7 @@ def _photo_entries(
     declaration: db.DeclarationRecord, cards: list[db.DeclarationCardRecord],
 ) -> list[tuple[str, str]]:
     """(file name inside the ZIP, stored name) of every photo of a declaration,
-    in reading order: the cédula, then each card (front, back)."""
+    in reading order: the cédula, then each card (front, back, used plates)."""
     entries: list[tuple[str, str]] = []
     for label, stored in (("cedula-frente", declaration.declarant_id_front_path),
                           ("cedula-atras", declaration.declarant_id_back_path)):
@@ -408,7 +415,8 @@ def _photo_entries(
             entries.append((label, stored))
     for card in cards:
         plate = clean_plate(card.plate_number) or "sin-placa"
-        for label, stored in (("frente", card.card_front_path), ("atras", card.card_back_path)):
+        for label, stored in (("frente", card.card_front_path), ("atras", card.card_back_path),
+                              ("placas-usadas", card.used_plates_photo_path)):
             if stored:
                 entries.append((f"tarjeta-{card.position + 1}-{plate}-{label}", stored))
     return entries

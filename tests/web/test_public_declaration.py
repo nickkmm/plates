@@ -69,6 +69,7 @@ def _card(i: int = 0, **overrides) -> dict:
         "plate_quantity": "1",
         "front": _photo(),
         "back": _photo(),
+        "used_plates": _photo(),
     }
     data.update(overrides)
     return {f"card_{i}_{k}": v for k, v in data.items() if v is not None}
@@ -321,7 +322,8 @@ class TestAntispam:
         resp = post(client, _form(_card(0, reason="PÉRDIDA")))
         assert resp.status_code == 200
         assert len(stub.submitted) == 1
-        assert _suffixes(enabled) == [".jpg"] * 4 + [".png"]  # cédula x2, card x2, the signature
+        # cédula x2, card x2, the used plates, the signature
+        assert _suffixes(enabled) == [".jpg"] * 5 + [".png"]
 
 
 class TestParsing:
@@ -396,6 +398,8 @@ class TestParsing:
         a, b = stub.inp.cards
         assert (a.reason, a.plate_quantity) == ("DETERIORO", 2)
         assert (b.reason, b.plate_quantity) == ("PÉRDIDA", 1)
+        # the used-plates photo is stored for both reasons
+        assert a.used_plates_file is not None and b.used_plates_file is not None
 
     @pytest.mark.parametrize("raw", ["abc", "", "1.5", "9" * 5000])
     def test_garbage_quantity_becomes_zero_for_validation(self, client, stub, raw):
@@ -476,8 +480,8 @@ class TestFiles:
         inp = stub.inp
         names = [inp.id_front_file, inp.id_back_file]
         for card in inp.cards:
-            names += [card.front_file, card.back_file]
-        assert len(set(names)) == 6 and None not in names
+            names += [card.front_file, card.back_file, card.used_plates_file]
+        assert len(set(names)) == 8 and None not in names
         for name in names:
             assert name.endswith(".jpg") and (enabled / name).read_bytes() == JPEG
 
@@ -498,6 +502,32 @@ class TestFiles:
         resp = post(client, _form(_card(0, back=_photo(big))))
         assert resp.status_code == 400
         assert "Tarjeta 1 (atrás)" in resp.get_data(as_text=True)
+        assert _files(enabled) == []
+
+    @pytest.mark.parametrize("reason", ["DETERIORO", "PÉRDIDA"])
+    def test_used_plates_photo_is_stored_whatever_the_reason(self, client, stub, enabled, reason):
+        post(client, _form(_card(0, reason=reason)))
+        name = stub.inp.cards[0].used_plates_file
+        assert name is not None and (enabled / name).read_bytes() == JPEG
+
+    def test_plates_lost_is_parsed_per_card(self, client, stub):
+        post(client, _form(_card(0, plates_lost="1"), _card(1, plate_number="DEF456", transit_license="L-2")))
+        assert [c.plates_lost for c in stub.inp.cards] == [True, False]
+
+    def test_a_used_plates_photo_on_a_plates_lost_card_is_never_stored(self, client, stub, enabled):
+        post(client, _form(_card(0, plates_lost="1")))
+        assert stub.inp.cards[0].used_plates_file is None
+        assert _suffixes(enabled) == [".jpg"] * 4 + [".png"]   # cédula x2, card x2, the signature
+
+    def test_a_missing_used_plates_photo_is_left_unset_for_the_validator(self, client, stub):
+        post(client, _form(_card(0, used_plates=None)))
+        assert stub.inp.cards[0].used_plates_file is None
+
+    def test_a_bad_used_plates_photo_is_rejected_and_everything_is_cleaned(self, client, stub, enabled):
+        resp = post(client, _form(_card(0, used_plates=_photo(PDF, "placas.jpg"))))
+        assert resp.status_code == 400
+        assert "Tarjeta 1 (placas usadas)" in resp.get_data(as_text=True)
+        assert stub.submitted == []
         assert _files(enabled) == []
 
     def test_missing_photos_are_left_unset_for_the_validator(self, client, stub):
@@ -752,6 +782,35 @@ class TestEndToEnd:
             cur.execute("SELECT reason FROM declaration_cards ORDER BY id")
             assert [r["reason"] for r in cur.fetchall()] == ["DETERIORO", "PÉRDIDA"]
         assert ".pdf" not in _suffixes(enabled)  # no notarized PDF; the signature and photos only
+
+    @pytest.mark.parametrize("reason", ["DETERIORO", "PÉRDIDA"])
+    def test_a_card_stores_the_used_plates_photo(self, client, enabled, db_conn, reason):
+        resp = post(client, _form(_card(0, reason=reason)))
+        assert resp.status_code == 200
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT used_plates_photo_path FROM declaration_cards")
+            stored = cur.fetchone()["used_plates_photo_path"]
+        assert stored is not None and (enabled / stored).is_file()
+        assert (enabled / stored).read_bytes() == JPEG
+
+    @pytest.mark.parametrize("reason", ["DETERIORO", "PÉRDIDA"])
+    def test_a_card_without_the_used_plates_photo_is_rejected(self, client, enabled, db_conn, reason):
+        resp = post(client, _form(_card(0, reason=reason, used_plates=None)))
+        assert resp.status_code == 400
+        assert "Tarjeta 1: Falta la foto de la(s) placa(s) usada(s)." in resp.get_data(as_text=True)
+        assert _count(db_conn, "declarations") == 0
+        assert _files(enabled) == []
+
+    @pytest.mark.parametrize("reason", ["DETERIORO", "PÉRDIDA"])
+    def test_a_plates_lost_card_is_accepted_without_the_used_plates_photo(self, client, enabled, db_conn, reason):
+        resp = post(client, _form(_card(0, reason=reason, used_plates=None, plates_lost="1")))
+        assert resp.status_code == 200
+        assert "Recibimos tu declaración" in resp.get_data(as_text=True)
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT used_plates_photo_path FROM declaration_cards")
+            assert cur.fetchone()["used_plates_photo_path"] is None
+            cur.execute("SELECT submitted_data FROM declarations")
+            assert cur.fetchone()["submitted_data"]["cards"][0]["plates_lost"] is True
 
     @pytest.mark.parametrize("value", ["SI", "NO"])
     def test_both_marketing_answers_are_stored(self, client, enabled, db_conn, value):

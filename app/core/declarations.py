@@ -10,10 +10,13 @@ propiedad"), each stored as a `declaration_cards` row with its own reason
 (DETERIORO / PÉRDIDA), plate quantity, owner and review flags. If the declarant
 acts as PROPIETARIO / POSEEDOR every card belongs to the declarant; if it acts
 as GESTOR the declarant is the GESTOR customer (`declarations.gestor_id`) and
-EACH card has its own owner (a CLIENTE). Nothing is uploaded with a
-declaration other than the signature: for a PÉRDIDA the notarization happens
-offline (staff hand the client the declaration as a PDF, the client gets it
-notarized and brings it back), so no card reason requires a file.
+EACH card has its own owner (a CLIENTE). A declaration carries the signature,
+the photos of the declarant's cédula (front and back), the photos of each
+ownership card (front and back) and a photo of the used plates the client
+hands in for each card, whatever its reason (DETERIORO or PÉRDIDA), unless the
+client marks that card "Perdí mis placas" (`plates_lost`). A PÉRDIDA needs no
+other file: its notarization happens offline (staff hand the client
+the declaration as a PDF, the client gets it notarized and brings it back).
 
 Decision rules for `submit_declaration` (all decided by the owner of the
 project, see the declarations plan), applied PER CARD:
@@ -190,6 +193,8 @@ class OwnershipCardInput:
     owner_relation: str = ""            # DUEÑO / POSEEDOR (GESTOR only)
     front_file: str | None = None       # stored file names of the card photos
     back_file: str | None = None
+    used_plates_file: str | None = None  # stored file name of the used-plates photo
+    plates_lost: bool = False           # "Perdí mis placas": no used-plates photo to send
 
 
 @dataclass
@@ -271,6 +276,8 @@ def _validate_card(card: OwnershipCardInput, *, gestor: bool) -> list[str]:
         errors.append("Falta la foto de la tarjeta de propiedad (frente).")
     if _blank(card.back_file):
         errors.append("Falta la foto de la tarjeta de propiedad (atrás).")
+    if not card.plates_lost and _blank(card.used_plates_file):
+        errors.append("Falta la foto de la(s) placa(s) usada(s).")
     if _blank(card.plate_number):
         errors.append("Falta la placa.")
     elif vehicle_type is not None and vehicle_type in PLATE_PATTERNS:
@@ -551,6 +558,7 @@ def _insert_card_row(
         owner_relation=plan.relation, owner_data=_person_dict(plan.owner),
         review_flags=plan.flags, customer_id=customer_id, ownership_card_id=ownership_card_id,
         card_front_path=card.front_file, card_back_path=card.back_file,
+        used_plates_photo_path=card.used_plates_file,
     )
 
 
