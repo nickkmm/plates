@@ -296,6 +296,7 @@ de un único archivo de 556 líneas:
 | `db/ownership_cards.py` (Fase 2 declaraciones) | CRUD de `ownership_cards` (tarjeta de propiedad) y `find_card_conflicts` — ver detalle abajo. |
 | `db/declarations.py` (Fase 3 declaraciones) | Lectura/escritura de `declarations` y `declaration_cards` — ver detalle abajo. |
 | `db/users.py` (Fase 2) | CRUD/lookup de `users` — backend real del login (`app/web/auth.py`), ver detalle abajo. |
+| `db/roles.py` | CRUD de `roles`/`role_permissions` — ver detalle abajo. |
 | `db/pricing.py` (Fase 2) | CRUD de `plate_type_prices` — ver detalle abajo. |
 
 Config de conexión desde variables de entorno (`DB_HOST` default `"db"` —
@@ -482,6 +483,53 @@ Backend real del login — reemplaza los env vars `AUTH_USERS`/`AUTH_ROLES`.
 | `get_user_by_username(conn, username)` | Usada por `app/web/auth.py::authenticate` en cada login. Devuelve la fila aunque `active=False` — es `authenticate` quien decide que un usuario inactivo no puede loguearse, no este lookup. |
 | `get_user_by_id(conn, user_id)` | Para `session["user_id"]` → `production_orders.created_by`. |
 | `create_user` / `list_users` | CRUD básico, para una futura pantalla de administración de usuarios (no consumidos por ninguna ruta activa hoy). |
+| `update_user(conn, user_id, *, role, active)` | Cambia el rol y el estado activo. `False` si no existe el usuario. Un rol inexistente lo rechaza la FK `users_role_fkey` (`ForeignKeyViolation`). |
+| `set_user_password(conn, user_id, password_hash)` | Reemplaza el hash (formato werkzeug, lo calcula quien llama). `False` si no existe el usuario. |
+| `count_active_users_with_role(conn, role)` | Cuántos usuarios **activos** tienen ese rol — para que una futura pantalla de gestión no deje sin ningún admin activo. |
+
+`UserRecord` trae además `created_at` (default `None`, para no romper a
+quien lo construya a mano). Ninguna de estas funciones nuevas la usa todavía
+una ruta.
+
+### `permissions.py` (catálogo de permisos)
+
+Python puro, sin Flask ni base de datos. `PERMISSIONS` es la tupla ordenada
+de los 13 pares `(código, etiqueta)`: el código es un identificador en
+inglés (`orders.capture`, `records.view`, `users.manage`, ...) que se guarda
+en `role_permissions.permission`, y la etiqueta es el texto en español que
+verá el personal. `PERMISSION_CODES` es el `frozenset` de esos códigos y
+`ADMIN_ROLE = "admin"`.
+
+`effective_permissions(role, stored)` devuelve los permisos reales de un
+rol: para `ADMIN_ROLE`, siempre los 13 códigos (sin importar lo que haya
+guardado, así ningún admin queda sin acceso a un permiso nuevo); para
+cualquier otro rol, los códigos guardados que siguen existiendo en el
+catálogo (los desconocidos se descartan). **Las rutas todavía no lo
+usan**: el acceso lo sigue decidiendo `app/web/auth.py` con sus conjuntos
+fijos de roles; aplicarlo por ruta es una tarea posterior.
+
+### `db/roles.py`
+
+Lectura/escritura de `roles` y `role_permissions` (ver
+[`DATABASE.md`](DATABASE.md)), para una futura pantalla de gestión de roles;
+ninguna ruta lo usa todavía. Los códigos de permiso se validan contra
+`permissions.PERMISSION_CODES` en Python antes de escribir (mismo patrón que
+`pricing.set_price` con `normalize.PLATE_TYPES`). No protege los roles del
+sistema ni al último admin activo: eso lo decidirá la pantalla de gestión
+con `is_system` y `count_active_users_with_role`.
+
+`RoleRecord(name, label, is_system, permissions, user_count)`:
+`permissions` son los códigos guardados en orden alfabético y `user_count`
+cuenta todos los usuarios con ese rol, activos o no.
+
+| Función | Qué hace |
+|---|---|
+| `list_roles(conn)` | Todos los roles: primero los del sistema, luego por `label`. |
+| `get_role(conn, name)` | `RoleRecord` o `None`. |
+| `get_role_permissions(conn, name)` | Los códigos guardados (`frozenset`, vacío si el rol no existe). No aplica `effective_permissions`: eso lo hace quien llama. |
+| `create_role(conn, *, name, label, permissions)` | Inserta un rol no-sistema y sus permisos. `ValueError` antes de escribir si algún código no está en el catálogo; un `name` o `label` repetido levanta `UniqueViolation` (sin pre-chequeo). |
+| `update_role(conn, name, *, label, permissions)` | Cambia la etiqueta y **reemplaza** (no mezcla) los permisos. Misma validación `ValueError`; `False` sin escribir nada si el rol no existe. |
+| `delete_role(conn, name)` | Borra el rol y, en cascada, sus permisos. `False` si no existía. Si algún usuario todavía lo tiene, la FK levanta `ForeignKeyViolation` (sin pre-chequeo). |
 
 ### `db/pricing.py` (Fase 2)
 
