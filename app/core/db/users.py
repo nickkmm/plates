@@ -9,6 +9,7 @@ contract that applies to every function here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import psycopg
 from psycopg.rows import DictRow, class_row
@@ -25,9 +26,10 @@ class UserRecord:
     password_hash: str
     role: str
     active: bool
+    created_at: datetime | None = None
 
 
-_SELECT_COLUMNS = "id, username, password_hash, role, active"
+_SELECT_COLUMNS = "id, username, password_hash, role, active, created_at"
 
 
 def get_user_by_username(conn: psycopg.Connection[DictRow], username: str) -> UserRecord | None:
@@ -81,3 +83,29 @@ def list_users(conn: psycopg.Connection[DictRow]) -> list[UserRecord]:
     with conn.cursor(row_factory=class_row(UserRecord)) as cur:
         cur.execute(f"SELECT {_SELECT_COLUMNS} FROM users ORDER BY id")
         return cur.fetchall()
+
+
+def update_user(conn: psycopg.Connection[DictRow], user_id: int, *, role: str, active: bool) -> bool:
+    """Set a user's role and active flag. False when there is no such user.
+    An unknown role raises psycopg's ForeignKeyViolation (users_role_fkey)."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE users SET role = %s, active = %s WHERE id = %s", (role, active, user_id))
+        return cur.rowcount > 0
+
+
+def set_user_password(conn: psycopg.Connection[DictRow], user_id: int, password_hash: str) -> bool:
+    """Replace a user's password hash (werkzeug format, hashed by the caller).
+    False when there is no such user."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (password_hash, user_id))
+        return cur.rowcount > 0
+
+
+def count_active_users_with_role(conn: psycopg.Connection[DictRow], role: str) -> int:
+    """How many ACTIVE users have `role` -- e.g. so a management screen can
+    refuse to deactivate or demote the last active admin."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM users WHERE role = %s AND active", (role,))
+        row = cur.fetchone()
+        assert row is not None, "SELECT count(*) always yields a row"
+        return int(row["n"])

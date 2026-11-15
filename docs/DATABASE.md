@@ -47,6 +47,8 @@ erDiagram
     production_orders ||--o{ plates : "tiene"
     customers ||--o{ production_orders : "customer_id (nullable)"
     users ||--o{ production_orders : "created_by (nullable)"
+    roles ||--o{ users : "role"
+    roles ||--o{ role_permissions : "role"
     plate_types ||--o{ plates : "plate_type"
     plate_types ||--o{ plate_type_prices : "plate_type (PK)"
     inventory_categories ||--o{ blank_preparations : "category"
@@ -108,9 +110,19 @@ erDiagram
         int id PK
         text username "UNIQUE NOT NULL"
         text password_hash
-        text role "admin/production/point_of_sale"
+        text role FK "admin/production/point_of_sale"
         boolean active
         timestamp created_at
+    }
+    roles {
+        text name PK "identificador en inglés, nunca se muestra"
+        text label "UNIQUE NOT NULL — nombre en español"
+        boolean is_system
+        timestamp created_at
+    }
+    role_permissions {
+        text role PK, FK
+        text permission PK "código de app/core/permissions.py"
     }
     plate_type_prices {
         text plate_type PK, FK "uno de normalize.PLATE_TYPES"
@@ -298,9 +310,48 @@ el backfill original; el login en vivo no los llama más.
 | `id` | SERIAL | PK | Desde la Fase 2, se guarda en `session["user_id"]` al loguearse — es lo que permite `production_orders.created_by` sin volver a consultar por username. |
 | `username` | TEXT | UNIQUE NOT NULL | |
 | `password_hash` | TEXT | NOT NULL | Mismo formato werkzeug (pbkdf2) que `AUTH_USERS` traía — el backfill copió el hash tal cual, nunca reseteó contraseñas. |
-| `role` | TEXT | NOT NULL | `admin`/`production`/`point_of_sale` — **valores en inglés a propósito**: a diferencia de otras columnas de esta tabla, `role` nunca se muestra al usuario (solo se compara para permisos), así que no cuenta como dato de negocio en español — ver `CLAUDE.md`. Hasta antes de `app/migrations/0004_translate_role_values_to_english.sql` los valores reales eran `produccion`/`punto_venta` (español, sin tilde); esa migración los tradujo sobre datos reales, y `app/web/auth.py`'s `ROLE_PRODUCCION`/`ROLE_PUNTO_VENTA` apuntan hoy a los nuevos valores. Texto libre validado en Python contra la tupla `auth.ROLES`, sin FK ni `CHECK` en la BD — a diferencia de `plate_type_prices.plate_type`/`plates.plate_type`/`blank_preparations.category`, que desde la Fase 1b sí tienen FK real (ver rarezas). Antes de la Fase 1c, esta columna se llamaba `rol`. `point_of_sale` (Fase 2) es el rol nuevo de PTO.V — nivel de acceso intermedio, `POS_ROLES = {admin, point_of_sale}`, decorador `@pos_allowed` (ver [`WEB.md`](WEB.md)). |
+| `role` | TEXT | NOT NULL, FK → `roles(name)` `ON UPDATE CASCADE` (`users_role_fkey`, migración `0015`) | `admin`/`production`/`point_of_sale` — **valores en inglés a propósito**: `role` nunca se muestra al usuario (solo se compara para permisos), así que no cuenta como dato de negocio en español — ver `CLAUDE.md`. El nombre en español que vería el personal vive en `roles.label`, no aquí. Hasta antes de `app/migrations/0004_translate_role_values_to_english.sql` los valores reales eran `produccion`/`punto_venta` (español, sin tilde); esa migración los tradujo sobre datos reales, y `app/web/auth.py`'s `ROLE_PRODUCCION`/`ROLE_PUNTO_VENTA` apuntan hoy a los nuevos valores. Desde la migración `0015` es una FK real a `roles(name)` (sin `ON DELETE`: no se puede borrar un rol que algún usuario todavía tenga) y sin `CHECK`; el acceso en vivo lo sigue decidiendo `auth.py` con sus conjuntos fijos de roles. Antes de la Fase 1c, esta columna se llamaba `rol`. `point_of_sale` (Fase 2) es el rol nuevo de PTO.V — nivel de acceso intermedio, `POS_ROLES = {admin, point_of_sale}`, decorador `@pos_allowed` (ver [`WEB.md`](WEB.md)). |
 | `active` | BOOLEAN | DEFAULT true | Antes de la Fase 1c, esta columna se llamaba `activo`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
+
+### `roles`
+
+*Agregada en la migración `0015` (`app/migrations/0015_roles_and_permissions.sql`).*
+Los roles a los que puede pertenecer un usuario. Creada en `init.sql` antes
+de `users`, para que `users.role` la referencie directamente. Todavía no la
+lee ninguna ruta: el acceso lo sigue decidiendo `app/web/auth.py`; esta
+tabla es la base para que una tarea posterior revise permisos por ruta y
+para una pantalla de gestión de roles.
+
+| Columna | Tipo | Constraint/Default | Nota |
+|---|---|---|---|
+| `name` | TEXT | PK | Identificador interno en inglés (`admin`, `point_of_sale`, `production`, ...): es lo que guarda `users.role` y nunca se muestra. |
+| `label` | TEXT | NOT NULL UNIQUE | Nombre en español que verá el personal (`Administrador`, `Punto de venta`, `Producción`). |
+| `is_system` | BOOLEAN | NOT NULL DEFAULT false | `true` en los 3 roles sembrados. Una futura pantalla de gestión lo usará para proteger esos roles; la capa de datos no lo impide. |
+| `created_at` | TIMESTAMP | DEFAULT now() | |
+
+Sembrada desde `init.sql`/la migración `0015` con los 3 roles del sistema
+(`ON CONFLICT DO NOTHING`). **Backfill de roles desconocidos**: antes de
+agregar `users_role_fkey`, la migración `0015` inserta cada valor de
+`users.role` que no exista en `roles` como rol no-sistema con
+`label = name` y sin permisos, para que la FK nunca falle por datos
+inesperados de producción.
+
+### `role_permissions`
+
+*Agregada en la migración `0015`.* Un renglón por permiso concedido a un rol.
+
+| Columna | Tipo | Constraint/Default | Nota |
+|---|---|---|---|
+| `role` | TEXT | NOT NULL, PK, FK → `roles(name)` `ON DELETE CASCADE ON UPDATE CASCADE` | Borrar un rol borra sus permisos. |
+| `permission` | TEXT | NOT NULL, PK | Un código del catálogo `app/core/permissions.py::PERMISSIONS` (`orders.capture`, `records.view`, ...). Validado en Python (`app/core/db/roles.py`), sin `CHECK` — mismo patrón que `normalize.PLATE_TYPES`. |
+
+La siembra reproduce el acceso de hoy, más los códigos de producción:
+`admin` tiene los 13 códigos (informativo: `effective_permissions` siempre
+le da todos); `point_of_sale` tiene `orders.capture`, `cash_summary.view`,
+`declarations.review`, `records.view`, `production.view` y
+`production.deliver`; `production` tiene `records.view`, `production.view`,
+`production.manage` y `production.deliver`.
 
 ### `plate_types`
 

@@ -82,3 +82,49 @@ class TestListUsers:
         usernames = {u.username for u in db.list_users(db_conn)}
         assert {"testuser", "produccionuser", "puntoventauser"} <= usernames
 
+
+
+class TestCreatedAt:
+    def test_lookups_return_created_at(self, db_conn):
+        user_id = db.create_user(db_conn, username="gina", password_hash="h", role="admin")
+        user = db.get_user_by_id(db_conn, user_id)
+        assert user is not None
+        assert user.created_at is not None
+        assert all(u.created_at is not None for u in db.list_users(db_conn))
+
+
+class TestUpdateUser:
+    def test_sets_role_and_active(self, db_conn):
+        user_id = db.create_user(db_conn, username="hank", password_hash="h", role="admin")
+        assert db.update_user(db_conn, user_id, role="production", active=False) is True
+        user = db.get_user_by_id(db_conn, user_id)
+        assert user is not None
+        assert (user.role, user.active) == ("production", False)
+
+    def test_unknown_id_returns_false(self, db_conn):
+        assert db.update_user(db_conn, 999_999, role="admin", active=True) is False
+
+
+class TestSetUserPassword:
+    def test_replaces_the_hash(self, db_conn):
+        user_id = db.create_user(db_conn, username="iris", password_hash="old", role="admin")
+        assert db.set_user_password(db_conn, user_id, "new") is True
+        user = db.get_user_by_id(db_conn, user_id)
+        assert user is not None
+        assert user.password_hash == "new"
+
+    def test_unknown_id_returns_false(self, db_conn):
+        assert db.set_user_password(db_conn, 999_999, "new") is False
+
+
+class TestCountActiveUsersWithRole:
+    def test_counts_only_active_users_with_that_role(self, db_conn):
+        # conftest seeds one active user per system role.
+        db.create_user(db_conn, username="j1", password_hash="h", role="production")
+        db.create_user(db_conn, username="j2", password_hash="h", role="production", active=False)
+        db.create_user(db_conn, username="j3", password_hash="h", role="admin")
+        assert db.count_active_users_with_role(db_conn, "production") == 2
+        assert db.count_active_users_with_role(db_conn, "admin") == 2
+
+    def test_role_with_no_users_is_zero(self, db_conn):
+        assert db.count_active_users_with_role(db_conn, "ghost") == 0

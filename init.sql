@@ -102,6 +102,56 @@ CREATE TABLE customers (
     created_at TIMESTAMP DEFAULT now()
 );
 
+-- Roles and their permissions (see app/migrations/0015_roles_and_permissions.sql
+-- and docs/DATABASE.md). name is the English identifier stored in users.role;
+-- label is the Spanish display name. role_permissions.permission holds codes
+-- from app/core/permissions.py, validated in Python (no CHECK). Created before
+-- `users` so users.role can reference roles(name) directly.
+CREATE TABLE roles (
+    name TEXT PRIMARY KEY,
+    label TEXT NOT NULL UNIQUE,
+    is_system BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE role_permissions (
+    role TEXT NOT NULL REFERENCES roles(name) ON DELETE CASCADE ON UPDATE CASCADE,
+    permission TEXT NOT NULL,
+    PRIMARY KEY (role, permission)
+);
+
+INSERT INTO roles (name, label, is_system) VALUES
+    ('admin', 'Administrador', true),
+    ('point_of_sale', 'Punto de venta', true),
+    ('production', 'Producción', true)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permissions (role, permission) VALUES
+    ('admin', 'orders.capture'),
+    ('admin', 'cash_summary.view'),
+    ('admin', 'declarations.review'),
+    ('admin', 'production.view'),
+    ('admin', 'production.manage'),
+    ('admin', 'production.deliver'),
+    ('admin', 'records.view'),
+    ('admin', 'records.delete'),
+    ('admin', 'duplicates.review'),
+    ('admin', 'inventory.manage'),
+    ('admin', 'pricing.manage'),
+    ('admin', 'customers.manage'),
+    ('admin', 'users.manage'),
+    ('point_of_sale', 'orders.capture'),
+    ('point_of_sale', 'cash_summary.view'),
+    ('point_of_sale', 'declarations.review'),
+    ('point_of_sale', 'records.view'),
+    ('point_of_sale', 'production.view'),
+    ('point_of_sale', 'production.deliver'),
+    ('production', 'records.view'),
+    ('production', 'production.view'),
+    ('production', 'production.manage'),
+    ('production', 'production.deliver')
+ON CONFLICT DO NOTHING;
+
 -- Real RBAC, replacing the AUTH_USERS/AUTH_ROLES env vars (see docs/WEB.md).
 -- Table/columns named in English from birth -- Fase 1 originally shipped
 -- this as `usuarios`/`rol`/`activo`; Fase 1c renamed it in production (see
@@ -110,7 +160,7 @@ CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,   -- same werkzeug format as AUTH_USERS today
-    role TEXT NOT NULL,            -- admin / production / point_of_sale
+    role TEXT NOT NULL CONSTRAINT users_role_fkey REFERENCES roles(name) ON UPDATE CASCADE,  -- admin / production / point_of_sale
     active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT now()
 );

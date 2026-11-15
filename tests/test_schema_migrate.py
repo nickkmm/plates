@@ -39,6 +39,7 @@ from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _INIT_SQL = (_REPO_ROOT / "init.sql").read_text(encoding="utf-8")
 _MIGRATIONS_DIR = _REPO_ROOT / "app" / "migrations"
+_0015_SQL = (_MIGRATIONS_DIR / "0015_roles_and_permissions.sql").read_text(encoding="utf-8")
 
 # Snapshot of init.sql exactly as it was immediately BEFORE the Fase 1
 # POS-fields schema change (production_orders/plates/inventory_categories/
@@ -93,7 +94,7 @@ CREATE TABLE blank_preparations (
 _APP_TABLES = (
     "production_orders", "plates", "blank_preparations", "inventory_categories",
     "customers", "users", "plate_type_prices", "schema_migrations", "plate_types",
-    "ownership_cards", "declarations", "declaration_cards",
+    "ownership_cards", "declarations", "declaration_cards", "roles", "role_permissions",
 )
 
 
@@ -379,6 +380,23 @@ class TestApplySqlMigrations:
             )
             assert cur.fetchall() == [("text", "YES")]
 
+    def test_0015_roles_and_permissions_sql_is_safe_to_apply_twice_directly(self, db_conn):
+        """Re-applying it on the already-migrated schema raises nothing and
+        adds no roles/role_permissions rows."""
+
+        def counts() -> tuple[int, int]:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute("SELECT (SELECT count(*) FROM roles), (SELECT count(*) FROM role_permissions)")
+                row = cur.fetchone()
+                assert row is not None
+                return row[0], row[1]
+
+        before = counts()
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(_0015_SQL)
+            cur.execute(_0015_SQL)
+        assert counts() == before
+
 
 # --------------------------------------------------------------------------
 # backfill_customers
@@ -513,6 +531,33 @@ class TestBackfillUsers:
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM users WHERE username = 'alice'")
             assert cur.fetchone()[0] == 1
+
+
+    def test_runs_on_a_fresh_init_sql_database(self, db_conn, monkeypatch):
+        """On a brand-new database built from the CURRENT init.sql the roles
+        are already seeded, so users_role_fkey accepts the default admin role
+        and the two other system roles. Built in a throwaway schema (same
+        technique as TestSchemaInvariant)."""
+        schema = "fresh_backfill_users_test"
+        monkeypatch.setenv("AUTH_USERS", "alice:hash1,bob:hash2,carol:hash3")
+        monkeypatch.setenv("AUTH_ROLES", "bob:production,carol:point_of_sale")
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+            cur.execute(f"CREATE SCHEMA {schema}")
+            cur.execute(f"SET search_path TO {schema}")
+            cur.execute(_INIT_SQL)
+        db_conn.commit()
+        try:
+            schema_migrate.backfill_users(db_conn)
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute("SELECT username, role FROM users ORDER BY username")
+                rows = cur.fetchall()
+        finally:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute("SET search_path TO public")
+                cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+            db_conn.commit()
+        assert rows == [("alice", "admin"), ("bob", "production"), ("carol", "point_of_sale")]
 
 
 # --------------------------------------------------------------------------
@@ -970,8 +1015,20 @@ class TestTranslateRoleValuesToEnglish:
 
     _0004_SQL = (_MIGRATIONS_DIR / "0004_translate_role_values_to_english.sql").read_text(encoding="utf-8")
 
+    @staticmethod
+    def _allow_legacy_spanish_roles(cur: psycopg.Cursor) -> None:
+        """users.role is a FK to roles(name) since 0015, so the old Spanish
+        values need a roles row before a user can hold them (rolled back with
+        the rest of the test by clean_db)."""
+        cur.execute(
+            "INSERT INTO roles (name, label) VALUES "
+            "('produccion', 'produccion'), ('punto_venta', 'punto_venta') "
+            "ON CONFLICT DO NOTHING"
+        )
+
     def test_translates_produccion_and_punto_venta_leaves_admin_alone(self, db_conn):
         with db_conn.cursor(row_factory=tuple_row) as cur:
+            self._allow_legacy_spanish_roles(cur)
             cur.execute(
                 "INSERT INTO users (username, password_hash, role) VALUES "
                 "('old_prod', 'h1', 'produccion'), "
@@ -998,6 +1055,7 @@ class TestTranslateRoleValuesToEnglish:
 
     def test_rerun_is_a_no_op(self, db_conn):
         with db_conn.cursor(row_factory=tuple_row) as cur:
+            self._allow_legacy_spanish_roles(cur)
             cur.execute(
                 "INSERT INTO users (username, password_hash, role) VALUES "
                 "('old_prod2', 'h1', 'produccion')"
@@ -1012,6 +1070,110 @@ class TestTranslateRoleValuesToEnglish:
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT role FROM users WHERE username = 'old_prod2'")
             assert cur.fetchone()[0] == "production"
+
+
+# --------------------------------------------------------------------------
+# Roles and permissions (0015)
+# --------------------------------------------------------------------------
+
+_SEEDED_ROLES = {
+    ("admin", "Administrador", True),
+    ("point_of_sale", "Punto de venta", True),
+    ("production", "Producción", True),
+}
+
+_SEEDED_ROLE_PERMISSIONS = {
+    "admin": {
+        "orders.capture", "cash_summary.view", "declarations.review", "production.view",
+        "production.manage", "production.deliver", "records.view", "records.delete",
+        "duplicates.review", "inventory.manage", "pricing.manage", "customers.manage",
+        "users.manage",
+    },
+    "point_of_sale": {
+        "orders.capture", "cash_summary.view", "declarations.review", "records.view",
+        "production.view", "production.deliver",
+    },
+    "production": {"records.view", "production.view", "production.manage", "production.deliver"},
+}
+
+# The users table exactly as it was before 0015 (no FK on role).
+_PRE_0015_USERS_SQL = """
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL,
+    active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT now()
+);
+"""
+
+
+class TestRolesAndPermissions:
+    """app/migrations/0015_roles_and_permissions.sql: the seed, the backfill
+    of unknown users.role values, and the users_role_fkey FK."""
+
+    SCHEMA = "roles_0015_test"
+
+    def test_seeded_roles_and_permissions_match_exactly(self, db_conn):
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT name, label, is_system FROM roles")
+            roles = set(cur.fetchall())
+            cur.execute("SELECT role, permission FROM role_permissions")
+            permissions: dict[str, set[str]] = {}
+            for role, permission in cur.fetchall():
+                permissions.setdefault(role, set()).add(permission)
+        assert roles == _SEEDED_ROLES
+        assert permissions == _SEEDED_ROLE_PERMISSIONS
+
+    def test_users_role_fkey_cascades_on_update(self, db_conn):
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conname = 'users_role_fkey' AND conrelid = to_regclass('public.users')"
+            )
+            row = cur.fetchone()
+        assert row is not None
+        assert row[0] == "FOREIGN KEY (role) REFERENCES roles(name) ON UPDATE CASCADE"
+
+    def test_unknown_role_is_backfilled_and_fk_added(self, db_conn):
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {self.SCHEMA} CASCADE")
+            cur.execute(f"CREATE SCHEMA {self.SCHEMA}")
+            cur.execute(f"SET search_path TO {self.SCHEMA}")
+            cur.execute(_PRE_0015_USERS_SQL)
+            cur.execute(
+                "INSERT INTO users (username, password_hash, role) VALUES "
+                "('alice', 'h1', 'admin'), ('old', 'h2', 'legacy_role')"
+            )
+        db_conn.commit()
+        try:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute(_0015_SQL)
+            db_conn.commit()
+
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute("SELECT label, is_system FROM roles WHERE name = 'legacy_role'")
+                legacy = cur.fetchone()
+                cur.execute("SELECT count(*) FROM role_permissions WHERE role = 'legacy_role'")
+                legacy_permissions = cur.fetchone()
+                cur.execute(
+                    "SELECT count(*) FROM pg_constraint "
+                    "WHERE conname = 'users_role_fkey' AND conrelid = to_regclass('users')"
+                )
+                fkeys = cur.fetchone()
+                # A second run raises nothing.
+                cur.execute(_0015_SQL)
+            db_conn.commit()
+        finally:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute("SET search_path TO public")
+                cur.execute(f"DROP SCHEMA IF EXISTS {self.SCHEMA} CASCADE")
+            db_conn.commit()
+
+        assert legacy == ("legacy_role", False)
+        assert legacy_permissions == (0,)
+        assert fkeys == (1,)
 
 
 # --------------------------------------------------------------------------
