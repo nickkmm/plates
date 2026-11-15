@@ -57,6 +57,9 @@ This package replaces what used to be a single flat db.py, split by table:
     roles.py      -- roles / role_permissions reads/writes (the permission
                      catalog itself lives in app/core/permissions.py).
     pricing.py    -- plate_type_prices reads/writes (Fase 2).
+    production.py -- production_orders.production_status and
+                     production_order_events reads/writes; the transition
+                     rules live in app/core/production.py.
 Every public function each submodule exposes is re-exported below,
 explicitly (not `import *`), so existing call sites (`db.insert_order(...)`,
 etc.) keep working completely unchanged.
@@ -90,6 +93,7 @@ from app.core.db.declarations import (
     list_cards_for_declarations,
     list_declaration_cards,
     list_declarations,
+    list_declarations_by_production_order,
     set_declaration_card_links,
     set_declaration_notarized_received,
     set_declaration_production_order,
@@ -145,6 +149,22 @@ from app.core.db.plates import (
     update_plate_full,
 )
 from app.core.db.pricing import PriceRow, current_prices, price_list, set_price
+from app.core.db.production import (
+    ACTIVE_STATUSES,
+    PRODUCTION_STATUSES,
+    STATUS_DELIVERED,
+    STATUS_IN_PROGRESS,
+    STATUS_PENDING,
+    STATUS_READY,
+    ProductionEvent,
+    ProductionOrderSummary,
+    count_by_production_status,
+    get_production_status,
+    list_production_events,
+    list_production_orders,
+    production_statuses_for_orders,
+    set_production_status,
+)
 from app.core.db.roles import (
     RoleRecord,
     create_role,
@@ -166,6 +186,7 @@ from app.core.db.users import (
 )
 
 __all__ = [
+    "ACTIVE_STATUSES",
     "CARD_LINK_EXCLUDED_CUSTOMER_TYPES",
     "CARD_STATUS_DATA_MISMATCH",
     "CARD_STATUS_NEW",
@@ -177,11 +198,19 @@ __all__ = [
     "DeclarationRecord",
     "OrderSummary",
     "OwnershipCardRecord",
+    "PRODUCTION_STATUSES",
     "PriceRow",
+    "ProductionEvent",
+    "ProductionOrderSummary",
     "RoleRecord",
+    "STATUS_DELIVERED",
+    "STATUS_IN_PROGRESS",
+    "STATUS_PENDING",
+    "STATUS_READY",
     "UserRecord",
     "classify_card_lookup",
     "count_active_users_with_role",
+    "count_by_production_status",
     "count_recent_by_ip",
     "create_ownership_card",
     "create_role",
@@ -203,6 +232,7 @@ __all__ = [
     "get_ownership_card",
     "get_ownership_card_by_plate_number",
     "get_ownership_card_by_transit_license",
+    "get_production_status",
     "get_role",
     "get_role_permissions",
     "get_user_by_id",
@@ -218,12 +248,16 @@ __all__ = [
     "list_cards_for_declarations",
     "list_declaration_cards",
     "list_declarations",
+    "list_declarations_by_production_order",
     "list_ownership_cards_for_customer",
+    "list_production_events",
+    "list_production_orders",
     "list_roles",
     "list_users",
     "order_detail",
     "ornamental_count",
     "price_list",
+    "production_statuses_for_orders",
     "reassign_ownership_card",
     "relink_plates",
     "resolve_card_id_for_plate",
@@ -239,6 +273,7 @@ __all__ = [
     "set_declaration_production_order",
     "set_declaration_review",
     "set_price",
+    "set_production_status",
     "set_user_password",
     "update_customer",
     "update_order",
