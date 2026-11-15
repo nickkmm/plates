@@ -59,3 +59,12 @@ private/session-specific conversation is not, ever.
 If an agent or tool tries to insert this kind of link automatically,
 strip it before committing/pushing — do not ask, do not assume it's fine
 "just this once."
+
+# Ownership (non-negotiable)
+
+This repo belongs to **`nickkmm`**, and `nickkmm` does all the work on it.
+`Meyi96` appears as a collaborator on GitHub but does **nothing** here:
+ignore that account completely. Never assign an issue, PR, review or factory
+task to `Meyi96`, never wait on them, and never list them as a team member.
+Every factory task (`/factory divide`, `factory/bin/plan create`) is owned by
+`nickkmm`.
