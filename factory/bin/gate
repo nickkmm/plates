@@ -14,6 +14,7 @@ branch modifies or deletes a file matching config.json `protected_paths`
 
 import fnmatch
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -28,6 +29,10 @@ if sys.platform == "win32" and not sys.flags.utf8_mode:
     sys.exit(subprocess.call([sys.executable, "-X", "utf8", *sys.argv]))
 
 REPO = Path(__file__).resolve().parents[2]
+# Resolve bash through PATH: on Windows a bare "bash" makes CreateProcess pick
+# System32\bash.exe (WSL) before Git Bash, and WSL may have no distro.
+BASH = shutil.which("bash") or "bash"
+
 FACTORY = REPO / "factory"
 CONFIG = json.loads((FACTORY / "config.json").read_text())
 CHECKS = FACTORY / "checks.sh"
@@ -62,7 +67,7 @@ def protected_changes(worktree):
 
 def run_checks(worktree):
     start = time.monotonic()
-    res = subprocess.run(["bash", str(CHECKS)], cwd=worktree, capture_output=True, text=True)
+    res = subprocess.run([BASH, str(CHECKS)], cwd=worktree, capture_output=True, text=True)
     return res.returncode, res.stdout + res.stderr, int(time.monotonic() - start)
 
 
