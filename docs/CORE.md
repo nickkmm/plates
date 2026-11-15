@@ -415,6 +415,7 @@ Constantes: `STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` y
 | `set_declaration_review(conn, declaration_id, *, status, reviewed_by, note=None, gestor_id=None)` | Graba la decisión (`reviewed_at = now()`) y el `gestor_id`. No valida el estado previo. |
 | `set_declaration_card_links(conn, declaration_card_id, *, customer_id, ownership_card_id)` | Enlaza una tarjeta de la declaración con el dueño y la tarjeta de propiedad creados/enlazados al aprobar. |
 | `set_declaration_production_order(conn, declaration_id, production_order_id)` | Marca la declaración como atendida por un pedido (o `None` para limpiarla). No revisa el estado: lo hace quien llama (`/ingest`). |
+| `list_declarations_by_production_order(conn, order_id)` | Las declaraciones atendidas por esa orden (`production_order_id`), ordenadas por `id`; `[]` si no tiene ninguna. |
 
 `db/plates.py` suma `last_fabrication_date(conn, plate_number)`: solo lectura,
 la `order_date` más reciente de una placa con ese número exacto, **ignorando**
@@ -530,6 +531,60 @@ cuenta todos los usuarios con ese rol, activos o no.
 | `create_role(conn, *, name, label, permissions)` | Inserta un rol no-sistema y sus permisos. `ValueError` antes de escribir si algún código no está en el catálogo; un `name` o `label` repetido levanta `UniqueViolation` (sin pre-chequeo). |
 | `update_role(conn, name, *, label, permissions)` | Cambia la etiqueta y **reemplaza** (no mezcla) los permisos. Misma validación `ValueError`; `False` sin escribir nada si el rol no existe. |
 | `delete_role(conn, name)` | Borra el rol y, en cascada, sus permisos. `False` si no existía. Si algún usuario todavía lo tiene, la FK levanta `ForeignKeyViolation` (sin pre-chequeo). |
+
+### `db/production.py` (estado de producción)
+
+Solo la capa de datos del estado de producción de las órdenes
+(`production_orders.production_status` y `production_order_events`, ver
+[`DATABASE.md`](DATABASE.md)); las reglas de transición están en
+`production.py` (más abajo). Nunca hace commit. Constantes: `STATUS_PENDING`,
+`STATUS_IN_PROGRESS`, `STATUS_READY`, `STATUS_DELIVERED`,
+`PRODUCTION_STATUSES` (los cuatro, en ese orden) y `ACTIVE_STATUSES` (los tres
+primeros: lo que sigue en el taller). Registros: `ProductionOrderSummary` (una
+orden tal como la lista el tablero: `plate_count` suma `quantity` de las placas
+no anuladas, `plates` se arma igual que `OrderSummary.plates`,
+`declaration_ids` son las declaraciones atendidas por la orden y
+`status_changed_at` es el último evento o, si no hay, el `created_at` de la
+orden) y `ProductionEvent` (`from_status`, `to_status`, `username`,
+`created_at`).
+
+| Función | Qué hace |
+|---|---|
+| `list_production_orders(conn, *, status, query=None, limit=200)` | Órdenes para el tablero, sin las que tienen **todas** sus placas `is_voided` (una orden sin placas sí aparece). `status=None` = todas. `query` (si no está en blanco) busca parcial, sin mayúsculas, en `order_number` o en cualquier placa de la orden, limpiada con `normalize.clean_plate` (`"abc 123"` encuentra `ABC123`). Los estados activos salen de la más vieja a la más nueva (`order_date`, `id`); `delivered` y "todas", de la más nueva a la más vieja. |
+| `count_by_production_status(conn)` | `{estado: cantidad}` con las cuatro claves siempre (0 si no hay), con la misma exclusión de órdenes totalmente anuladas. |
+| `get_production_status(conn, order_id)` | El estado, o `None` si la orden no existe. |
+| `set_production_status(conn, order_id, *, from_status, to_status, user_id)` | `UPDATE ... WHERE id = %s AND production_status = from_status`: solo si cambió exactamente una fila inserta el evento y devuelve `True`; si no, no escribe nada y devuelve `False`. |
+| `list_production_events(conn, order_id)` | El historial de la orden, del más viejo al más nuevo; `username` es `None` si el evento no tiene usuario. |
+| `production_statuses_for_orders(conn, order_ids)` | `{order_id: estado}` en una sola consulta; `{}` sin consultar si la lista está vacía. |
+
+### `production.py` (reglas del estado de producción)
+
+Lógica de negocio sin Flask; recibe `conn` y nunca hace commit/rollback. Una
+orden avanza un paso a la vez: `pending` → `in_progress` → `ready` →
+`delivered`. `next_status(status)` / `previous_status(status)` siguen
+`PRODUCTION_STATUSES` y devuelven `None` pasado cualquiera de los extremos o
+para un estado desconocido.
+
+`advance_order(conn, order_id, user_id, *, expected_status)` avanza un paso y
+devuelve el estado nuevo; `revert_order(...)`, con la misma firma, retrocede un
+paso (deshacer), también desde `delivered` a `ready` para corregir una entrega
+marcada por error. Ambas levantan `ValueError` con el mensaje para el personal,
+en este orden, y sin cambiar nada:
+
+1. La orden no existe: `"La orden no existe."`
+2. Solo `advance_order`, con `expected_status == "delivered"`: `"La orden ya fue entregada."`
+   Solo `revert_order`, con `expected_status == "pending"`: `"La orden todavía no ha empezado."`
+3. El estado actual ya no es `expected_status`, o la actualización condicional
+   no cambió ninguna fila: `"El estado de la orden cambió mientras tanto. Revisa el estado actual e inténtalo de nuevo."`
+
+**Concurrencia optimista**: `expected_status` es el estado que la persona
+vio en pantalla. El cambio solo ocurre si la orden sigue en ese estado (se
+revisa al leer y se vuelve a exigir en el `UPDATE` condicional de
+`set_production_status`), así que dos personas que hacen clic a la vez nunca
+mueven la orden dos pasos: la segunda recibe el mensaje "cambió mientras
+tanto". **Sin roles**: estas funciones no reciben rol ni permiso; quién puede
+hacer cada transición (producción mueve todos los pasos, el punto de venta
+también puede marcar `ready` → `delivered`) lo decide la capa web.
 
 ### `db/pricing.py` (Fase 2)
 
