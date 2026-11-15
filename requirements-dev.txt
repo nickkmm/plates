@@ -15,4 +15,4 @@ mutmut==3.7.0
 # via `-r requirements.txt` above.
 
 # Type stubs for mypy.
-pandas-stubs==2.2.3.241126
+pandas-stubs==3.1.0.261029
