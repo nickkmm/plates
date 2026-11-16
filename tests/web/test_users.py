@@ -40,12 +40,20 @@ def _snapshot(conn):
     return [(u.username, u.roles, u.active) for u in db.list_users(conn)]
 
 
+@pytest.fixture(autouse=True)
+def _restore_csrf_setting():
+    """_fresh_client turns CSRF off; put the earlier value back afterwards."""
+    previous = flask_app.config["WTF_CSRF_ENABLED"]
+    yield
+    flask_app.config["WTF_CSRF_ENABLED"] = previous
+
+
 def _fresh_client(username=None, password=None):
     """A browser of its own, optionally logged in. Tests that drive two
     users use only these, never the `client` fixture: that one is held open
     in a `with` block, and its preserved app context (and the user cached on
     flask.g) would leak into the other client's requests."""
-    flask_app.config.update(TESTING=True)
+    flask_app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
     client = flask_app.test_client()
     if username is not None:
         _log_in(client, username, password)

@@ -15,9 +15,15 @@ from app.web.app import app as flask_app
 
 @pytest.fixture
 def client():
-    flask_app.config.update(TESTING=True)
-    with flask_app.test_client() as c:
-        yield c
+    """CSRF is off here (tests/web/test_csrf.py tests it on), and the earlier
+    value is restored on teardown."""
+    previous_csrf = flask_app.config["WTF_CSRF_ENABLED"]
+    flask_app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    try:
+        with flask_app.test_client() as c:
+            yield c
+    finally:
+        flask_app.config["WTF_CSRF_ENABLED"] = previous_csrf
 
 
 @pytest.fixture
