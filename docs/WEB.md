@@ -17,7 +17,7 @@ blueprints (`today_iso`, `_options`, `_padded`, `_validate_order_header`,
 | GET | `/` | `app.py` | Redirige a la primera pestaña de `NAV_ITEMS` que el usuario puede abrir (`landing_url()`); si su rol no tiene ningún permiso, responde 403 con `no_permissions.html` | — | (redirect) / `no_permissions.html` | `@authenticated` |
 | GET | `/healthz` | `app.py` | Liveness probe | — | — | abierta |
 | GET/POST | `/login` | `auth_routes.py` | Login (consulta `users`, Fase 2) | `auth.authenticate` | `login.html` | abierta |
-| GET/POST | `/logout` | `auth_routes.py` | Cierra sesión | — | (redirect) | abierta |
+| POST | `/logout` | `auth_routes.py` | Cierra sesión (solo POST: un GET responde 405 y no cierra nada) | — | (redirect) | abierta |
 | GET/POST | `/declaracion` | `public_declaration.py` | Formulario público de declaración juramentada (QR en el mostrador), solo para personas que declaran por sí mismas (PROPIETARIO / POSEEDOR; un `GESTOR` enviado a mano se rechaza con 400; el endpoint para gestores está planeado). POST: honeypot, token firmado, Turnstile, límite por IP (20/hora; los clientes comparten la IP del wifi del local), lee de 1 a 30 tarjetas de propiedad (`card_<i>_*`) con un solo declarante y una sola firma, guarda la firma y las **fotos obligatorias** (cédula del declarante y tarjeta de propiedad, frente y atrás de cada una, y la foto de la(s) placa(s) usada(s) de cada tarjeta, tanto por deterioro como por pérdida, salvo que el cliente marque «Perdí mis placas» en esa tarjeta (`card_<i>_plates_lost`; entonces esa foto no se pide ni se guarda y el detalle de la declaración lo indica); JPG/PNG/WebP detectados por contenido, máx. 5 MB c/u, el navegador las reduce antes de enviar; el cuerpo de este POST admite hasta 40 MB) en `UPLOADS_DIR`, valida y guarda la declaración siempre como `pending_review` («Por revisar») **sin crear nada** (cliente y tarjetas de propiedad se crean cuando el punto de venta la aprueba). Responde **503** (`declaration_unavailable.html`) mientras no estén `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (o `TURNSTILE_BYPASS`). El nombre del declarante no puede contener números (misma regla que "Solicitado por" en `/ingest`, para que el personal pueda crear después el pedido): el navegador lo avisa (`pattern`) y el servidor lo rechaza con 400. La página de éxito es idéntica para toda declaración (con o sin alertas): nunca revela estado, alertas ni al dueño anterior | `declarations.validate_declaration`, `submit_declaration`, `db.count_recent_by_ip` | `declaration.html`, `declaration_received.html`, `declaration_unavailable.html` | **sin login** (única ruta pública que escribe) |
 | GET | `/ingest` | `ingest.py` | Form "Registrar" — captura completa de orden POS (Fase 3). Con `?declaration_id=N` (el botón de `/declaraciones`) llega **pre-llenado desde una declaración aprobada y todavía no atendida** (`production_order_id` NULL), igual que el PDF: **no guarda nada**. Encabezado: fecha de hoy, N° de orden y forma de pago vacíos (los decide el personal), cliente = el declarante (el gestor si actuó un gestor; si no, el cliente enlazado a las tarjetas) con todos sus datos. Una línea `placa` por tarjeta de propiedad, en orden: tipo de placa de la tarjeta (vacío si no se reconoce), placa, cantidad, motivo, marca y valor = tarifa vigente del tipo (vacío si no hay); la ciudad es el «matriculado en» de la tarjeta (en mayúsculas); si la tarjeta no lo trae queda vacía y un aviso la pide para las líneas `CARRO PARTICULAR`/`CARRO PÚBLICO`. Id inexistente o mal formado → 404; pendiente, rechazada, ya atendida o **aprobada con alguna tarjeta por `PÉRDIDA` cuya autenticación notarial todavía no se marcó como recibida** → el formulario normal con un error en español (si ya fue atendida, dice con qué orden y enlaza a su detalle; las declaraciones solo `DETERIORO` nunca se bloquean así) | `db.distinct_requested_by/cities`, `db.current_prices`, `db.list_customers`, `db.get_declaration`, `db.list_declaration_cards`, `db.get_customer` | `ingest.html` | `@permission_required("orders.capture")` |
 | POST | `/ingest` | `ingest.py` | Guarda orden+placas (resuelve/crea cliente, snapshotea precios); gestiona los avisos de orden/placa duplicada y el "Reemplazar" opt-in. **La ciudad es obligatoria en cada línea** (menos "Orden anulada"): el navegador la exige (`required`) y el servidor rechaza la línea sin ciudad con "Línea N: elegí la ciudad…" y no guarda nada. Solo `CARRO PARTICULAR` / `CARRO PÚBLICO` dependen de una ciudad (se dejan en blanco para elegirla); en los demás tipos el formulario sugiere `COLOMBIA` (editable). Si trae el campo oculto `declaration_id`, el servidor **vuelve a validar** la declaración (existe, aprobada, sin atender y, si tiene una tarjeta `PÉRDIDA`, con la autenticación notarial recibida; si no, no guarda y devuelve el formulario tal cual con el error); las placas de sus tarjetas **no se bloquean** como "ya existe" (el caso es reponer una placa perdida o deteriorada; escribir dos veces la misma placa en el envío sí sigue bloqueando) y, en la **misma transacción** del guardado (camino normal y "Reemplazar"), la declaración queda atendida por la orden creada (`db.set_declaration_production_order`). El campo oculto viaja en todos los re-renders (avisos de orden/placa duplicada, errores). Sin `declaration_id` el comportamiento no cambia | `ingestion.process_rows`, `ingestion.replace_order`, `ingestion.find_duplicate_plate_numbers`, `db.resolve_or_create_customer`, `db.find_orders_by_number`, `db.set_declaration_production_order` | `ingest.html` | `@permission_required("orders.capture")` |
@@ -140,8 +140,46 @@ igual toda placa que ya existía), así que aparece en `/review` y en el resumen
 - Sesión firmada con `SECRET_KEY` (obligatoria, sin default), cookie
   `HTTPONLY` + `SAMESITE=Lax` + `SECURE` condicionada a `COOKIE_SECURE`,
   12 horas de duración.
+- Protección CSRF en toda la app (Flask-WTF `CSRFProtect`): todo POST lleva
+  el token de la sesión; sin él responde 400 con `csrf_error.html`. Ver
+  "Protección CSRF".
 - Guard anti open-redirect en `?next=` del login: solo rutas relativas del
   mismo origen.
+
+## Protección CSRF
+
+`app/web/csrf.py` crea el `CSRFProtect` de Flask-WTF y `app.py` lo activa
+con `csrf.init_app(app)` para **toda la app**: cualquier POST, PUT, PATCH o
+DELETE sin un token válido se rechaza con **400** antes de que corra la
+ruta, así que no cambia nada.
+
+- Todo form nuevo con `method="post"` empieza con:
+
+  ```html
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  ```
+
+- Toda petición JS que cambia datos envía el token en el encabezado
+  `X-CSRFToken` (como el XHR de `ingest_pdf.html`, que lo lee del input
+  oculto del form).
+- Un token faltante o inválido muestra `csrf_error.html` con status 400:
+  "La sesión expiró, recarga la página e intenta de nuevo." y un enlace a
+  `/declaracion` (si el envío venía de ahí) o a `/`. Es una página suelta,
+  sin `_nav.html` ni consultas a la base, con `Cache-Control: no-store`.
+- `/declaracion` está exenta del chequeo automático y llama a
+  `csrf.protect()` a mano, justo después de subir su límite de cuerpo a
+  40 MB: el chequeo automático lee el form antes de la ruta, con el límite
+  global de 12 MB, y rechazaría declaraciones válidas de entre 12 y 40 MB.
+  Su `form_token`, Turnstile, límite por IP y el 413 amigable siguen igual.
+- `WTF_CSRF_TIME_LIMIT=None`: el token no tiene un vencimiento propio, dura
+  lo que dura la sesión (12 horas para el personal, la sesión del navegador
+  para los visitantes anónimos).
+- `/logout` es solo POST: ninguna ruta cambia datos con un GET.
+- Pruebas: el fixture `client` de `tests/web/conftest.py` (y `_fresh_client`
+  de `tests/web/test_users.py`) apaga CSRF (`WTF_CSRF_ENABLED=False`) solo
+  para esas pruebas y restaura el valor al terminar;
+  `tests/web/test_csrf.py` lo prueba encendido, incluido un recorrido de
+  `app/web/templates/*.html` que exige `csrf_token()` en cada form POST.
 
 ## Rutas públicas
 
@@ -250,6 +288,7 @@ independiente que incluye `_nav.html` y duplica su propio `<style>`.
 | `user_form.html` | Crear (`/usuarios/nuevo`: usuario, roles, contraseña repetida) y editar un usuario (`/usuarios/<id>`: roles y casilla Activo, más el form "Cambiar contraseña"); muestra el aviso y el error en su caja. |
 | `_orders_table.html` | Tabla de órdenes reusada por la vista "recientes" y por los resultados de búsqueda por orden. |
 | `login.html` | Card de login (sin nav). |
+| `csrf_error.html` | Página 400 de token CSRF faltante o inválido (sin nav, sin login): "La sesión expiró, recarga la página e intenta de nuevo." y un enlace a `/declaracion` o a `/`. Ver "Protección CSRF". |
 | `declaration.html` | Formulario público de declaración, solo para personas que declaran por sí mismas (sin nav, sin login): un declarante, de 1 a 30 tarjetas de propiedad repetibles (bloque clonado desde un `<template>`) y una sola firma. Los nombres de los campos son el contrato con `public_declaration.py` (ver "Formulario público de declaración"). |
 | `declaration_received.html` | Confirmación genérica "Recibimos tu declaración" (idéntica para toda declaración, con o sin alertas). |
 | `declaration_unavailable.html` | Página 503 cuando el formulario público está apagado (faltan las llaves de Turnstile). |
