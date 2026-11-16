@@ -38,15 +38,31 @@ class TestCatalog:
 
 class TestEffectivePermissions:
     def test_admin_with_no_stored_rows_gets_every_code(self):
-        assert effective_permissions(ADMIN_ROLE, []) == PERMISSION_CODES
-        assert len(effective_permissions("admin", [])) == 13
+        assert effective_permissions([ADMIN_ROLE], []) == PERMISSION_CODES
+        assert len(effective_permissions(["admin"], [])) == 13
 
     def test_admin_with_junk_stored_still_gets_exactly_the_catalog(self):
-        assert effective_permissions(ADMIN_ROLE, ["junk", "records.view"]) == PERMISSION_CODES
+        assert effective_permissions([ADMIN_ROLE], ["junk", "records.view"]) == PERMISSION_CODES
+
+    def test_admin_among_several_roles_gets_every_code(self):
+        assert effective_permissions(["production", ADMIN_ROLE, "clerk"], ["records.view"]) == PERMISSION_CODES
+
+    def test_roles_can_be_a_generator(self):
+        roles = (name for name in ["production", ADMIN_ROLE])
+        assert effective_permissions(roles, []) == PERMISSION_CODES
 
     def test_other_role_gets_stored_minus_unknown_codes(self):
-        result = effective_permissions("point_of_sale", ["records.view", "orders.capture", "gone.code"])
+        result = effective_permissions(["point_of_sale"], ["records.view", "orders.capture", "gone.code"])
         assert result == frozenset({"records.view", "orders.capture"})
 
+    def test_several_roles_get_the_stored_union_minus_unknown_codes(self):
+        result = effective_permissions(
+            ["production", "clerk"], ["records.view", "inventory.manage", "gone.code"]
+        )
+        assert result == frozenset({"records.view", "inventory.manage"})
+
     def test_other_role_with_no_stored_rows_gets_nothing(self):
-        assert effective_permissions("production", []) == frozenset()
+        assert effective_permissions(["production"], []) == frozenset()
+
+    def test_no_roles_and_no_stored_rows_gets_nothing(self):
+        assert effective_permissions([], []) == frozenset()

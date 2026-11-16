@@ -60,7 +60,7 @@ class TestInsertOrder:
             assert cur.fetchone() == (None,)
 
     def test_stores_created_by(self, db_conn):
-        user_id = db.create_user(db_conn, username="alice", password_hash="h", role="admin")
+        user_id = db.create_user(db_conn, username="alice", password_hash="h", roles=["admin"])
         order_id = db.insert_order(db_conn, row=make_row(), customer_id=None, created_by=user_id)
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT created_by FROM production_orders WHERE id = %s", (order_id,))

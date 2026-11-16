@@ -126,12 +126,12 @@ from app.core.normalize import INVENTORY_CATEGORIES  # noqa: E402
 
 TABLES = (
     "plates", "production_orders", "blank_preparations", "inventory_categories",
-    "customers", "users", "plate_type_prices",
+    "customers", "users", "user_roles", "plate_type_prices",
 )
 _SCHEMA_PATH = os.path.join(_REPO_ROOT, "init.sql")
 
-# Seeded into `users` by `clean_db` on every test (see its docstring) --
-# (username, password_hash, role). This is now the ONLY place these three
+# Seeded into `users`, plus one `user_roles` row each, by `clean_db` on every
+# test (see its docstring) -- (username, password_hash, role). This is now the ONLY place these three
 # identities are made valid for an actual login; AUTH_USERS/AUTH_ROLES above
 # no longer feed the live login flow at all.
 _TEST_USERS: tuple[tuple[str, str, str], ...] = (
@@ -305,8 +305,8 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
     TABLES/truncated here on purpose -- it's static and never touched by
     tests, so it stays seeded from `_db_ready`'s one-time schema setup.
 
-    **Fase 2**: also reseeds `_TEST_USERS` into `users` right after
-    truncating it. This matters more than it looks: `users` IS in TABLES
+    **Fase 2**: also reseeds `_TEST_USERS` into `users`, and each one's
+    single role into `user_roles`, right after truncating them. This matters more than it looks: `users` IS in TABLES
     (so every test starts with a clean one), but `_db_ready`'s one-time
     `schema_migrate.main()` backfill of AUTH_USERS/AUTH_ROLES into `users`
     only ever runs ONCE per physical `plates_test` database (tracked in
@@ -362,8 +362,12 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
                 [(category,) for category in INVENTORY_CATEGORIES],
             )
             cur.executemany(
-                "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)",
-                _TEST_USERS,
+                "INSERT INTO users (username, password_hash) VALUES (%s, %s)",
+                [(username, password_hash) for username, password_hash, _role in _TEST_USERS],
+            )
+            cur.executemany(
+                "INSERT INTO user_roles (user_id, role) SELECT id, %s FROM users WHERE username = %s",
+                [(role, username) for username, _password_hash, role in _TEST_USERS],
             )
         _push_savepoint()
 
