@@ -37,12 +37,14 @@ from app import schema_migrate
 from app.core import db
 from app.core.models import ExtractedRow
 from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
+from app.core.permissions import PERMISSIONS
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _INIT_SQL = (_REPO_ROOT / "init.sql").read_text(encoding="utf-8")
 _MIGRATIONS_DIR = _REPO_ROOT / "app" / "migrations"
 _0015_SQL = (_MIGRATIONS_DIR / "0015_roles_and_permissions.sql").read_text(encoding="utf-8")
 _0016_SQL = (_MIGRATIONS_DIR / "0016_production_status.sql").read_text(encoding="utf-8")
+_0017_SQL = (_MIGRATIONS_DIR / "0017_permissions.sql").read_text(encoding="utf-8")
 
 # Snapshot of init.sql exactly as it was immediately BEFORE the Fase 1
 # POS-fields schema change (production_orders/plates/inventory_categories/
@@ -98,7 +100,7 @@ _APP_TABLES = (
     "production_orders", "plates", "blank_preparations", "inventory_categories",
     "customers", "users", "plate_type_prices", "schema_migrations", "plate_types",
     "ownership_cards", "declarations", "declaration_cards", "roles", "role_permissions",
-    "production_order_events",
+    "production_order_events", "permissions",
 )
 
 
@@ -443,6 +445,23 @@ class TestApplySqlMigrations:
                 "AND table_schema = current_schema()"
             )
             assert cur.fetchall() == [("'pending'::text", "NO")]
+
+    def test_0017_permissions_sql_is_safe_to_apply_twice_directly(self, db_conn):
+        """Re-applying it on the already-migrated schema raises nothing and
+        changes no permissions/role_permissions row counts."""
+
+        def counts() -> tuple[int, int]:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute("SELECT (SELECT count(*) FROM permissions), (SELECT count(*) FROM role_permissions)")
+                row = cur.fetchone()
+                assert row is not None
+                return row[0], row[1]
+
+        before = counts()
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(_0017_SQL)
+            cur.execute(_0017_SQL)
+        assert counts() == before
 
 
 # --------------------------------------------------------------------------
@@ -1220,6 +1239,60 @@ class TestRolesAndPermissions:
 
         assert legacy == ("legacy_role", False)
         assert legacy_permissions == (0,)
+        assert fkeys == (1,)
+
+
+class TestPermissions:
+    """app/migrations/0017_permissions.sql: the `permissions` catalog seed
+    and the role_permissions_permission_fkey FK."""
+
+    SCHEMA = "permissions_0017_test"
+
+    def test_permissions_table_matches_permissions_catalog_exactly(self, db_conn):
+        """Guard against the hand-copied seed SQL (init.sql AND
+        0017_permissions.sql) drifting from app/core/permissions.py's
+        PERMISSIONS: same codes, same labels, same order."""
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT code, label FROM permissions ORDER BY sort_order")
+            seeded = cur.fetchall()
+        assert seeded == list(PERMISSIONS)
+
+    def test_unknown_permission_is_deleted_and_fk_added(self, db_conn):
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {self.SCHEMA} CASCADE")
+            cur.execute(f"CREATE SCHEMA {self.SCHEMA}")
+            cur.execute(f"SET search_path TO {self.SCHEMA}")
+            cur.execute(_PRE_0015_USERS_SQL)
+            cur.execute(_0015_SQL)
+            cur.execute("SELECT role, permission FROM role_permissions")
+            known_before = set(cur.fetchall())
+            cur.execute("INSERT INTO role_permissions (role, permission) VALUES ('production', 'gone.code')")
+        db_conn.commit()
+        try:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute(_0017_SQL)
+            db_conn.commit()
+
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute("SELECT role, permission FROM role_permissions")
+                after = set(cur.fetchall())
+                cur.execute(
+                    "SELECT count(*) FROM pg_constraint "
+                    "WHERE conname = 'role_permissions_permission_fkey' "
+                    "AND conrelid = to_regclass('role_permissions')"
+                )
+                fkeys = cur.fetchone()
+                # A second run raises nothing.
+                cur.execute(_0017_SQL)
+            db_conn.commit()
+        finally:
+            with db_conn.cursor(row_factory=tuple_row) as cur:
+                cur.execute("SET search_path TO public")
+                cur.execute(f"DROP SCHEMA IF EXISTS {self.SCHEMA} CASCADE")
+            db_conn.commit()
+
+        assert ("production", "gone.code") not in after
+        assert after == known_before
         assert fkeys == (1,)
 
 

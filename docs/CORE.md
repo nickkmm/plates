@@ -296,7 +296,7 @@ de un único archivo de 556 líneas:
 | `db/ownership_cards.py` (Fase 2 declaraciones) | CRUD de `ownership_cards` (tarjeta de propiedad) y `find_card_conflicts` — ver detalle abajo. |
 | `db/declarations.py` (Fase 3 declaraciones) | Lectura/escritura de `declarations` y `declaration_cards` — ver detalle abajo. |
 | `db/users.py` (Fase 2) | CRUD/lookup de `users` — backend real del login (`app/web/auth.py`), ver detalle abajo. |
-| `db/roles.py` | CRUD de `roles`/`role_permissions` — ver detalle abajo. |
+| `db/roles.py` | CRUD de `roles`/`role_permissions` y lectura de `permissions` — ver detalle abajo. |
 | `db/pricing.py` (Fase 2) | CRUD de `plate_type_prices` — ver detalle abajo. |
 
 Config de conexión desde variables de entorno (`DB_HOST` default `"db"` —
@@ -499,7 +499,10 @@ de los 13 pares `(código, etiqueta)`: el código es un identificador en
 inglés (`orders.capture`, `records.view`, `users.manage`, ...) que se guarda
 en `role_permissions.permission`, y la etiqueta es el texto en español que
 verá el personal. `PERMISSION_CODES` es el `frozenset` de esos códigos y
-`ADMIN_ROLE = "admin"`.
+`ADMIN_ROLE = "admin"`. El catálogo tiene un espejo en la tabla
+`permissions` (mismos códigos, etiquetas y orden; ver
+[`DATABASE.md`](DATABASE.md)) y un test exige que sean idénticos: agregar un
+código requiere una migración nueva y una entrada en la tupla.
 
 `effective_permissions(role, stored)` devuelve los permisos reales de un
 rol: para `ADMIN_ROLE`, siempre los 13 códigos (sin importar lo que haya
@@ -511,22 +514,28 @@ cada request: cada ruta protegida pide un código con
 
 ### `db/roles.py`
 
-Lectura/escritura de `roles` y `role_permissions` (ver
-[`DATABASE.md`](DATABASE.md)). `app/web/auth.py` lee
+Lectura/escritura de `roles` y `role_permissions`, y lectura de
+`permissions` (ver [`DATABASE.md`](DATABASE.md)). `app/web/auth.py` lee
 `get_role_permissions` en cada request para decidir el acceso; las
-escrituras son para una futura pantalla de gestión de roles. Los códigos de permiso se validan contra
-`permissions.PERMISSION_CODES` en Python antes de escribir (mismo patrón que
-`pricing.set_price` con `normalize.PLATE_TYPES`). No protege los roles del
+escrituras y `list_permissions` son para una futura pantalla de gestión de
+roles. El catálogo `permissions.PERMISSIONS` tiene un espejo en la tabla
+`permissions`. Los códigos de permiso se validan contra
+`permissions.PERMISSION_CODES` en Python antes de escribir, lo que da un
+`ValueError` claro, y además los exige la FK
+`role_permissions_permission_fkey` (migración `0017`). No protege los roles del
 sistema ni al último admin activo: eso lo decidirá la pantalla de gestión
 con `is_system` y `count_active_users_with_role`.
 
 `RoleRecord(name, label, is_system, permissions, user_count)`:
 `permissions` son los códigos guardados en orden alfabético y `user_count`
 cuenta todos los usuarios con ese rol, activos o no.
+`PermissionRecord(code, label)`: un renglón de `permissions`, un código del
+catálogo y su etiqueta en español.
 
 | Función | Qué hace |
 |---|---|
 | `list_roles(conn)` | Todos los roles: primero los del sistema, luego por `label`. |
+| `list_permissions(conn)` | Todo el catálogo de `permissions` como `PermissionRecord`, en el orden de `sort_order` (el de `PERMISSIONS`). |
 | `get_role(conn, name)` | `RoleRecord` o `None`. |
 | `get_role_permissions(conn, name)` | Los códigos guardados (`frozenset`, vacío si el rol no existe). No aplica `effective_permissions`: eso lo hace quien llama. |
 | `create_role(conn, *, name, label, permissions)` | Inserta un rol no-sistema y sus permisos. `ValueError` antes de escribir si algún código no está en el catálogo; un `name` o `label` repetido levanta `UniqueViolation` (sin pre-chequeo). |
