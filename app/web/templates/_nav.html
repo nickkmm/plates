@@ -10,5 +10,5 @@
   {% for endpoint, label, _permission, active_endpoints in nav_items %}
   <a href="{{ url_for(endpoint) }}" class="{{ 'on' if request.endpoint in active_endpoints }}">{{ label }}</a>
   {% endfor %}
-  <form method="post" action="{{ url_for('auth_routes.logout') }}" class="logout"><button type="submit" title="Cerrar sesión">Salir</button></form>
+  <form method="post" action="{{ url_for('auth_routes.logout') }}" class="logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" title="Cerrar sesión">Salir</button></form>
 </nav>

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Sesión expirada</title>
+  <style>
+    :root { --blue:#0b6bcb; --red:#d33; --ink:#222; }
+    body { font-family: system-ui, sans-serif; color: var(--ink); background:#f3f6fb;
+           min-height:100vh; margin:0; display:flex; align-items:center; justify-content:center; padding:1rem; }
+    .card { background:#fff; border:1px solid #e2e2e2; border-radius:14px;
+            box-shadow:0 4px 18px rgba(0,0,0,.07); padding:2rem 1.8rem; width:100%; max-width:360px; box-sizing:border-box; }
+    .brand { text-align:center; font-weight:800; color:var(--blue); letter-spacing:.5px; margin-bottom:.4rem; }
+    h1 { font-size:1.3rem; margin:0 0 1.4rem; text-align:center; }
+    .error { background:#fdecec; border:1px solid var(--red); border-radius:8px;
+             padding:.7rem .9rem; color:#900; font-size:.9rem; margin-bottom:1.2rem; }
+    a.back { display:block; text-align:center; background:var(--blue); color:#fff; border-radius:8px;
+             padding:.7rem; font-size:1rem; font-weight:600; text-decoration:none; }
+    a.back:hover { background:#0958a8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">INGSE</div>
+    <h1>Sesión expirada</h1>
+    <div class="error">La sesión expiró, recarga la página e intenta de nuevo.</div>
+    <a class="back" href="{{ back_url }}">Volver</a>
+  </div>
+</body>
+</html>

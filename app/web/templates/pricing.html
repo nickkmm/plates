@@ -48,6 +48,7 @@
         <td>{{ r.updated_by or "" }}</td>
         <td class="actions">
           <form method="post" action="{{ url_for('pricing.precios_update', plate_type=r.plate_type) }}" style="display:flex; gap:.4rem; align-items:center">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="text" name="unit_price" placeholder="precio" value="{{ r.unit_price if r.unit_price is not none else '' }}" inputmode="decimal" required>
             <button type="submit">Guardar</button>
           </form>

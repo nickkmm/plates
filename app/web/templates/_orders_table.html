@@ -15,6 +15,7 @@
         {% if can('records.delete') %}
         <form method="post" action="{{ url_for('records.records_delete') }}" style="display:inline"
               onsubmit="return confirm('¿Eliminar la orden {{ r.order_number }} ({{ r.total_qty }} placa(s))?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="order_id" value="{{ r.id }}">
           <button class="del" type="submit">Eliminar</button>
         </form>

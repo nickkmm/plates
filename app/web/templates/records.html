@@ -41,6 +41,7 @@
   </form>
 
   <form class="search" method="post" action="{{ url_for('records.records_search_pdf') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="file" name="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx">
     <button type="submit">Buscar por archivo</button>
   </form>

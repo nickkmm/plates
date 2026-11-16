@@ -65,6 +65,7 @@
 
   <h2>Registrar alistamiento (entrada de blancos / material)</h2>
   <form class="inline" method="post" action="{{ url_for('inventory.inventory_alistado') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Categoría
       <select name="category" required>
         {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}

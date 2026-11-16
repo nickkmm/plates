@@ -24,7 +24,7 @@ one module per domain:
   users.py         -- GET /usuarios, GET/POST /usuarios/nuevo,
                       GET/POST /usuarios/<id>, POST /usuarios/<id>/password
                       (admin-only login account management)
-  auth_routes.py   -- GET/POST /login, GET/POST /logout
+  auth_routes.py   -- GET/POST /login, POST /logout
   public_declaration.py -- GET/POST /declaracion (PUBLIC sworn-declaration
                       form, no login; 503 until Turnstile is configured)
 
@@ -35,6 +35,11 @@ app.web.auth.permission_required and app/core/permissions.py. `/` only
 requires a logged-in user (app.web.auth.authenticated) and sends them to the
 first nav entry they may open (app/web/navigation.py), or answers a 403 page
 when their role has no permissions.
+
+Every POST/PUT/PATCH/DELETE also needs a valid CSRF token (Flask-WTF
+CSRFProtect, app/web/csrf.py); a missing or invalid one answers the 400 page
+csrf_error.html. /declaracion checks it by hand, after raising its own body
+cap. See docs/WEB.md, "Protección CSRF".
 """
 
 from __future__ import annotations
@@ -44,7 +49,8 @@ import os
 from datetime import timedelta
 
 import sentry_sdk
-from flask import Flask, redirect, render_template, url_for
+from flask import Flask, Response, make_response, redirect, render_template, request, url_for
+from flask_wtf.csrf import CSRFError
 from sentry_sdk.integrations.flask import FlaskIntegration
 
 from app.core.timezones import format_bogota
@@ -61,6 +67,7 @@ from app.web.blueprints.public_declaration import bp as public_declaration_bp
 from app.web.blueprints.records import bp as records_bp
 from app.web.blueprints.review import bp as review_bp
 from app.web.blueprints.users import bp as users_bp
+from app.web.csrf import csrf
 from app.web.helpers import format_cop
 from app.web.navigation import NAV_ITEMS
 
@@ -90,6 +97,7 @@ if not SECRET_KEY:
         'python -c "import secrets; print(secrets.token_hex(32))"'
     )
 app.secret_key = SECRET_KEY
+csrf.init_app(app)
 
 app.register_blueprint(auth_routes_bp)
 app.register_blueprint(cash_summary_bp)
@@ -116,7 +124,24 @@ app.config.update(
     # default, which would reject a gestor submission.
     MAX_CONTENT_LENGTH=12 * 1024 * 1024,
     MAX_FORM_MEMORY_SIZE=2 * 1024 * 1024,
+    # A CSRF token lives as long as the session (12 h for staff, the browser
+    # session for anonymous visitors), so a slow /declaracion is never rejected.
+    WTF_CSRF_TIME_LIMIT=None,
 )
+
+
+@app.errorhandler(CSRFError)
+def _csrf_error(_exc: CSRFError) -> Response:
+    """Missing or invalid CSRF token: a standalone Spanish page with a link
+    back to the public form or to `/`. Rendered straight from the Jinja
+    environment, skipping the context processors, so it never looks up the
+    user or their permissions in the database."""
+    back_url = "/declaracion" if request.path == "/declaracion" else url_for("index")
+    body = app.jinja_env.get_template("csrf_error.html").render(back_url=back_url)
+    response = make_response(body, 400)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
 
 @app.context_processor
 def _inject_permissions() -> dict:

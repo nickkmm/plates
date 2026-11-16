@@ -13,3 +13,5 @@ tzdata==2026.6
 # export with it. Was dev-only (tests/pdf_fixtures.py's synthetic pedido
 # PDFs); promoted here now that a real route uses it in production too.
 reportlab==5.1.0
+# Runtime: app-wide CSRF protection (CSRFProtect and the csrf_token() template global).
+Flask-WTF==1.3.0

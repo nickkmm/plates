@@ -35,6 +35,7 @@
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
   <form id="pdfForm" method="post" action="{{ url_for('ingest.ingest_pdf') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <fieldset>
       <legend>Archivo</legend>
       <label>Archivo del pedido
@@ -73,6 +74,7 @@
 
         var xhr = new XMLHttpRequest();
         xhr.open("POST", form.action, true);
+        xhr.setRequestHeader("X-CSRFToken", form.elements["csrf_token"].value);
         xhr.upload.addEventListener("progress", function (ev) {
           if (!ev.lengthComputable) return;
           var pct = Math.round((ev.loaded / ev.total) * 100);

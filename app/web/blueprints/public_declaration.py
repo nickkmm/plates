@@ -7,7 +7,8 @@ login decorator and everything else here is defence in depth:
   (`TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`) or `TURNSTILE_BYPASS` is on
   (dev/tests). Otherwise GET and POST answer 503, so production exposes
   nothing until the owner sets the Cloudflare keys.
-* POST pipeline, cheapest check first: honeypot, signed form token (minimum
+* POST pipeline, cheapest check first: CSRF token (checked by hand, after
+  raising the body cap; see app/web/csrf.py), honeypot, signed form token (minimum
   and maximum age), Turnstile, per-IP rate limit (counted in Postgres), then
   parsing, signature saving, validation and finally `submit_declaration`.
 * The form is ONLY for individuals declaring for themselves (PROPIETARIO or
@@ -60,6 +61,7 @@ from app.core.declarations import (
     validate_declaration,
 )
 from app.web import antispam
+from app.web.csrf import csrf
 from app.web.uploads import UploadError, resolve_upload_path, save_photo, save_signature_png
 
 bp = Blueprint("public_declaration", __name__)
@@ -73,7 +75,9 @@ MAX_REQUEST_BYTES = 40 * 1024 * 1024
 
 # Form keys never copied into `submitted_data`: the signature is a huge base64
 # blob (stored as a file) and the rest is anti-spam plumbing.
-_EXCLUDED_RAW_KEYS = frozenset({"signature", "form_token", "website", "cf-turnstile-response"})
+_EXCLUDED_RAW_KEYS = frozenset(
+    {"signature", "form_token", "csrf_token", "website", "cf-turnstile-response"}
+)
 _PERSON_FIELDS = (
     "name", "document_type", "document_number", "address", "neighborhood",
     "municipality", "phone", "email",
@@ -290,6 +294,7 @@ def declaration_form() -> Response:
 
 
 @bp.post("/declaracion")
+@csrf.exempt
 def declaration_submit() -> Response:
     if not _form_enabled():
         return _page("declaration_unavailable.html", 503)
@@ -297,6 +302,12 @@ def declaration_submit() -> Response:
     # The form carries the identity photos: raise the body cap for this route
     # only (before the form is parsed); every other route keeps the global one.
     request.max_content_length = MAX_REQUEST_BYTES
+    # CSRF is checked here by hand, not by the app-wide check: that one runs
+    # before this route and would parse the body under the global 12 MB cap.
+    # A bad token raises CSRFError (the app's 400 page); nothing is stored.
+    # Like the automatic check, it follows WTF_CSRF_ENABLED (off in tests).
+    if current_app.config["WTF_CSRF_ENABLED"]:
+        csrf.protect()
     form = request.form
 
     # a. honeypot: pretend success, store nothing.

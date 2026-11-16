@@ -38,6 +38,7 @@
       {% for r in rows %}
       <tr>
         <form method="post" action="{{ url_for('review.review_update') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="plate_id" value="{{ r.id }}">
         <td>{{ r.order_number }}</td>
         <td>{{ r.order_date }}</td>
@@ -50,11 +51,13 @@
           <button class="save" type="submit">Guardar</button>
         </form>
           <form method="post" action="{{ url_for('review.review_resolve') }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="plate_id" value="{{ r.id }}">
             <button class="ok" type="submit">Revisada</button>
           </form>
           <form method="post" action="{{ url_for('review.review_delete') }}" style="display:inline"
                 onsubmit="return confirm('¿Eliminar esta placa?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="plate_id" value="{{ r.id }}">
             <button class="del" type="submit">Eliminar</button>
           </form>
