@@ -103,13 +103,13 @@ CREATE TABLE customers (
 );
 
 -- Roles and their permissions (see app/migrations/0015_roles_and_permissions.sql
--- and docs/DATABASE.md). name is the English identifier stored in users.role;
--- label is the Spanish display name. `permissions` mirrors the catalog in
--- app/core/permissions.py (same codes, labels and order; see
+-- and docs/DATABASE.md). name is the English identifier stored in
+-- user_roles.role; label is the Spanish display name. `permissions` mirrors
+-- the catalog in app/core/permissions.py (same codes, labels and order; see
 -- app/migrations/0017_permissions.sql), and role_permissions.permission is a
 -- FK to permissions(code): codes are validated in Python first and enforced
--- by the FK. Created before `users` so users.role can reference roles(name)
--- directly.
+-- by the FK. Created before `users` and `user_roles` so user_roles.role can
+-- reference roles(name) directly.
 CREATE TABLE roles (
     name TEXT PRIMARY KEY,
     label TEXT NOT NULL UNIQUE,
@@ -181,15 +181,30 @@ ON CONFLICT DO NOTHING;
 -- Real RBAC, replacing the AUTH_USERS/AUTH_ROLES env vars (see docs/WEB.md).
 -- Table/columns named in English from birth -- Fase 1 originally shipped
 -- this as `usuarios`/`rol`/`activo`; Fase 1c renamed it in production (see
--- app/migrations/0003_rename_to_english.sql).
+-- app/migrations/0003_rename_to_english.sql). A user's roles live in
+-- user_roles below, not on this table (see
+-- app/migrations/0018_user_roles.sql).
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,   -- same werkzeug format as AUTH_USERS today
-    role TEXT NOT NULL CONSTRAINT users_role_fkey REFERENCES roles(name) ON UPDATE CASCADE,  -- admin / production / point_of_sale
     active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT now()
 );
+
+-- A user holds several roles, one row each (see
+-- app/migrations/0018_user_roles.sql and docs/DATABASE.md). Their
+-- permissions are the union of those roles' role_permissions. role has no
+-- ON DELETE: a role any user still holds can't be deleted. assigned_by is
+-- NULL for rows backfilled from the old users.role column.
+CREATE TABLE user_roles (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL REFERENCES roles(name) ON UPDATE CASCADE,
+    assigned_at TIMESTAMP NOT NULL DEFAULT now(),
+    assigned_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    PRIMARY KEY (user_id, role)
+);
+CREATE INDEX user_roles_role_idx ON user_roles (role);
 
 -- Colombian "tarjeta de propiedad", identified by its "licencia de tránsito"
 -- (see app/migrations/0006_ownership_cards.sql and docs/DATABASE.md). Three
@@ -283,13 +298,40 @@ CREATE TABLE plate_type_prices (
 );
 
 -- Bookkeeping for app/schema_migrate.py (python -m app.schema_migrate), which
--- applies app/migrations/*.sql to an already-initialized database. Not used
--- by init.sql itself -- included here only so a fresh database ends up with
--- the exact same schema as an old one that had the migrations applied.
+-- applies app/migrations/*.sql to an already-initialized database. Included
+-- here so a fresh database ends up with the exact same schema as an old one
+-- that had the migrations applied.
 CREATE TABLE schema_migrations (
     version TEXT PRIMARY KEY,
     applied_at TIMESTAMP DEFAULT now()
 );
+
+-- init.sql already contains the schema of every app/migrations/*.sql file,
+-- so they are recorded as applied here and the runner never replays them on
+-- a fresh database. Replaying them would fail: 0004 and 0015 read and write
+-- users.role, which no longer exists. Every new migration must add its row
+-- here too. The Python backfill versions (0002_backfill_clientes,
+-- 0003_backfill_usuarios) are deliberately not listed, so backfill_users
+-- still runs on a fresh database.
+INSERT INTO schema_migrations (version) VALUES
+    ('0001_pos_fields.sql'),
+    ('0002_reference_integrity.sql'),
+    ('0003_rename_to_english.sql'),
+    ('0004_translate_role_values_to_english.sql'),
+    ('0005_customer_types_and_person_fields.sql'),
+    ('0006_ownership_cards.sql'),
+    ('0007_declarations.sql'),
+    ('0008_plates_ownership_card_id.sql'),
+    ('0009_declaration_cards.sql'),
+    ('0010_declarations_production_order.sql'),
+    ('0011_declarations_notarized_received.sql'),
+    ('0012_declaration_photos.sql'),
+    ('0013_declaration_data_policy.sql'),
+    ('0014_declaration_used_plates_photo.sql'),
+    ('0015_roles_and_permissions.sql'),
+    ('0016_production_status.sql'),
+    ('0017_permissions.sql'),
+    ('0018_user_roles.sql');
 
 -- New production_orders columns for the full sale order (POS), all nullable
 -- and additive -- no CHECK constraints, consistent with the rest of this

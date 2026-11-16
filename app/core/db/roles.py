@@ -1,7 +1,8 @@
-"""roles / role_permissions / permissions reads/writes. app/web/auth.py reads a
-role's permissions (get_role_permissions) on every request to decide route
-access; the writes and list_permissions are the data layer for a future admin
-role-management screen.
+"""roles / role_permissions / permissions reads/writes. get_role_permissions
+reads one role's stored codes (app/web/auth.py reads a user's, the union over
+all their roles, through users.get_user_permissions); the writes and
+list_permissions are the data layer for a future admin role-management
+screen.
 
 Permission codes are validated against app/core/permissions.py's
 PERMISSION_CODES in Python before anything is written, which gives a clean
@@ -27,7 +28,8 @@ from app.core.permissions import PERMISSION_CODES
 @dataclass
 class RoleRecord:
     """One `roles` row plus its stored permission codes (sorted
-    alphabetically) and how many users -- active or not -- have the role."""
+    alphabetically) and how many users -- active or not -- hold the role
+    (user_roles rows)."""
 
     name: str
     label: str
@@ -51,7 +53,7 @@ _SELECT_ROLES = """
                 FROM role_permissions rp WHERE rp.role = r.name),
                '{}'
            ) AS permissions,
-           (SELECT count(*) FROM users u WHERE u.role = r.name)::int AS user_count
+           (SELECT count(*) FROM user_roles ur WHERE ur.role = r.name)::int AS user_count
     FROM roles r
 """
 
@@ -138,8 +140,8 @@ def update_role(
 
 def delete_role(conn: psycopg.Connection[DictRow], name: str) -> bool:
     """Delete a role; its permission rows go with it (ON DELETE CASCADE).
-    False when there was no such role. No pre-check: while any user still has
-    the role, users_role_fkey raises psycopg's ForeignKeyViolation."""
+    False when there was no such role. No pre-check: while any user still holds
+    the role, user_roles_role_fkey raises psycopg's ForeignKeyViolation."""
     with conn.cursor() as cur:
         cur.execute("DELETE FROM roles WHERE name = %s", (name,))
         return cur.rowcount > 0

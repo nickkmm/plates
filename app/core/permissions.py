@@ -1,4 +1,4 @@
-"""The permission catalog: every action a role can be granted.
+"""The permission catalog: every action a user's roles can be granted.
 
 Pure Python (no Flask, no database). Codes are English identifiers stored in
 `role_permissions.permission`; labels are the Spanish text staff will see.
@@ -37,9 +37,11 @@ PERMISSION_CODES: frozenset[str] = frozenset(code for code, _ in PERMISSIONS)
 ADMIN_ROLE = "admin"
 
 
-def effective_permissions(role: str, stored: Iterable[str]) -> frozenset[str]:
-    """The permissions `role` really has: every code for ADMIN_ROLE, otherwise
-    the `stored` codes (role_permissions rows) that are still in the catalog."""
-    if role == ADMIN_ROLE:
+def effective_permissions(roles: Iterable[str], stored: Iterable[str]) -> frozenset[str]:
+    """The permissions a user with `roles` really has: every code when
+    ADMIN_ROLE is one of them, otherwise the `stored` codes that are still in
+    the catalog. `stored` is the union of the role_permissions codes of all
+    the user's roles."""
+    if ADMIN_ROLE in set(roles):
         return PERMISSION_CODES
     return frozenset(stored) & PERMISSION_CODES
