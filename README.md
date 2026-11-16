@@ -60,7 +60,8 @@ runs this automatically after every production deploy.
 
 The web app is gated by a session-based login page (`/login`). Login is
 **DB-backed**: `app/web/auth.py` checks the `users` table (username,
-password hash, role, active) on every request, not env vars.
+password hash, active, and the user's roles in `user_roles`) on every
+request, not env vars.
 
 - `SECRET_KEY` — signs session cookies. Generate with
   `python -c "import secrets; print(secrets.token_hex(32))"`. Required,

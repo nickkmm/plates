@@ -64,8 +64,13 @@ igual toda placa que ya existía), así que aparece en `/review` y en el resumen
   (`orders.capture`, `records.view`, ...) y etiqueta en español. Los
   permisos de cada rol viven en la tabla `role_permissions` (ver
   [`DATABASE.md`](DATABASE.md)).
+- **Varios roles por usuario**: los roles de cada usuario viven en la tabla
+  `user_roles` (migración `0018`), y un usuario puede tener varios. Sus
+  permisos son la **unión** de los permisos de todos sus roles; si
+  cualquiera de ellos es `admin`, tiene todos los permisos. Todos los roles
+  del usuario cuentan en cada sesión.
 - **Roles sembrados**: `admin`, `point_of_sale` (PTO.V), `production` —
-  valores en inglés a propósito: `users.role` nunca se muestra al usuario,
+  valores en inglés a propósito: el nombre del rol nunca se muestra al usuario,
   solo se compara para permisos, así que no es dato de negocio en español
   (ver `CLAUDE.md`). Hasta `app/migrations/0004_translate_role_values_to_english.sql`
   los valores reales eran `produccion`/`punto_venta`. La siembra de
@@ -79,33 +84,36 @@ igual toda placa que ya existía), así que aparece en `/review` y en el resumen
     de producción.
   - `production`: `records.view` (solo consulta) y los códigos de
     producción.
-- **Chequeo en cada request**: `current_user()` lee el usuario (`users`) y
-  los permisos efectivos de su rol (`role_permissions`) en una sola
+- **Chequeo en cada request**: `current_user()` lee el usuario (`users`),
+  sus roles (`user_roles`) y los permisos efectivos de todos ellos
+  (`role_permissions`, con `db.get_user_permissions`) en una sola
   conexión, la primera vez que se pide en el request, y los guarda en
   `flask.g` (las llamadas siguientes del mismo request no consultan otra
   vez).
   - `@permission_required("<código>")` protege cada ruta: sesión
     incompleta, usuario inexistente o **desactivado** → limpia la sesión y
-    redirige a `/login`; si el rol no tiene el código → 403. Cada ruta
+    redirige a `/login`; si ninguno de sus roles tiene el código → 403. Cada ruta
     pide un solo código, y **ninguna ruta que escribe acepta
     `records.view`**.
   - `@authenticated` hace los mismos chequeos sin pedir permiso; solo lo
     usa `/`.
   - `has_permission(código)` responde `True` solo si hay un usuario activo
-    cuyo rol tiene el código; sin sesión responde `False` (nunca falla).
+    con algún rol que tiene el código; sin sesión responde `False` (nunca falla).
     Los templates lo usan como `can('...')`.
-  - Por eso **desactivar un usuario lo saca en su próximo request**, y un
-    **cambio de rol aplica en el próximo request** (`session["role"]` se
-    actualiza al rol actual).
+  - Por eso **desactivar un usuario lo saca en su próximo request**, y
+    **asignarle o quitarle un rol aplica en el próximo request**: los roles
+    se leen de la base de datos, nunca de la sesión.
 - **Login vía tabla `users` (Fase 2)** — `app/web/auth.py::authenticate`
   consulta `users` (vía `app/core/db/users.py`) en cada login, ya no lee
   `AUTH_USERS`/`AUTH_ROLES`. Esas dos variables de entorno y las funciones
   `load_users()`/`load_roles()` que las parsean **se mantienen**, pero
   solo como el código que hizo el backfill histórico (`app.schema_migrate`)
-  — no los toca el login en vivo. La sesión guarda `user`/`role` y, desde
-  la Fase 2, `user_id` (`users.id`) → `production_orders.created_by`; una
-  sesión de antes de este cambio (sin `user_id`) se trata como stale y
-  fuerza un login nuevo, no un error.
+  — no los toca el login en vivo. La sesión guarda solo `user` y, desde la
+  Fase 2, `user_id` (`users.id`) → `production_orders.created_by`; **no
+  guarda el rol**. Una sesión de antes de la Fase 2 (sin `user_id`) se trata
+  como stale y fuerza un login nuevo, no un error. Una cookie emitida antes
+  de la migración `0018`, que todavía trae `role`, sigue siendo válida: ese
+  valor se ignora y el acceso sale de los roles en la base de datos.
 - **Navegación**: `app/web/navigation.py::NAV_ITEMS` es la lista ordenada de
   pestañas (endpoint, etiqueta, permiso, endpoints activos). El context
   processor de `app.py` expone `nav_items` (solo las que el usuario puede

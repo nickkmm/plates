@@ -482,15 +482,23 @@ Backend real del login — reemplaza los env vars `AUTH_USERS`/`AUTH_ROLES`.
 | Función | Qué hace |
 |---|---|
 | `get_user_by_username(conn, username)` | Usada por `app/web/auth.py::authenticate` en cada login. Devuelve la fila aunque `active=False` — es `authenticate` quien decide que un usuario inactivo no puede loguearse, no este lookup. |
-| `get_user_by_id(conn, user_id)` | Para `session["user_id"]` → `production_orders.created_by`. |
-| `create_user` / `list_users` | CRUD básico, para una futura pantalla de administración de usuarios (no consumidos por ninguna ruta activa hoy). |
-| `update_user(conn, user_id, *, role, active)` | Cambia el rol y el estado activo. `False` si no existe el usuario. Un rol inexistente lo rechaza la FK `users_role_fkey` (`ForeignKeyViolation`). |
+| `get_user_by_id(conn, user_id)` | Para `session["user_id"]` → `production_orders.created_by`, y para `current_user()` en cada request. |
+| `create_user(conn, *, username, password_hash, roles, active=True, assigned_by=None)` | Inserta el usuario y un renglón de `user_roles` por cada rol distinto (los repetidos se ignoran). Un rol inexistente lo rechaza la FK `user_roles_role_fkey` (`ForeignKeyViolation`). |
+| `list_users(conn)` | Todos los usuarios, por `id`. |
+| `list_users_with_role(conn, role)` | Los usuarios (activos o no) que tienen ese rol, por `id`. |
+| `update_user(conn, user_id, *, active)` | Cambia solo el estado activo. `False` si no existe el usuario. |
+| `set_user_roles(conn, user_id, roles, *, assigned_by=None)` | **Reemplaza** el conjunto de roles: borra los que no están en `roles` e inserta los que faltan con `assigned_by`; los que se quedan conservan su `assigned_at`. `False` sin escribir nada si no existe el usuario. |
+| `assign_role(conn, user_id, role, *, assigned_by=None)` | Agrega un rol. `True` si agregó el renglón, `False` si el usuario ya lo tenía. |
+| `unassign_role(conn, user_id, role)` | Quita un rol. `True` si borró el renglón. |
+| `get_user_permissions(conn, user_id)` | La unión de los códigos guardados en `role_permissions` para todos los roles del usuario, en una sola consulta (`frozenset`). No aplica `effective_permissions`: eso lo hace quien llama (`current_user()`). |
 | `set_user_password(conn, user_id, password_hash)` | Reemplaza el hash (formato werkzeug, lo calcula quien llama). `False` si no existe el usuario. |
-| `count_active_users_with_role(conn, role)` | Cuántos usuarios **activos** tienen ese rol — para que una futura pantalla de gestión no deje sin ningún admin activo. |
+| `count_active_users_with_role(conn, role)` | Cuántos usuarios **activos** tienen ese rol en `user_roles` — para que una futura pantalla de gestión no deje sin ningún admin activo. |
 
-`UserRecord` trae además `created_at` (default `None`, para no romper a
-quien lo construya a mano). Ninguna de estas funciones nuevas la usa todavía
-una ruta.
+`UserRecord` trae `roles`, los nombres de los roles del usuario en orden
+alfabético (lista vacía si no tiene ninguno), y `created_at` (default
+`None`, para no romper a quien lo construya a mano). Las funciones de
+escritura de roles todavía no las usa ninguna ruta: son para la futura
+pantalla de gestión de usuarios.
 
 ### `permissions.py` (catálogo de permisos)
 
@@ -504,19 +512,22 @@ verá el personal. `PERMISSION_CODES` es el `frozenset` de esos códigos y
 [`DATABASE.md`](DATABASE.md)) y un test exige que sean idénticos: agregar un
 código requiere una migración nueva y una entrada en la tupla.
 
-`effective_permissions(role, stored)` devuelve los permisos reales de un
-rol: para `ADMIN_ROLE`, siempre los 13 códigos (sin importar lo que haya
-guardado, así ningún admin queda sin acceso a un permiso nuevo); para
-cualquier otro rol, los códigos guardados que siguen existiendo en el
-catálogo (los desconocidos se descartan). `app/web/auth.py` lo aplica en
-cada request: cada ruta protegida pide un código con
-`@permission_required` (ver [`WEB.md`](WEB.md)).
+`effective_permissions(roles, stored)` devuelve los permisos reales de un
+usuario con esos roles: si `ADMIN_ROLE` está entre ellos, siempre los 13
+códigos (sin importar lo que haya guardado, así ningún admin queda sin
+acceso a un permiso nuevo); si no, los códigos guardados que siguen
+existiendo en el catálogo (los desconocidos se descartan). `stored` es la
+unión de los códigos de `role_permissions` de todos los roles del usuario
+(`db.get_user_permissions`). `app/web/auth.py` lo aplica en cada request:
+cada ruta protegida pide un código con `@permission_required` (ver
+[`WEB.md`](WEB.md)).
 
 ### `db/roles.py`
 
 Lectura/escritura de `roles` y `role_permissions`, y lectura de
-`permissions` (ver [`DATABASE.md`](DATABASE.md)). `app/web/auth.py` lee
-`get_role_permissions` en cada request para decidir el acceso; las
+`permissions` (ver [`DATABASE.md`](DATABASE.md)). `get_role_permissions` lee
+los códigos de un solo rol (para el acceso en cada request, `app/web/auth.py`
+usa `db.get_user_permissions`, la unión de todos los roles del usuario); las
 escrituras y `list_permissions` son para una futura pantalla de gestión de
 roles. El catálogo `permissions.PERMISSIONS` tiene un espejo en la tabla
 `permissions`. Los códigos de permiso se validan contra
@@ -528,7 +539,7 @@ con `is_system` y `count_active_users_with_role`.
 
 `RoleRecord(name, label, is_system, permissions, user_count)`:
 `permissions` son los códigos guardados en orden alfabético y `user_count`
-cuenta todos los usuarios con ese rol, activos o no.
+cuenta todos los usuarios que tienen ese rol en `user_roles`, activos o no.
 `PermissionRecord(code, label)`: un renglón de `permissions`, un código del
 catálogo y su etiqueta en español.
 
@@ -540,7 +551,7 @@ catálogo y su etiqueta en español.
 | `get_role_permissions(conn, name)` | Los códigos guardados (`frozenset`, vacío si el rol no existe). No aplica `effective_permissions`: eso lo hace quien llama. |
 | `create_role(conn, *, name, label, permissions)` | Inserta un rol no-sistema y sus permisos. `ValueError` antes de escribir si algún código no está en el catálogo; un `name` o `label` repetido levanta `UniqueViolation` (sin pre-chequeo). |
 | `update_role(conn, name, *, label, permissions)` | Cambia la etiqueta y **reemplaza** (no mezcla) los permisos. Misma validación `ValueError`; `False` sin escribir nada si el rol no existe. |
-| `delete_role(conn, name)` | Borra el rol y, en cascada, sus permisos. `False` si no existía. Si algún usuario todavía lo tiene, la FK levanta `ForeignKeyViolation` (sin pre-chequeo). |
+| `delete_role(conn, name)` | Borra el rol y, en cascada, sus permisos. `False` si no existía. Si algún usuario todavía lo tiene, la FK `user_roles_role_fkey` levanta `ForeignKeyViolation` (sin pre-chequeo). |
 
 ### `db/production.py` (estado de producción)
 
