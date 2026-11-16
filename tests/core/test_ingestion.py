@@ -142,7 +142,7 @@ class TestCreatedBy:
             assert cur.fetchone() == (None,)
 
     def test_is_stored_when_given(self, db_conn):
-        user_id = db.create_user(db_conn, username="alice", password_hash="h", role="admin")
+        user_id = db.create_user(db_conn, username="alice", password_hash="h", roles=["admin"])
         process_rows(db_conn, [make_row(order_number="121", plate_number="CRE101")], created_by=user_id)
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT created_by FROM production_orders WHERE order_number = '121'")
@@ -725,7 +725,7 @@ class TestReplaceOrder:
             assert cur.fetchone() == ("PTO.V",)
 
     def test_created_by_records_who_triggered_the_replace(self, db_conn):
-        user_id = db.create_user(db_conn, username="alice", password_hash="h", role="admin")
+        user_id = db.create_user(db_conn, username="alice", password_hash="h", roles=["admin"])
         new_rows = [make_row(order_number="1071", plate_type="CARRO PARTICULAR", plate_number="REP101")]
         replace_order(db_conn, "1071", new_rows, created_by=user_id)
         with db_conn.cursor(row_factory=tuple_row) as cur:

@@ -102,10 +102,7 @@ class TestLogin:
         username, password = test_credentials
         with caplog.at_level(logging.INFO):
             client.post("/login", data={"username": username, "password": password})
-        assert any(
-            "login" in r.message and username in r.message and "admin" in r.message
-            for r in caplog.records
-        )
+        assert any(r.message == f"login: user={username} roles=admin" for r in caplog.records)
 
     def test_failed_login_is_not_logged_as_a_login(self, client, clean_db, caplog):
         with caplog.at_level(logging.INFO):
@@ -120,22 +117,22 @@ class TestLogin:
         resp = client.post("/login", data={"username": "ghost", "password": "whatever"})
         assert resp.status_code == 401
 
-    def test_login_stores_admin_role_in_session_for_user_with_no_auth_roles_entry(
-        self, client, test_credentials
-    ):
-        """test_credentials' username has no AUTH_ROLES entry (see
-        tests/conftest.py) -- role_for() must default it to admin, and
-        login_post must persist that into the session."""
+    def test_login_stores_user_and_user_id_but_no_role_in_session(self, client, test_credentials):
+        """The roles are read from user_roles on every request, never kept in
+        the session."""
         username, password = test_credentials
         client.post("/login", data={"username": username, "password": password})
         with client.session_transaction() as sess:
-            assert sess["role"] == "admin"
+            assert sess["user"] == username
+            assert "user_id" in sess
+            assert "role" not in sess
 
-    def test_login_stores_configured_role_in_session(self, client, produccion_credentials):
+    def test_login_of_another_role_also_stores_no_role(self, client, produccion_credentials):
         username, password = produccion_credentials
         client.post("/login", data={"username": username, "password": password})
         with client.session_transaction() as sess:
-            assert sess["role"] == "production"
+            assert sess["user"] == username
+            assert "role" not in sess
 
     def test_production_role_lands_on_records_not_ingest(self, client, produccion_credentials):
         """Regression guard: login (and '/') used to always redirect to
@@ -161,8 +158,8 @@ class TestStaleSessionPredatingRoles:
     decorators used to treat that as "logged in, role is None, None isn't a
     full-access role" -> a dead-end 403 with no way to recover short of
     manually clearing cookies. It must instead be treated like "not logged
-    in" -- bounce to /login so a fresh login (which does set 'role') fixes
-    it themselves."""
+    in" -- bounce to /login so a fresh login fixes it themselves. Such a
+    cookie also has no 'user_id', which is what marks it stale today."""
 
     def test_full_access_route_redirects_to_login_instead_of_403(self, client):
         with client.session_transaction() as sess:
@@ -187,7 +184,7 @@ class TestStaleSessionPredatingRoles:
 
     def test_a_fresh_login_recovers_full_access(self, client, test_credentials):
         """The whole point: logging out/in again (not clearing cookies by
-        hand) is enough to fix it, since a real login always sets 'role'."""
+        hand) is enough to fix it, since a real login always sets 'user_id'."""
         with client.session_transaction() as sess:
             sess["user"] = "someone"
         client.get("/ingest")  # bounced, session cleared

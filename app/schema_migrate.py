@@ -200,13 +200,17 @@ def backfill_customers(conn: psycopg.Connection[DictRow]) -> None:
 
 
 def backfill_users(conn: psycopg.Connection[DictRow]) -> None:
-    """One-time backfill of `users` from the AUTH_USERS/AUTH_ROLES env vars.
+    """One-time backfill of `users` and their `user_roles` row from the
+    AUTH_USERS/AUTH_ROLES env vars.
 
     Same username/password_hash pairs as today (werkzeug hashing is
-    unchanged) -- nobody's password is reset. A username with no AUTH_ROLES
-    entry defaults to admin, matching app.web.auth.role_for()'s existing
-    behavior. ON CONFLICT (username) DO NOTHING makes a re-run a no-op even
-    without the schema_migrations guard (defense in depth).
+    unchanged) -- nobody's password is reset. Each user gets one role, its
+    AUTH_ROLES entry, defaulting to admin when there is none, matching
+    app.web.auth.role_for()'s existing behavior. It runs after every SQL
+    migration, so the role goes to user_roles (0018), which replaced the old
+    role column on users. ON
+    CONFLICT DO NOTHING on both inserts makes a re-run a no-op even without
+    the schema_migrations guard (defense in depth).
     """
     users = load_users()
     roles = load_roles()
@@ -215,10 +219,17 @@ def backfill_users(conn: psycopg.Connection[DictRow]) -> None:
             for username, password_hash in users.items():
                 cur.execute(
                     """
-                    INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)
+                    INSERT INTO users (username, password_hash) VALUES (%s, %s)
                     ON CONFLICT (username) DO NOTHING
                     """,
-                    (username, password_hash, roles.get(username, ROLE_ADMIN)),
+                    (username, password_hash),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO user_roles (user_id, role) SELECT id, %s FROM users WHERE username = %s
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (roles.get(username, ROLE_ADMIN), username),
                 )
             _record_version(cur, BACKFILL_USERS_VERSION)
         conn.commit()

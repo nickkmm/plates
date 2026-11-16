@@ -30,8 +30,8 @@ class TestListRoles:
 
     def test_permissions_sorted_and_user_count_includes_inactive(self, db_conn):
         db.create_role(db_conn, name="clerk", label="Auxiliar", permissions=["records.view", "orders.capture"])
-        db.create_user(db_conn, username="c1", password_hash="h", role="clerk")
-        db.create_user(db_conn, username="c2", password_hash="h", role="clerk", active=False)
+        db.create_user(db_conn, username="c1", password_hash="h", roles=["clerk"])
+        db.create_user(db_conn, username="c2", password_hash="h", roles=["clerk"], active=False)
         clerk = next(r for r in db.list_roles(db_conn) if r.name == "clerk")
         assert clerk.permissions == ["orders.capture", "records.view"]
         assert clerk.user_count == 2
@@ -135,6 +135,6 @@ class TestDeleteRole:
 
     def test_role_still_held_by_a_user_raises_foreign_key_violation(self, db_conn):
         db.create_role(db_conn, name="clerk", label="Auxiliar", permissions=[])
-        db.create_user(db_conn, username="c1", password_hash="h", role="clerk", active=False)
+        db.create_user(db_conn, username="c1", password_hash="h", roles=["clerk"], active=False)
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
             db.delete_role(db_conn, "clerk")

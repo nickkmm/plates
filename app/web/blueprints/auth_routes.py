@@ -33,10 +33,9 @@ def login_post():
     if user is not None:
         session.clear()
         session["user"] = user.username
-        session["role"] = user.role
         session["user_id"] = user.id
         session.permanent = True
-        current_app.logger.info("login: user=%s role=%s", user.username, user.role)
+        current_app.logger.info("login: user=%s roles=%s", user.username, ",".join(user.roles))
         return redirect(next_url if auth.is_safe_next(next_url) else auth.landing_url())
     return (
         render_template(

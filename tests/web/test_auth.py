@@ -138,18 +138,18 @@ class TestAuthenticate:
     def test_correct_password_returns_the_user_record(self, db_conn):
         db.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse"),
-            role="admin",
+            roles=["admin"],
         )
         db_conn.commit()
         user = auth.authenticate("alice", "correct-horse")
         assert user is not None
         assert user.username == "alice"
-        assert user.role == "admin"
+        assert user.roles == ["admin"]
 
     def test_wrong_password_returns_none(self, db_conn):
         db.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse"),
-            role="admin",
+            roles=["admin"],
         )
         db_conn.commit()
         assert auth.authenticate("alice", "wrong-password") is None
@@ -160,7 +160,7 @@ class TestAuthenticate:
     def test_empty_password_returns_none(self, db_conn):
         db.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse"),
-            role="admin",
+            roles=["admin"],
         )
         db_conn.commit()
         assert auth.authenticate("alice", "") is None
@@ -172,19 +172,19 @@ class TestAuthenticate:
         lookup's)."""
         db.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse"),
-            role="admin", active=False,
+            roles=["admin"], active=False,
         )
         db_conn.commit()
         assert auth.authenticate("alice", "correct-horse") is None
 
-    def test_returns_the_real_role_not_a_default(self, db_conn):
+    def test_returns_the_real_roles_not_a_default(self, db_conn):
         db.create_user(
-            db_conn, username="ptov", password_hash=generate_password_hash("pw"), role="point_of_sale",
+            db_conn, username="ptov", password_hash=generate_password_hash("pw"), roles=["point_of_sale"],
         )
         db_conn.commit()
         user = auth.authenticate("ptov", "pw")
         assert user is not None
-        assert user.role == "point_of_sale"
+        assert user.roles == ["point_of_sale"]
 
 
 class TestVerifyCredentials:
@@ -194,7 +194,7 @@ class TestVerifyCredentials:
     def test_correct_password_is_true(self, db_conn):
         db.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse-battery-staple"),
-            role="admin",
+            roles=["admin"],
         )
         db_conn.commit()
         assert auth.verify_credentials("alice", "correct-horse-battery-staple") is True
@@ -202,7 +202,7 @@ class TestVerifyCredentials:
     def test_wrong_password_is_false(self, db_conn):
         db.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse-battery-staple"),
-            role="admin",
+            roles=["admin"],
         )
         db_conn.commit()
         assert auth.verify_credentials("alice", "wrong-password") is False
@@ -213,31 +213,10 @@ class TestVerifyCredentials:
     def test_empty_password_is_false(self, db_conn):
         db.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse-battery-staple"),
-            role="admin",
+            roles=["admin"],
         )
         db_conn.commit()
         assert auth.verify_credentials("alice", "") is False
-
-
-# --------------------------------------------------------------------------
-# Role constants
-# --------------------------------------------------------------------------
-
-
-class TestRoles:
-    def test_roles_tuple_has_the_three_exact_literals(self):
-        """⚠️ Load-bearing spelling: these are the exact literals already
-        live in production's `users.role` column. 'production' has NO
-        accent -- writing 'producción' here would silently lock out every
-        real user with that role. 'point_of_sale' is lowercase-with-underscore,
-        no accent either."""
-        assert auth.ROLES == ("admin", "production", "point_of_sale")
-
-    def test_no_role_value_has_an_accent(self):
-        for role in auth.ROLES:
-            assert role == role.encode("ascii", "ignore").decode("ascii"), (
-                f"role {role!r} contains a non-ASCII character (accent?)"
-            )
 
 
 # --------------------------------------------------------------------------
@@ -330,7 +309,6 @@ def _log_in_as(client, conn, username):
     assert user is not None
     with client.session_transaction() as sess:
         sess["user"] = user.username
-        sess["role"] = user.role
         sess["user_id"] = user.id
     return user
 
@@ -341,13 +319,15 @@ class TestPermissionRequired:
         assert resp.status_code == 302
         assert "/login" in resp.headers["Location"]
 
-    def test_session_missing_role_redirects_to_login(self, guarded_client):
+    def test_session_without_role_is_accepted(self, guarded_client, db_conn):
+        """The session stores `user` and `user_id` only; the roles come from
+        the database on every request."""
+        user = db.get_user_by_username(db_conn, "puntoventauser")
+        assert user is not None
         with guarded_client.session_transaction() as sess:
-            sess["user"] = "someone"
-            sess["user_id"] = 1
-        resp = guarded_client.get("/capture-only")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
+            sess["user"] = user.username
+            sess["user_id"] = user.id
+        assert guarded_client.get("/capture-only").status_code == 200
 
     def test_session_missing_user_id_redirects_to_login(self, guarded_client):
         """A session predating user_id (role+user but no user_id, e.g. a
@@ -363,7 +343,6 @@ class TestPermissionRequired:
     def test_user_id_of_no_user_redirects_to_login(self, guarded_client, db_conn):
         with guarded_client.session_transaction() as sess:
             sess["user"] = "ghost"
-            sess["role"] = "admin"
             sess["user_id"] = 999999
         resp = guarded_client.get("/capture-only")
         assert resp.status_code == 302
@@ -383,7 +362,7 @@ class TestPermissionRequired:
 
     def test_inactive_user_redirects_to_login_and_clears_the_session(self, guarded_client, db_conn):
         user = _log_in_as(guarded_client, db_conn, "puntoventauser")
-        db.update_user(db_conn, user.id, role=user.role, active=False)
+        db.update_user(db_conn, user.id, active=False)
         db_conn.commit()
         resp = guarded_client.get("/capture-only")
         assert resp.status_code == 302
@@ -391,13 +370,12 @@ class TestPermissionRequired:
         with guarded_client.session_transaction() as sess:
             assert "user_id" not in sess
 
-    def test_role_change_updates_the_session_role(self, guarded_client, db_conn):
+    def test_role_change_applies_on_the_next_request(self, guarded_client, db_conn):
         user = _log_in_as(guarded_client, db_conn, "produccionuser")
-        db.update_user(db_conn, user.id, role="point_of_sale", active=True)
+        assert guarded_client.get("/capture-only").status_code == 403
+        db.set_user_roles(db_conn, user.id, ["point_of_sale"])
         db_conn.commit()
         assert guarded_client.get("/capture-only").status_code == 200
-        with guarded_client.session_transaction() as sess:
-            assert sess["role"] == "point_of_sale"
 
 
 class TestAuthenticated:
@@ -406,13 +384,13 @@ class TestAuthenticated:
         assert resp.status_code == 302
         assert "/login" in resp.headers["Location"]
 
-    def test_session_missing_role_redirects_to_login(self, guarded_client):
+    def test_session_without_role_is_accepted(self, guarded_client, db_conn):
+        user = db.get_user_by_username(db_conn, "produccionuser")
+        assert user is not None
         with guarded_client.session_transaction() as sess:
-            sess["user"] = "someone"
-            sess["user_id"] = 1
-        resp = guarded_client.get("/any-user")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
+            sess["user"] = user.username
+            sess["user_id"] = user.id
+        assert guarded_client.get("/any-user").status_code == 200
 
     def test_session_missing_user_id_redirects_to_login(self, guarded_client):
         with guarded_client.session_transaction() as sess:
@@ -428,7 +406,7 @@ class TestAuthenticated:
 
     def test_inactive_user_redirects_to_login(self, guarded_client, db_conn):
         user = _log_in_as(guarded_client, db_conn, "produccionuser")
-        db.update_user(db_conn, user.id, role=user.role, active=False)
+        db.update_user(db_conn, user.id, active=False)
         db_conn.commit()
         resp = guarded_client.get("/any-user")
         assert resp.status_code == 302

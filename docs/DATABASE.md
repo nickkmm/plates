@@ -27,11 +27,12 @@
 > tanto en producción como en `init.sql` para instalaciones nuevas. Los
 > *valores* guardados (nombres de clientes, `CLIENTE`/`CÉDULA`/
 > `DUEÑO`, `EFECTIVO`, etc.) no cambiaron — son datos de negocio en
-> español, no identificadores. **Excepción posterior**: `users.role` sí
-> tuvo sus valores traducidos a inglés después (`app/migrations/
-> 0004_translate_role_values_to_english.sql`) — no es dato de negocio en
-> español, es un identificador interno que nunca se muestra al usuario
-> (ver la nota en la sección de `users` más abajo y `CLAUDE.md`).
+> español, no identificadores. **Excepción posterior**: los nombres de rol
+> (entonces en la columna `users.role`, hoy en `user_roles.role`) sí
+> tuvieron sus valores traducidos a inglés después (`app/migrations/
+> 0004_translate_role_values_to_english.sql`) — no son dato de negocio en
+> español, son identificadores internos que nunca se muestran al usuario
+> (ver la nota en la sección de `user_roles` más abajo y `CLAUDE.md`).
 >
 > **Aplicar un cambio de esquema a una base ya existente** (con datos
 > reales, no un volumen nuevo) es trabajo del runner `app/schema_migrate.py`
@@ -39,6 +40,15 @@
 > `app/migrations/*.sql` en orden (idempotente, seguro de correr dos veces).
 > `deploy.yml` ya lo invoca automáticamente después de cada
 > `docker compose up -d --build`.
+>
+> **`init.sql` registra las migraciones que ya contiene.** Una base nueva
+> creada con `init.sql` ya tiene el esquema de todas las migraciones, así que
+> `init.sql` inserta en `schema_migrations` el nombre de cada archivo de
+> `app/migrations/*.sql` y el runner no las vuelve a correr (`0004` y `0015`
+> fallarían: leen `users.role`, que ya no existe). Toda migración nueva
+> agrega su renglón a ese `INSERT`. Los backfills de Python
+> (`0002_backfill_clientes`, `0003_backfill_usuarios`) no se registran ahí:
+> siguen corriendo en una base nueva.
 
 ## Diagrama
 
@@ -47,7 +57,8 @@ erDiagram
     production_orders ||--o{ plates : "tiene"
     customers ||--o{ production_orders : "customer_id (nullable)"
     users ||--o{ production_orders : "created_by (nullable)"
-    roles ||--o{ users : "role"
+    users ||--o{ user_roles : "user_id (ON DELETE CASCADE)"
+    roles ||--o{ user_roles : "role"
     roles ||--o{ role_permissions : "role"
     permissions ||--o{ role_permissions : "permission"
     plate_types ||--o{ plates : "plate_type"
@@ -122,9 +133,14 @@ erDiagram
         int id PK
         text username "UNIQUE NOT NULL"
         text password_hash
-        text role FK "admin/production/point_of_sale"
         boolean active
         timestamp created_at
+    }
+    user_roles {
+        int user_id PK,FK
+        text role PK,FK "admin/production/point_of_sale/..."
+        timestamp assigned_at
+        int assigned_by FK "nullable"
     }
     roles {
         text name PK "identificador en inglés, nunca se muestra"
@@ -227,7 +243,7 @@ el primer índice fuera de una PK/UNIQUE — ver rarezas para ambos.
 | `received_by` | TEXT | nullable | Quien recibió físicamente el pedido — distinto de `customer_id`/`requested_by`. Antes de la Fase 1c, `nombre_recibe`. |
 | `notes` | TEXT | nullable | Antes de la Fase 1c, `observaciones`. |
 | `created_by` | INTEGER | FK → `users(id)`, nullable | El usuario logueado que guardó la orden — distinto de `dispatched_by`/`received_by` (datos de la entrega física, no de quién la cargó al sistema). Antes de la Fase 1c, `creado_por`. |
-| `production_status` | TEXT | NOT NULL DEFAULT `'pending'` | *Agregada en la migración `0016`.* Estado de producción de la orden: `pending` → `in_progress` → `ready` → `delivered` (por realizar, en realización, lista para entregar, entregada). Los valores son identificadores en inglés, igual que `users.role`; las etiquetas en español las pone la capa web. Toda orden nueva nace `pending` por el default, sin que `insert_order` lo escriba. Las órdenes que ya existían cuando corrió `0016` quedaron `delivered` (ver rarezas). Con índice (`production_orders_production_status_idx`). Cada cambio queda en `production_order_events`; las reglas viven en `app/core/production.py` (ver [`CORE.md`](CORE.md)). Sin `CHECK`, como el resto del esquema. |
+| `production_status` | TEXT | NOT NULL DEFAULT `'pending'` | *Agregada en la migración `0016`.* Estado de producción de la orden: `pending` → `in_progress` → `ready` → `delivered` (por realizar, en realización, lista para entregar, entregada). Los valores son identificadores en inglés, igual que `user_roles.role`; las etiquetas en español las pone la capa web. Toda orden nueva nace `pending` por el default, sin que `insert_order` lo escriba. Las órdenes que ya existían cuando corrió `0016` quedaron `delivered` (ver rarezas). Con índice (`production_orders_production_status_idx`). Cada cambio queda en `production_order_events`; las reglas viven en `app/core/production.py` (ver [`CORE.md`](CORE.md)). Sin `CHECK`, como el resto del esquema. |
 | `created_at` | TIMESTAMP | DEFAULT now() | Nunca se usa para ordenar por "reciente" (ver `recent_orders` en [`CORE.md`](CORE.md)). |
 
 ### `plates`
@@ -328,32 +344,64 @@ el backfill original; el login en vivo no los llama más.
 | `id` | SERIAL | PK | Desde la Fase 2, se guarda en `session["user_id"]` al loguearse — es lo que permite `production_orders.created_by` sin volver a consultar por username. |
 | `username` | TEXT | UNIQUE NOT NULL | |
 | `password_hash` | TEXT | NOT NULL | Mismo formato werkzeug (pbkdf2) que `AUTH_USERS` traía — el backfill copió el hash tal cual, nunca reseteó contraseñas. |
-| `role` | TEXT | NOT NULL, FK → `roles(name)` `ON UPDATE CASCADE` (`users_role_fkey`, migración `0015`) | `admin`/`production`/`point_of_sale` — **valores en inglés a propósito**: `role` nunca se muestra al usuario (solo se compara para permisos), así que no cuenta como dato de negocio en español — ver `CLAUDE.md`. El nombre en español que vería el personal vive en `roles.label`, no aquí. Hasta antes de `app/migrations/0004_translate_role_values_to_english.sql` los valores reales eran `produccion`/`punto_venta` (español, sin tilde); esa migración los tradujo sobre datos reales, y `app/web/auth.py`'s `ROLE_PRODUCCION`/`ROLE_PUNTO_VENTA` apuntan hoy a los nuevos valores. Desde la migración `0015` es una FK real a `roles(name)` (sin `ON DELETE`: no se puede borrar un rol que algún usuario todavía tenga) y sin `CHECK`. El acceso se decide en cada request con los permisos del rol en `role_permissions` (`auth.permission_required`; `admin` siempre los tiene todos). Antes de la Fase 1c, esta columna se llamaba `rol`. `point_of_sale` (Fase 2) es el rol de PTO.V — nivel de acceso intermedio según sus permisos sembrados (ver [`WEB.md`](WEB.md)). |
 | `active` | BOOLEAN | DEFAULT true | Antes de la Fase 1c, esta columna se llamaba `activo`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
+
+Los roles de un usuario ya no viven en esta tabla sino en `user_roles` (la
+columna `role` se eliminó en la migración `0018`). Antes de la Fase 1c, esa
+columna se llamaba `rol`.
+
+### `user_roles`
+
+*Agregada en la migración `0018` (`app/migrations/0018_user_roles.sql`).* Un
+renglón por cada rol que tiene un usuario: un usuario puede tener varios
+roles, y sus permisos son la **unión** de los permisos (`role_permissions`) de
+todos ellos. Si alguno de sus roles es `admin`, tiene todos los permisos
+(`app/core/permissions.py::effective_permissions`). Es el único lugar donde
+viven las asignaciones de roles.
+
+| Columna | Tipo | Constraint/Default | Nota |
+|---|---|---|---|
+| `user_id` | INTEGER | NOT NULL, PK, FK → `users(id)` `ON DELETE CASCADE` | Borrar un usuario borra sus asignaciones. |
+| `role` | TEXT | NOT NULL, PK, FK → `roles(name)` `ON UPDATE CASCADE` (`user_roles_role_fkey`) | `admin`/`production`/`point_of_sale`/... — **valores en inglés a propósito**: el nombre del rol nunca se muestra al usuario (solo se compara para permisos), así que no cuenta como dato de negocio en español — ver `CLAUDE.md`. El nombre en español que vería el personal vive en `roles.label`. Hasta `app/migrations/0004_translate_role_values_to_english.sql` los valores reales eran `produccion`/`punto_venta`. **Sin `ON DELETE`**, la misma regla que tenía la antigua `users_role_fkey`: no se puede borrar un rol que algún usuario todavía tenga (`delete_role` recibe un `ForeignKeyViolation`). Con índice (`user_roles_role_idx`) para buscar quién tiene un rol. |
+| `assigned_at` | TIMESTAMP | NOT NULL DEFAULT now() | Cuándo se asignó. `set_user_roles` conserva el `assigned_at` de los roles que el usuario ya tenía. |
+| `assigned_by` | INTEGER | FK → `users(id)` `ON DELETE SET NULL`, nullable | Quién lo asignó; `NULL` para los renglones del backfill y si ese usuario se borra. |
+
+**Backfill desde `users.role`**: la migración `0018` crea un renglón por
+usuario con el valor que tenía en `users.role` (`assigned_by` en `NULL`) y
+luego elimina esa columna (y con ella `users_role_fkey`), así que cada
+usuario conserva exactamente el acceso que tenía. Solo corre mientras
+`users.role` exista, así que es segura de correr dos veces.
+
+> **Modelo NIST core RBAC.** El esquema sigue el modelo RBAC básico de NIST:
+> usuarios (`users`), roles (`roles`), permisos (`permissions`), asignación
+> usuario-rol (`user_roles`) y asignación permiso-rol (`role_permissions`).
+> Todos los roles de un usuario están activos en cada sesión; no hay
+> jerarquía de roles ni separación de funciones.
 
 ### `roles`
 
 *Agregada en la migración `0015` (`app/migrations/0015_roles_and_permissions.sql`).*
 Los roles a los que puede pertenecer un usuario. Creada en `init.sql` antes
-de `users`, para que `users.role` la referencie directamente. Todavía no la
-lee ninguna ruta: el acceso lo sigue decidiendo `app/web/auth.py`; esta
-tabla es la base para que una tarea posterior revise permisos por ruta y
-para una pantalla de gestión de roles.
+de `users` y `user_roles`, para que `user_roles.role` la referencie
+directamente. `app/web/auth.py` decide el acceso en cada request con los
+permisos de los roles del usuario; esta tabla es también la base para una
+pantalla de gestión de roles.
 
 | Columna | Tipo | Constraint/Default | Nota |
 |---|---|---|---|
-| `name` | TEXT | PK | Identificador interno en inglés (`admin`, `point_of_sale`, `production`, ...): es lo que guarda `users.role` y nunca se muestra. |
+| `name` | TEXT | PK | Identificador interno en inglés (`admin`, `point_of_sale`, `production`, ...): es lo que guarda `user_roles.role` y nunca se muestra. |
 | `label` | TEXT | NOT NULL UNIQUE | Nombre en español que verá el personal (`Administrador`, `Punto de venta`, `Producción`). |
 | `is_system` | BOOLEAN | NOT NULL DEFAULT false | `true` en los 3 roles sembrados. Una futura pantalla de gestión lo usará para proteger esos roles; la capa de datos no lo impide. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
 Sembrada desde `init.sql`/la migración `0015` con los 3 roles del sistema
 (`ON CONFLICT DO NOTHING`). **Backfill de roles desconocidos**: antes de
-agregar `users_role_fkey`, la migración `0015` inserta cada valor de
-`users.role` que no exista en `roles` como rol no-sistema con
-`label = name` y sin permisos, para que la FK nunca falle por datos
-inesperados de producción.
+agregar `users_role_fkey` (la FK de la antigua columna `users.role`, que la
+migración `0018` reemplazó por `user_roles_role_fkey`), la migración `0015`
+inserta cada valor de `users.role` que no exista en `roles` como rol
+no-sistema con `label = name` y sin permisos, para que la FK nunca falle por
+datos inesperados de producción.
 
 ### `permissions`
 

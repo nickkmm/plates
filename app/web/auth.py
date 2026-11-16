@@ -13,21 +13,23 @@ schema_migrate.py still needs to read them for that historical step. Nothing
 in the live request path below calls them anymore.
 
 Access control (#63): every protected route is decorated with
-@permission_required("<code>") (or @authenticated for / alone). The user and
-their role's permissions (role_permissions, through
-app/core/permissions.effective_permissions) are read from the database on
-EVERY request and cached on flask.g -- so a deactivated user is logged out,
-and a role change takes effect, on their next request. Admin always holds
-every permission code.
+@permission_required("<code>") (or @authenticated for / alone). A user holds
+several roles (user_roles); their permissions are the union of those roles'
+role_permissions, through app/core/permissions.effective_permissions, and
+admin in any of them grants every permission code. The user, their roles and
+their permissions are read from the database on EVERY request and cached on
+flask.g -- so a deactivated user is logged out, and a role change takes
+effect, on their next request.
 
 Generate a password hash for a new user with:
 
     python -m app.web.hash_password 'the-password'
 
 Sessions are signed with SECRET_KEY (configured in app.py) and store `user`
-(username), `role`, and (Fase 2) `user_id` (users.id) -- the last one lets
+(username) and (Fase 2) `user_id` (users.id) only -- the last one lets
 production_orders.created_by record which user saved an order without
-re-querying by username.
+re-querying by username. The roles are never stored in the session; a
+cookie issued before that change still carries `role`, which is ignored.
 """
 
 from __future__ import annotations
@@ -44,21 +46,6 @@ from app.core.db.users import UserRecord
 from app.web.navigation import NAV_ITEMS
 
 ROLE_ADMIN = "admin"
-ROLE_PRODUCCION = "production"
-# PTO.V's own role (added Fase 2).
-ROLE_PUNTO_VENTA = "point_of_sale"
-
-# Every valid users.role value, validated against this tuple in Python (same
-# "no DB CHECK, a tuple in code" pattern as normalize.PLATE_TYPES) rather
-# than a CHECK constraint -- see docs/DATABASE.md.
-# users.role is an internal identifier, never rendered to a user (see
-# CLAUDE.md) -- unlike Spanish business-data columns such as payment_method/
-# plate_type, its values are English. Production's `users.role` rows were
-# migrated to these English values by
-# app/migrations/0004_translate_role_values_to_english.sql; changing any of
-# these strings again without a matching migration would silently lock out
-# real users whose row still has the old value.
-ROLES = (ROLE_ADMIN, ROLE_PRODUCCION, ROLE_PUNTO_VENTA)
 
 
 def load_users() -> dict[str, str]:
@@ -166,11 +153,10 @@ def landing_url() -> str:
 def _redirect_to_login():
     """Bounce to /login (preserving the requested path as ?next=), clearing
     whatever's in the session first. Used for "never logged in" and for any
-    session that predates a session-shape change (e.g. a cookie from before
-    roles existed, which has 'user' but no 'role'; or -- Fase 2 -- one from
-    before user_id existed, which has 'user'/'role' but no 'user_id') --
-    either way the person just needs to log in fresh, not see a dead-end
-    error."""
+    session that predates a session-shape change (Fase 2: a cookie from
+    before user_id existed, which has 'user' but no 'user_id') -- either way
+    the person just needs to log in fresh, not see a dead-end error. A cookie
+    that still carries the old 'role' key is not stale: it is ignored."""
     session.clear()
     next_url = request.full_path
     if next_url.endswith("?"):
@@ -180,15 +166,16 @@ def _redirect_to_login():
 
 def _session_is_stale() -> bool:
     """True for a missing/incomplete session -- either never logged in, or a
-    cookie from before a session-shape change (missing 'role' since Fase ~5
-    of the read-only-role work, or missing 'user_id' since Fase 2)."""
-    return not session.get("user") or "role" not in session or "user_id" not in session
+    cookie from before a session-shape change (missing 'user_id' since Fase
+    2)."""
+    return not session.get("user") or "user_id" not in session
 
 
 def current_user() -> UserRecord | None:
     """The logged-in user's current `users` row, or None when the session has
     no user_id or no user has that id. The first call in a request loads the
-    user and their effective permissions in one connection; both are cached
+    user, their roles and their effective permissions (the union over all
+    their roles) in one connection; both are cached
     on flask.g, so later calls in the same request don't query again."""
     if "_current_user_loaded" not in g:
         user = None
@@ -199,7 +186,7 @@ def current_user() -> UserRecord | None:
                 user = db.get_user_by_id(conn, user_id)
                 if user is not None:
                     perms = permissions.effective_permissions(
-                        user.role, db.get_role_permissions(conn, user.role)
+                        user.roles, db.get_user_permissions(conn, user.id)
                     )
         g._current_user_loaded = True
         g.current_user = user
@@ -208,8 +195,9 @@ def current_user() -> UserRecord | None:
 
 
 def has_permission(code: str) -> bool:
-    """True only if there is an active current user whose role grants `code`.
-    False (never an error) when there is no session."""
+    """True only if there is an active current user one of whose roles grants
+    `code` (admin in any role grants everything). False (never an error) when
+    there is no session."""
     user = current_user()
     if user is None or not user.active:
         return False
@@ -219,15 +207,12 @@ def has_permission(code: str) -> bool:
 def _check_session():
     """The shared checks of @authenticated and @permission_required: a
     response redirecting to /login (session cleared) when the session is
-    stale, its user no longer exists or is inactive; otherwise None, after
-    syncing session['role'] with the user's current role."""
+    stale, its user no longer exists or is inactive; otherwise None."""
     if _session_is_stale():
         return _redirect_to_login()
     user = current_user()
     if user is None or not user.active:
         return _redirect_to_login()
-    if user.role != session["role"]:
-        session["role"] = user.role
     return None
 
 
@@ -246,8 +231,8 @@ def authenticated(view):
 
 
 def permission_required(*codes: str):
-    """Like @authenticated, then 403 unless the user's role grants at least
-    one of `codes`. Every protected route uses this with one code; no route
+    """Like @authenticated, then 403 unless the union of the user's roles'
+    permissions holds at least one of `codes`. Every protected route uses this with one code; no route
     that writes may accept 'records.view'."""
 
     def decorator(view):

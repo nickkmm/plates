@@ -26,7 +26,9 @@ plates is the internal plate-production and point-of-sale app for INGSE
 - Schema: `init.sql` plus ordered migrations in `app/migrations/*.sql`, applied
   by `python -m app.schema_migrate` (run automatically on deploy). A schema
   change is a new migration file, never an edit to an applied one, and updates
-  `docs/DATABASE.md`.
+  `docs/DATABASE.md`. A new migration also adds its version row (the file
+  name) to the `INSERT INTO schema_migrations` in `init.sql`, which records
+  the migrations a fresh database already contains.
 
 ## Setup for a fresh checkout (or a factory worktree)
 
