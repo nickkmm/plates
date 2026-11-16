@@ -27,6 +27,10 @@
     .submit { background:#1a9c5b; color:#fff; font-size:1.05rem; padding:.65rem 1.4rem; }
     a.back { display:inline-block; background:#0b6bcb; color:#fff; text-decoration:none; padding:.5rem .95rem; border-radius:7px; font-size:.9rem; }
     a.back:hover { background:#095bb0; }
+    h1 { overflow-wrap:anywhere; }
+    @media (max-width:700px) {
+      .tabs { overflow-x:auto; }
+    }
   </style>
 </head>
 <body>
@@ -67,6 +71,7 @@
         <label>Nueva contraseña<input type="password" name="password" autocomplete="new-password" required></label>
         <label>Repite la contraseña<input type="password" name="password_confirm" autocomplete="new-password" required></label>
       </div>
+      <p class="muted">Contraseña: al menos 10 caracteres.</p>
       <div class="save-row">
         <button type="submit" class="submit">Cambiar contraseña</button>
       </div>
