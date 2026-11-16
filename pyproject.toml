@@ -62,5 +62,5 @@ ignore_missing_imports = true
 
 # None of these ships type information (no py.typed, no stubs installed here).
 [[tool.mypy.overrides]]
-module = ["pdfplumber.*", "reportlab.*", "openpyxl.*"]
+module = ["pdfplumber.*", "reportlab.*", "openpyxl.*", "flask_wtf.*"]
 ignore_missing_imports = true

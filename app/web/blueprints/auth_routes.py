@@ -1,4 +1,4 @@
-"""/login and /logout -- session login page (open) and logout (open).
+"""/login and /logout -- session login page (open) and logout (open, POST only).
 
 Named auth_routes.py, not auth.py: app/web/auth.py already exists and holds
 the actual auth logic (user store, permission lookup, the
@@ -47,7 +47,7 @@ def login_post():
     )
 
 
-@bp.route("/logout", methods=["GET", "POST"])
+@bp.post("/logout")
 def logout():
     session.clear()
     return redirect(url_for("auth_routes.login"))
