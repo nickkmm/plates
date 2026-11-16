@@ -21,6 +21,9 @@ one module per domain:
   declarations.py  -- GET /declaraciones, GET /declaraciones/<id>[/file/<kind>],
                       POST /declaraciones/<id>/approve|reject (review of the
                       sworn declarations from the public form)
+  users.py         -- GET /usuarios, GET/POST /usuarios/nuevo,
+                      GET/POST /usuarios/<id>, POST /usuarios/<id>/password
+                      (admin-only login account management)
   auth_routes.py   -- GET/POST /login, GET/POST /logout
   public_declaration.py -- GET/POST /declaracion (PUBLIC sworn-declaration
                       form, no login; 503 until Turnstile is configured)
@@ -57,6 +60,7 @@ from app.web.blueprints.pricing import bp as pricing_bp
 from app.web.blueprints.public_declaration import bp as public_declaration_bp
 from app.web.blueprints.records import bp as records_bp
 from app.web.blueprints.review import bp as review_bp
+from app.web.blueprints.users import bp as users_bp
 from app.web.helpers import format_cop
 from app.web.navigation import NAV_ITEMS
 
@@ -97,6 +101,7 @@ app.register_blueprint(pricing_bp)
 app.register_blueprint(public_declaration_bp)
 app.register_blueprint(records_bp)
 app.register_blueprint(review_bp)
+app.register_blueprint(users_bp)
 
 # Mark the session cookie Secure only behind HTTPS (set COOKIE_SECURE=1 in
 # production). Off by default so local plain-HTTP dev still works.

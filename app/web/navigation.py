@@ -32,5 +32,6 @@ NAV_ITEMS: list[tuple[str, str, str, tuple[str, ...]]] = [
         "customers.manage",
         ("customers.customers", "customers.customer_detail"),
     ),
+    ("users.users", "Usuarios", "users.manage", ("users.users", "users.user_new", "users.user_edit")),
     ("records.records", "Registros", "records.view", ("records.records", "records.record_detail")),
 ]
