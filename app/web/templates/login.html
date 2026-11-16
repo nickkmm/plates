@@ -23,6 +23,7 @@
 </head>
 <body>
   <form class="card" method="post" action="{{ url_for('auth_routes.login') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="brand">INGSE</div>
     <h1>Iniciar sesión</h1>
     {% if error %}<div class="error">{{ error }}</div>{% endif %}

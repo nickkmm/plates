@@ -126,6 +126,7 @@
   <script id="customersData" type="application/json">{{ customers | tojson }}</script>
 
   <form method="post" action="{{ url_for('ingest.ingest') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% if declaration_id %}
     <input type="hidden" name="declaration_id" value="{{ declaration_id }}">
     <p class="muted">Al guardar, la <a href="{{ url_for('declarations.declaration_detail', declaration_id=declaration_id) }}" target="_blank">declaración #{{ declaration_id }}</a> quedará marcada como atendida por esta orden. Las placas de sus tarjetas de propiedad no se bloquean como duplicadas (reposición).</p>

@@ -130,11 +130,13 @@
       {% if notary_received %}
       {% if not d.production_order_id %}
       <form method="post" action="{{ url_for('declarations.declaration_notarized_undo', declaration_id=d.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="undo">Deshacer</button>
       </form>
       {% endif %}
       {% else %}
       <form method="post" action="{{ url_for('declarations.declaration_notarized', declaration_id=d.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="mark">Marcar autenticación recibida</button>
       </form>
       {% endif %}
@@ -301,6 +303,7 @@
     <fieldset>
       <legend>Aprobar</legend>
       <form id="approve-form" method="post" action="{{ url_for('declarations.declaration_approve', declaration_id=d.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% if not flagged_cards %}<p class="muted">Esta declaración no tiene alertas.</p>{% endif %}
         <p class="muted">Al aprobar se crean o enlazan el gestor (si aplica), los clientes y cada tarjeta de propiedad a partir de lo declarado. Si una tarjeta falla, no se aprueba ninguna.</p>
         <label>Nota (opcional)<textarea name="note" rows="2"></textarea></label>
@@ -310,6 +313,7 @@
     <fieldset>
       <legend>Rechazar</legend>
       <form method="post" action="{{ url_for('declarations.declaration_reject', declaration_id=d.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <p class="muted">Rechaza toda la declaración y no crea nada. La nota es obligatoria.</p>
         <label>Nota<textarea name="note" rows="2" required></textarea></label>
         <button type="submit" class="reject">Rechazar</button>

@@ -57,6 +57,7 @@
   {% if can_edit %}
   <script id="pricesData" type="application/json">{{ prices | tojson }}</script>
   <form method="post" action="{{ url_for('records.record_save', order_id=order.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <fieldset>
       <legend>Datos de la orden</legend>
       <div class="header">

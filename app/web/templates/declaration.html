@@ -194,6 +194,7 @@
   <div class="error" id="clientError" role="alert"></div>
 
   <form id="declForm" method="post" action="/declaracion" enctype="multipart/form-data" data-max-cards="{{ max_cards_v }}" data-max-by-type='{{ max_by_type|tojson }}'>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="form_token" value="{{ token }}">
     <div class="hp" aria-hidden="true">
       <label>No llenar este campo <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true"></label>
