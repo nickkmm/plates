@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Roles y permisos</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1040px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .muted { color:#777; font-size:.9rem; }
+    .notice { background:#e8f6ee; border:1px solid #1a7a45; border-radius:8px; padding:.8rem 1rem; color:#1a7a45; margin-bottom:1rem; }
+    .toolbar { display:flex; justify-content:flex-end; gap:.6rem; margin-bottom:1.2rem; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { border:1px solid #e3e3e3; padding:.4rem .55rem; text-align:left; vertical-align:top; }
+    th { background:#f6f6f6; }
+    .actions { white-space:nowrap; }
+    a.ver { display:inline-block; border:0; border-radius:6px; padding:.38rem .8rem; font-size:.82rem; cursor:pointer; text-decoration:none; background:#0b6bcb; color:#fff; }
+    a.ver:hover { background:#095bb0; }
+    a.new { display:inline-block; border-radius:6px; padding:.5rem 1rem; font-size:.9rem; text-decoration:none; background:#1a9c5b; color:#fff; }
+    a.new:hover { background:#158a4f; }
+    a.back { display:inline-block; border-radius:6px; padding:.5rem 1rem; font-size:.9rem; text-decoration:none; background:#0b6bcb; color:#fff; }
+    a.back:hover { background:#095bb0; }
+    td.label { overflow-wrap:anywhere; }
+    @media (max-width:700px) {
+      table.list thead { display:none; }
+      table.list, table.list tbody, table.list tr, table.list td { display:block; width:100%; box-sizing:border-box; }
+      table.list tr { border:1px solid #e3e3e3; border-radius:8px; margin-bottom:.8rem; padding:.3rem .2rem; }
+      table.list td { border:0; padding:.25rem .55rem; overflow-wrap:anywhere; }
+      table.list td[data-label]::before { content:attr(data-label) ": "; color:#777; font-size:.8rem; }
+      .tabs { overflow-x:auto; }
+    }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  <h1>Roles y permisos</h1>
+  <p class="muted">
+    Cada rol reúne permisos; un usuario tiene los permisos de todos sus roles. Un cambio aplica en el
+    siguiente clic de cada usuario con ese rol. El rol Administrador siempre tiene todos los permisos.
+  </p>
+
+  {% for message in get_flashed_messages() %}<div class="notice">{{ message }}</div>{% endfor %}
+
+  <div class="toolbar">
+    <a class="back" href="{{ url_for('users.users') }}">← Volver a Usuarios</a>
+    <a class="new" href="{{ url_for('users.role_new') }}">Nuevo rol</a>
+  </div>
+
+  <table class="list">
+    <thead>
+      <tr><th>Rol</th><th>Permisos</th><th>Usuarios</th><th>Editar</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="label" data-label="Rol">{{ r.label }}{% if r.is_system %} <span class="muted">(del sistema)</span>{% endif %}</td>
+        <td data-label="Permisos">{% if r.name == admin_role %}Todos{% else %}{{ r.permissions|length }}{% endif %}</td>
+        <td data-label="Usuarios">{{ r.user_count }}</td>
+        <td class="actions"><a class="ver" href="{{ url_for('users.role_edit', name=r.name) }}">Editar</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

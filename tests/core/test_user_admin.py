@@ -1,14 +1,17 @@
 """app/core/user_admin.py: each validation rule of the /usuarios screen and
 its exact Spanish message, against the seeded test users (`db_conn`):
 testuser (admin), produccionuser (production), puntoventauser
-(point_of_sale)."""
+(point_of_sale), and the seeded roles (Administrador, Punto de venta,
+Producción) for the role rules."""
 
 from __future__ import annotations
+
+import re
 
 from werkzeug.security import generate_password_hash
 
 from app.core import db, user_admin
-from app.core.db import UserRecord
+from app.core.db import RoleRecord, UserRecord
 
 GOOD_PASSWORD = "correcta123"
 
@@ -159,3 +162,88 @@ class TestValidateUserUpdate:
         assert user_admin.validate_user_update(
             db_conn, target=target, actor_id=admin.id, roles=["production"], active=False
         ) is None
+
+
+def _role(name="custom_00000000", *, is_system=False, user_count=0) -> RoleRecord:
+    return RoleRecord(name=name, label="Bodega", is_system=is_system, permissions=[], user_count=user_count)
+
+
+class TestValidateRole:
+    def test_valid(self, db_conn):
+        assert user_admin.validate_role(db_conn, label="Bodega", permissions=["inventory.manage"]) is None
+
+    def test_empty_label(self, db_conn):
+        assert user_admin.validate_role(db_conn, label="", permissions=["inventory.manage"]) == (
+            "Escribe el nombre del rol."
+        )
+
+    def test_sixty_characters_is_the_limit(self, db_conn):
+        assert user_admin.validate_role(db_conn, label="x" * 60, permissions=["inventory.manage"]) is None
+        assert user_admin.validate_role(db_conn, label="x" * 61, permissions=["inventory.manage"]) == (
+            user_admin.MSG_BAD_ROLE_LABEL
+        )
+
+    def test_duplicate_ignores_case_and_accents(self, db_conn):
+        message = "Ya existe un rol con ese nombre."
+        for label in ("PRODUCCION", "producción", "punto DE VENTA", "Administrador"):
+            assert user_admin.validate_role(db_conn, label=label, permissions=["records.view"]) == message, label
+        db.create_role(db_conn, name="custom_bodega", label="Bódega", permissions=["inventory.manage"])
+        assert user_admin.validate_role(db_conn, label="bodega", permissions=["records.view"]) == message
+
+    def test_the_edited_role_is_left_out(self, db_conn):
+        db.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
+        assert user_admin.validate_role(
+            db_conn, label="BODEGA", permissions=["inventory.manage"], role_name="custom_bodega"
+        ) is None
+        assert user_admin.validate_role(
+            db_conn, label="Produccion", permissions=["inventory.manage"], role_name="custom_bodega"
+        ) == user_admin.MSG_DUPLICATE_ROLE_LABEL
+
+    def test_no_permission(self, db_conn):
+        assert user_admin.validate_role(db_conn, label="Bodega", permissions=[]) == "Marca al menos un permiso."
+
+    def test_label_is_checked_before_permissions(self, db_conn):
+        assert user_admin.validate_role(db_conn, label="", permissions=[]) == user_admin.MSG_BAD_ROLE_LABEL
+        assert user_admin.validate_role(db_conn, label="Producción", permissions=[]) == (
+            user_admin.MSG_DUPLICATE_ROLE_LABEL
+        )
+
+
+class TestCleanPermissions:
+    def test_unknown_codes_and_duplicates_are_dropped(self, db_conn):
+        assert user_admin.clean_permissions(
+            db_conn, ["inventory.manage", "superpoder", "inventory.manage"]
+        ) == ["inventory.manage"]
+
+    def test_only_unknown_codes_leave_nothing(self, db_conn):
+        permissions = user_admin.clean_permissions(db_conn, ["superpoder"])
+        assert permissions == []
+        assert user_admin.validate_role(db_conn, label="Bodega", permissions=permissions) == (
+            user_admin.MSG_NO_PERMISSION
+        )
+
+    def test_catalog_order(self, db_conn):
+        assert user_admin.clean_permissions(db_conn, ["users.manage", "orders.capture"]) == [
+            "orders.capture", "users.manage",
+        ]
+
+
+class TestValidateRoleDelete:
+    def test_unused_custom_role(self):
+        assert user_admin.validate_role_delete(_role()) is None
+
+    def test_system_role(self):
+        assert user_admin.validate_role_delete(_role("production", is_system=True)) == (
+            "No se puede eliminar un rol del sistema."
+        )
+
+    def test_role_with_users(self):
+        assert user_admin.validate_role_delete(_role(user_count=1)) == (
+            "No se puede eliminar un rol con usuarios asignados."
+        )
+
+
+def test_new_role_name():
+    names = {user_admin.new_role_name() for _ in range(20)}
+    assert len(names) == 20
+    assert all(re.fullmatch(r"custom_[0-9a-f]{8}", name) for name in names)

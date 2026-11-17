@@ -13,7 +13,7 @@
     .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
     .muted { color:#777; font-size:.9rem; }
     .notice { background:#e8f6ee; border:1px solid #1a7a45; border-radius:8px; padding:.8rem 1rem; color:#1a7a45; margin-bottom:1rem; }
-    .toolbar { display:flex; justify-content:flex-end; margin-bottom:1.2rem; }
+    .toolbar { display:flex; justify-content:flex-end; align-items:center; gap:.6rem; margin-bottom:1.2rem; }
     table { border-collapse:collapse; width:100%; font-size:.9rem; }
     th, td { border:1px solid #e3e3e3; padding:.4rem .55rem; text-align:left; vertical-align:top; }
     th { background:#f6f6f6; }
@@ -22,6 +22,8 @@
     a.ver:hover { background:#095bb0; }
     a.new { display:inline-block; border-radius:6px; padding:.5rem 1rem; font-size:.9rem; text-decoration:none; background:#1a9c5b; color:#fff; }
     a.new:hover { background:#158a4f; }
+    a.roles { display:inline-block; border-radius:6px; padding:.5rem 1rem; font-size:.9rem; text-decoration:none; background:#0b6bcb; color:#fff; }
+    a.roles:hover { background:#095bb0; }
     .badge { display:inline-block; border-radius:5px; padding:.15rem .5rem; font-size:.78rem; }
     .badge.activo { background:#e8f6ee; color:#1a7a45; }
     .badge.inactivo { background:#fdecec; color:#900; }
@@ -46,7 +48,10 @@
 
   {% for message in get_flashed_messages() %}<div class="notice">{{ message }}</div>{% endfor %}
 
-  <div class="toolbar"><a class="new" href="{{ url_for('users.user_new') }}">Nuevo usuario</a></div>
+  <div class="toolbar">
+    <a class="roles" href="{{ url_for('users.roles') }}">Roles y permisos</a>
+    <a class="new" href="{{ url_for('users.user_new') }}">Nuevo usuario</a>
+  </div>
 
   <table class="list">
     <thead>
