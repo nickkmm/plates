@@ -25,7 +25,7 @@ that's the ONLY remaining consumer.
 from __future__ import annotations
 
 import os
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 from werkzeug.security import generate_password_hash
 
@@ -101,12 +101,30 @@ _load_dotenv_defaults(os.path.join(_REPO_ROOT, ".env"))
 # be able to point at the real `plates` database.
 os.environ["DB_HOST"] = "127.0.0.1"
 os.environ["DB_PORT"] = "5433"
+
+
+def _check_test_db_name(name: str, what: str) -> None:
+    if not name.startswith("plates_test") or not name.replace("_", "").isalnum():
+        raise RuntimeError(f"{what} must be plates_test or plates_test_<suffix>, got {name!r}")
+
+
+def _test_db_name(base: str, worker: str | None) -> str:
+    """The test database name: `base`, or `<base>_<worker>` under pytest-xdist
+    (`plates_test_12_gw0`), so each worker gets its own database."""
+    _check_test_db_name(base, "TEST_POSTGRES_DB")
+    if worker is None:
+        return base
+    name = f"{base}_{worker}"
+    _check_test_db_name(name, "The per-worker test database")
+    return name
+
+
 # TEST_POSTGRES_DB lets parallel checkouts (factory worktrees) each use their
 # own test database, so one branch's migrations never leak into another's
 # run. It must still start with "plates_test": never the real `plates`.
-_TEST_DB = os.environ.get("TEST_POSTGRES_DB", "plates_test")
-if not _TEST_DB.startswith("plates_test") or not _TEST_DB.replace("_", "").isalnum():
-    raise RuntimeError(f"TEST_POSTGRES_DB must be plates_test or plates_test_<suffix>, got {_TEST_DB!r}")
+_TEST_DB = _test_db_name(
+    os.environ.get("TEST_POSTGRES_DB", "plates_test"), os.environ.get("PYTEST_XDIST_WORKER")
+)
 os.environ["POSTGRES_DB"] = _TEST_DB
 os.environ.setdefault("POSTGRES_USER", "plates_user")
 # TEST_REQUIRE_DB=1 (set by the factory gate) turns "database not reachable"
@@ -146,6 +164,8 @@ def _create_database_if_missing() -> None:
 
     Connects to the always-present `postgres` maintenance DB to do so (you
     can't run CREATE DATABASE while connected to the DB you're creating).
+    Another session creating the same database at the same moment (a
+    concurrent first run) counts as success: the database exists either way.
     """
     conn = psycopg.connect(
         host=os.environ["DB_HOST"],
@@ -159,7 +179,8 @@ def _create_database_if_missing() -> None:
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (os.environ["POSTGRES_DB"],))
             if cur.fetchone() is None:
-                cur.execute(f'CREATE DATABASE "{os.environ["POSTGRES_DB"]}"')
+                with suppress(psycopg.errors.DuplicateDatabase):
+                    cur.execute(f'CREATE DATABASE "{os.environ["POSTGRES_DB"]}"')
     finally:
         conn.close()
 
@@ -218,12 +239,11 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
     """Reset all app tables (identities reset) before the test runs, via a
     SAVEPOINT-based rollback instead of TRUNCATE -- much faster (no disk/WAL
     work per test) and what the Fase 1d plan's step 10 fast-follow asked for.
-    NOT a real parallelism enabler though (verified before writing this):
-    every test still shares the ONE physical `plates_test` database, so two
-    tests/workers TRUNCATing (or even just DELETE-ing) the same tables
-    concurrently would just serialize on Postgres's own locks -- true
-    multi-worker parallelism would need a separate schema/DB per pytest-xdist
-    worker, out of scope here.
+    Not by itself a parallelism enabler: two workers TRUNCATing the same
+    tables would just serialize on Postgres's own locks. Parallel runs
+    (`pytest -n auto`) work because each pytest-xdist worker gets its own
+    database (`<base>_gwN`, see `_test_db_name`), so workers never share
+    tables.
 
     Skips the test if the shared Postgres / `plates_test` isn't reachable,
     rather than failing outright -- keeps `app/core` pure-logic tests runnable
