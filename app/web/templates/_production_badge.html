@@ -1,0 +1,16 @@
+{# The production-status badge, shared by every screen that shows it:
+   {% import "_production_badge.html" as production %}, then
+   {{ production.style() }} inside <head> and {{ production.badge(status) }}.
+   The `prod-` prefix keeps these apart from the declaration stage badges. #}
+{% macro style() %}
+<style>
+  .badge.prod-pending, .badge.prod-in_progress, .badge.prod-ready, .badge.prod-delivered {
+    display:inline-block; border-radius:5px; padding:.15rem .5rem; font-size:.78rem; margin:0 .2rem .2rem 0; font-weight:600;
+  }
+  .badge.prod-pending { background:#fff3d6; color:#8a5a00; }
+  .badge.prod-in_progress { background:#e6f0fb; color:#0b5cad; }
+  .badge.prod-ready { background:#e8f6ee; color:#1a7a45; }
+  .badge.prod-delivered { background:#eeeeee; color:#555555; }
+</style>
+{% endmacro %}
+{% macro badge(status) %}<span class="badge prod-{{ status }}">{{ production_status_labels[status] }}</span>{% endmacro %}

@@ -82,7 +82,7 @@ from app.core.declaration_pdf import build_declaration_pdf
 from app.core.normalize import clean_plate, normalize_requested_by
 from app.core.timezones import utc_now
 from app.web.auth import permission_required
-from app.web.uploads import PHOTO_MIMETYPES, UploadError, resolve_upload_path
+from app.web.uploads import UploadError, resolve_upload_path, send_stored_file
 
 bp = Blueprint("declarations", __name__)
 
@@ -299,8 +299,10 @@ def _render_detail(
         pending = declaration.status == STATUS_PENDING_REVIEW
         stage = declaration_stage(declaration, card_records)
         attended_order: dict[str, Any] | None = None
+        production_status: str | None = None
         if declaration.production_order_id is not None:
             attended_order, _plates = db.order_detail(conn, declaration.production_order_id)
+            production_status = db.get_production_status(conn, declaration.production_order_id)
         needs_notary = declaration.status == STATUS_APPROVED and requires_notarization(card_records)
         received_user = (
             db.get_user_by_id(conn, declaration.notarized_received_by)
@@ -328,7 +330,7 @@ def _render_detail(
         plate_total=sum(c["record"].plate_quantity for c in cards),
         flag_labels=FLAG_LABELS, stage=stage, stage_labels=STAGE_LABELS,
         error=error, pending_status=STATUS_PENDING_REVIEW, approved_status=STATUS_APPROVED, reassign_ids=reassign_ids,
-        attended_order=attended_order,
+        attended_order=attended_order, production_status=production_status,
         needs_notary=needs_notary, notary_received=declaration.notarized_received_at is not None,
         notary_received_by=received_user.username if received_user else None,
         loss_reason=REASON_LOSS,
@@ -353,12 +355,18 @@ def declarations():
         )
         pending_count = len(db.list_declarations(conn, stage=STAGE_TO_REVIEW))
         cards_by_declaration = db.list_cards_for_declarations(conn, [d.id for d in records])
+        production_statuses = db.production_statuses_for_orders(
+            conn, {d.production_order_id for d in records if d.production_order_id is not None},
+        )
     rows = []
     for d in records:
         cards = cards_by_declaration[d.id]
         rows.append({
             "d": d, "declarant": _declarant(d), "summary": _summarize(cards),
             "stage": declaration_stage(d, cards),
+            "production_status": (
+                production_statuses.get(d.production_order_id) if d.production_order_id is not None else None
+            ),
         })
     return render_template(
         "declarations.html", rows=rows, query=query, stage_filter=stage_filter,
@@ -385,7 +393,7 @@ def declaration_file(declaration_id: int, kind: str):
         declaration = db.get_declaration(conn, declaration_id)
     if declaration is None:
         abort(404)
-    return _send_stored_file(getattr(declaration, attribute), mimetype)
+    return send_stored_file(getattr(declaration, attribute), mimetype)
 
 
 @bp.get("/declaraciones/<int:declaration_id>/cards/<int:card_id>/photo/<side>")
@@ -401,7 +409,7 @@ def declaration_card_photo(declaration_id: int, card_id: int, side: str):
     card = next((c for c in cards if c.id == card_id), None)
     if card is None:
         abort(404)
-    return _send_stored_file(getattr(card, attribute), None)
+    return send_stored_file(getattr(card, attribute), None)
 
 
 def _photo_entries(
@@ -452,28 +460,6 @@ def declaration_photos_zip(declaration_id: int):
         buffer, mimetype="application/zip", as_attachment=True,
         download_name=f"declaracion-{declaration_id}-fotos.zip",
     )
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-def _send_stored_file(stored_name: str | None, mimetype: str | None):
-    """Serve an upload by its stored name (never a client-supplied path):
-    inline, `nosniff`, `no-store`; 404 when there is none or it is gone.
-    `mimetype=None` means a photo, typed by the stored extension."""
-    if not stored_name:
-        abort(404)
-    try:
-        path = resolve_upload_path(stored_name)
-    except UploadError:
-        abort(404)
-    if not path.is_file():
-        abort(404)
-    if mimetype is None:
-        mimetype = PHOTO_MIMETYPES.get(path.suffix.lstrip("."))
-        if mimetype is None:
-            abort(404)
-    response = send_file(path, mimetype=mimetype, as_attachment=False)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Cache-Control"] = "no-store"
     return response
