@@ -1,3 +1,4 @@
+{% import "_production_badge.html" as production %}
 <!doctype html>
 <html lang="es">
 <head>
@@ -44,6 +45,7 @@
       .search input { max-width:none; min-width:0; }
     }
   </style>
+  {{ production.style() }}
 </head>
 <body>
   {% include "_nav.html" %}
@@ -90,7 +92,7 @@
         <td data-label="Tarjetas">{{ s.card_count }}</td>
         <td data-label="Placas">{{ s.plate_total }}</td>
         <td data-label="Resumen">{{ s.plates }}<br><span class="muted reasons{{ ' has-loss' if s.has_loss }}">{{ s.reasons }}</span></td>
-        <td data-label="Estado"><span class="badge {{ row.stage }}">{{ stage_labels[row.stage] }}</span></td>
+        <td data-label="Estado"><span class="badge {{ row.stage }}">{{ stage_labels[row.stage] }}</span>{% if row.production_status %}{{ production.badge(row.production_status) }}{% endif %}</td>
         <td data-label="Alertas">{% for f in d.review_flags %}<span class="badge flag">{{ flag_labels.get(f, f) }}</span>{% else %}—{% endfor %}{% if s.flagged_numbers %}<br><span class="muted">en la tarjeta {{ s.flagged_numbers | join(', ') }}</span>{% endif %}</td>
         <td class="actions"><a class="ver" href="{{ url_for('declarations.declaration_detail', declaration_id=d.id) }}">Ver</a></td>
       </tr>

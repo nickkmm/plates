@@ -1,0 +1,86 @@
+{% import "_production_badge.html" as production %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Producción</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.4rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .muted { color:#777; font-size:.9rem; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { border:1px solid #e3e3e3; padding:.4rem .55rem; text-align:left; vertical-align:top; }
+    th { background:#f6f6f6; }
+    .actions { white-space:nowrap; }
+    a.ver { display:inline-block; border:0; border-radius:6px; padding:.38rem .8rem; font-size:.82rem; text-decoration:none; background:#0b6bcb; color:#fff; }
+    a.ver:hover { background:#095bb0; }
+    .filters { display:flex; gap:.4rem; margin-bottom:1rem; flex-wrap:wrap; }
+    .filters a { padding:.35rem .8rem; border:1px solid #ccc; border-radius:16px; text-decoration:none; color:#555; font-size:.85rem; }
+    .filters a.on { background:#0b6bcb; border-color:#0b6bcb; color:#fff; }
+    .search { display:flex; gap:.5rem; margin-bottom:1.2rem; }
+    .search input { flex:1; max-width:360px; padding:.5rem .7rem; border:1px solid #ccc; border-radius:6px; font-size:.95rem; }
+    .search button { border:0; border-radius:6px; padding:.5rem 1rem; background:#0b6bcb; color:#fff; font-size:.9rem; cursor:pointer; }
+    .search a.clear { align-self:center; color:#777; font-size:.85rem; text-decoration:none; }
+    @media (max-width:700px) {
+      table.list thead { display:none; }
+      table.list, table.list tbody, table.list tr, table.list td { display:block; width:100%; box-sizing:border-box; }
+      table.list tr { border:1px solid #e3e3e3; border-radius:8px; margin-bottom:.8rem; padding:.3rem .2rem; }
+      table.list td { border:0; padding:.25rem .55rem; overflow-wrap:anywhere; }
+      table.list td[data-label]::before { content:attr(data-label) ": "; color:#777; font-size:.8rem; }
+      .tabs { overflow-x:auto; }
+      .search input { max-width:none; min-width:0; }
+    }
+  </style>
+  {{ production.style() }}
+</head>
+<body>
+  {% include "_nav.html" %}
+  <h1>Producción</h1>
+  <p class="muted">
+    Todas las órdenes creadas por el punto de venta. Cada orden pasa por
+    Por realizar → En realización → Lista para entregar → Entregada.
+  </p>
+
+  <div class="filters">
+    {% for value, label, _ in status_filters %}
+    <a href="{{ url_for('production.production', status=value, q=query or None) }}" class="{{ 'on' if value == status_filter }}">{{ label }}{% if value in counted_statuses %} ({{ counts[value] }}){% endif %}</a>
+    {% endfor %}
+  </div>
+
+  <form class="search" method="get" action="{{ url_for('production.production') }}">
+    <input type="hidden" name="status" value="{{ status_filter }}">
+    <input type="text" name="q" value="{{ query or '' }}" placeholder="Buscar por número de orden o placa" autofocus>
+    <button type="submit">Buscar</button>
+    {% if query %}<a class="clear" href="{{ url_for('production.production', status=status_filter) }}">Limpiar</a>{% endif %}
+  </form>
+
+  {% if orders %}
+  <table class="list">
+    <thead>
+      <tr><th>Orden</th><th>Fecha</th><th>Cliente</th><th>Placas</th><th>Entrega</th><th>Declaración</th><th>Estado</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for o in orders %}
+      <tr>
+        <td data-label="Orden">{{ o.order_number }}</td>
+        <td data-label="Fecha">{{ o.order_date.strftime('%d/%m/%Y') }}</td>
+        <td data-label="Cliente">{{ o.requested_by }}</td>
+        <td data-label="Placas">{{ o.plate_count }}{% if o.plates %}<br><span class="muted">{{ o.plates }}</span>{% endif %}</td>
+        <td data-label="Entrega">{{ o.delivery_date.strftime('%d/%m/%Y') if o.delivery_date else '—' }}</td>
+        <td data-label="Declaración">{% for id in o.declaration_ids %}#{{ id }}{{ ', ' if not loop.last }}{% else %}—{% endfor %}</td>
+        <td data-label="Estado">{{ production.badge(o.production_status) }}</td>
+        <td class="actions"><a class="ver" href="{{ url_for('production.order_detail', order_id=o.id) }}">Ver</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No hay órdenes en este estado.</p>
+  {% endif %}
+</body>
+</html>

@@ -1,3 +1,4 @@
+{% import "_production_badge.html" as production %}
 <!doctype html>
 <html lang="es">
 <head>
@@ -42,7 +43,9 @@
     a.back { display:inline-block; background:var(--blue); color:#fff; text-decoration:none; padding:.5rem .95rem; border-radius:7px; font-size:.9rem; }
     .no-form-back { margin-top:1.2rem; }
     a.back:hover { background:#095bb0; }
+    .production-status { margin:-.4rem 0 1rem; font-size:.95rem; display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
   </style>
+  {{ production.style() }}
 </head>
 <body>
   {% include "_nav.html" %}
@@ -52,6 +55,10 @@
   {% if can_edit %}<datalist id="requesters">{% for r in requesters %}<option value="{{ r }}">{% endfor %}</datalist>{% endif %}
 
   <h1>Orden {{ order.order_number }}</h1>
+  {% if production_status %}
+  <p class="production-status">Estado en producción: {{ production.badge(production_status) }}
+    {% if can('production.view') %}<a href="{{ url_for('production.order_detail', order_id=order.id) }}">Ver en Producción</a>{% endif %}</p>
+  {% endif %}
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
   {% if can_edit %}

@@ -23,6 +23,12 @@ NAV_ITEMS: list[tuple[str, str, str, tuple[str, ...]]] = [
         "declarations.review",
         ("declarations.declarations", "declarations.declaration_detail"),
     ),
+    (
+        "production.production",
+        "Producción",
+        "production.view",
+        ("production.production", "production.order_detail"),
+    ),
     ("review.review", "Revisión", "duplicates.review", ("review.review",)),
     ("inventory.inventory", "Inventario", "inventory.manage", ("inventory.inventory",)),
     ("pricing.precios", "Precios", "pricing.manage", ("pricing.precios",)),

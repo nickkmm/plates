@@ -134,21 +134,31 @@ class TestLogin:
             assert sess["user"] == username
             assert "role" not in sess
 
-    def test_production_role_lands_on_records_not_ingest(self, client, produccion_credentials):
+    def test_production_role_lands_on_the_production_board_not_ingest(self, client, produccion_credentials):
         """Regression guard: login (and '/') used to always redirect to
         /ingest regardless of role -- for 'production' that route 403s, so the
         person landed straight on an error page right after logging in. The
-        default landing page must be role-aware."""
+        default landing page must be role-aware: production's first nav entry
+        is the Producción board."""
         username, password = produccion_credentials
         resp = client.post("/login", data={"username": username, "password": password})
         assert resp.status_code == 302
-        assert urlparse(resp.headers["Location"]).path == "/records"
+        assert urlparse(resp.headers["Location"]).path == "/produccion"
 
-    def test_root_redirects_production_role_to_records(self, client, produccion_credentials):
+    def test_root_redirects_production_role_to_the_production_board(self, client, produccion_credentials):
         username, password = produccion_credentials
         client.post("/login", data={"username": username, "password": password})
         resp = client.get("/")
-        assert urlparse(resp.headers["Location"]).path == "/records"
+        assert urlparse(resp.headers["Location"]).path == "/produccion"
+
+    def test_production_role_nav_shows_only_production_and_records(self, client, produccion_credentials):
+        username, password = produccion_credentials
+        client.post("/login", data={"username": username, "password": password})
+        html = client.get("/produccion").data.decode()
+        assert ">Producción</a>" in html and ">Registros</a>" in html
+        for path in ("/ingest", "/cuadre", "/declaraciones", "/review", "/inventory", "/precios",
+                     "/customers", "/usuarios"):
+            assert f'href="{path}' not in html
 
 
 

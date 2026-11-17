@@ -291,7 +291,7 @@ class TestPassword:
         assert _log_in(_fresh_client(), PRODUCCION_USERNAME, PRODUCCION_PASSWORD).status_code == 401
         resp = _log_in(_fresh_client(), PRODUCCION_USERNAME, NEW_PASSWORD)
         assert resp.status_code == 302
-        assert urlparse(resp.headers["Location"]).path == "/records"
+        assert urlparse(resp.headers["Location"]).path == "/produccion"
 
     @pytest.mark.parametrize(
         ("password", "confirm", "message"),

@@ -1,0 +1,193 @@
+{% import "_production_badge.html" as production %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — Producción · Orden {{ order.order_number }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.3rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .error { background:#fdecec; border:1px solid #d33; border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
+    fieldset { border:1px solid #ddd; border-radius:10px; margin:0 0 1.2rem; padding:1rem; min-width:0; }
+    legend { font-weight:600; padding:0 .4rem; }
+    h3.sub { font-size:.95rem; margin:1rem 0 .5rem; color:#444; }
+    dl { display:grid; grid-template-columns:max-content 1fr; gap:.3rem 1rem; margin:0; font-size:.9rem; }
+    dt { color:#555; }
+    dd { margin:0; overflow-wrap:anywhere; }
+    .muted { color:#777; font-size:.9rem; }
+    .voided { color:#900; font-weight:600; }
+    table { border-collapse:collapse; width:100%; font-size:.9rem; }
+    th, td { border:1px solid #e3e3e3; padding:.4rem .5rem; text-align:left; vertical-align:top; }
+    th { background:#f6f6f6; font-size:.78rem; }
+    td.r, th.r { text-align:right; }
+    .tag { font-size:.8rem; color:#b50; }
+    .badge { display:inline-block; border-radius:5px; padding:.15rem .5rem; font-size:.78rem; margin-right:.2rem; }
+    .badge.reason { font-weight:600; font-size:.82rem; }
+    .badge.reason.loss { background:#c33; color:#fff; }
+    .badge.reason.deterioration { background:#e6f0fb; color:#0b5cad; }
+    .card { border-top:1px solid #eee; padding-top:.6rem; margin-top:.8rem; }
+    .photos { display:flex; flex-wrap:wrap; gap:.8rem; margin:.4rem 0 .8rem; }
+    .photos figure { margin:0; }
+    .photos img { max-width:100%; width:240px; border:1px solid #ddd; background:#fff; display:block; }
+    .photos figcaption { font-size:.8rem; color:#555; margin-top:.2rem; }
+    .history { margin:0; padding-left:1.2rem; font-size:.9rem; }
+    .actions { display:flex; gap:.7rem; flex-wrap:wrap; align-items:center; background:#f7f7f7; border:1px solid #e3e3e3; border-radius:10px; padding:.9rem 1rem; margin-bottom:1.2rem; }
+    .actions form { margin:0; }
+    .actions p { margin:0; font-weight:600; }
+    button, a.back { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
+    .advance { background:#1a7a45; color:#fff; font-size:1.05rem; font-weight:600; padding:.65rem 1.3rem; }
+    .undo { background:#eee; color:#444; }
+    a.back { background:#0b6bcb; color:#fff; font-size:.9rem; }
+    @media (max-width:700px) {
+      dl { grid-template-columns:1fr; gap:0; }
+      dt { margin-top:.4rem; font-size:.8rem; }
+      .tabs { overflow-x:auto; }
+      .table-wrap { overflow-x:auto; }
+    }
+  </style>
+  {{ production.style() }}
+</head>
+<body>
+  {% include "_nav.html" %}
+
+  <h1>Orden {{ order.order_number }} {{ production.badge(status) }}</h1>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if advance_label and can_advance or status == 'delivered' or can_undo %}
+  <div class="actions" id="actions">
+    {% if status == 'delivered' %}
+    <p>Orden entregada.</p>
+    {% elif advance_label and can_advance %}
+    <form method="post" action="{{ url_for('production.advance', order_id=order.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="expected_status" value="{{ status }}">
+      <button type="submit" class="advance">{{ advance_label }}</button>
+    </form>
+    {% endif %}
+    {% if can_undo %}
+    <form method="post" action="{{ url_for('production.undo', order_id=order.id) }}" onsubmit="return confirm('¿Deshacer el último cambio de estado?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="expected_status" value="{{ status }}">
+      <button type="submit" class="undo">Deshacer último cambio</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <fieldset>
+    <legend>Datos de la orden</legend>
+    {% if order_voided %}<p class="voided">Orden anulada</p>{% endif %}
+    <dl>
+      <dt>Fecha</dt><dd>{{ order.order_date.strftime('%d/%m/%Y') }}</dd>
+      <dt>Cliente</dt><dd>{{ order.requested_by }}</dd>
+      <dt>Fecha de entrega</dt><dd>{{ order.delivery_date.strftime('%d/%m/%Y') if order.delivery_date else '—' }}</dd>
+      <dt>Pedido # (cliente)</dt><dd>{{ order.client_order_number or '—' }}</dd>
+      <dt>Guía #</dt><dd>{{ order.tracking_number or '—' }}</dd>
+      <dt>Observaciones</dt><dd>{{ order.notes or '—' }}</dd>
+    </dl>
+  </fieldset>
+
+  <fieldset>
+    <legend>Placas</legend>
+    {% if plates %}
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Tipo</th><th>Placa</th><th class="r">Cantidad</th><th>Ciudad</th><th>Material</th><th>Motivo</th><th>Marca vehículo</th><th>Placa anulada</th></tr>
+      </thead>
+      <tbody>
+        {% for p in plates %}
+        <tr>
+          <td>{{ p.plate_type }}</td>
+          <td>{% if p.plate_number and p.plate_to %}{{ p.plate_number }} – {{ p.plate_to }}{% else %}{{ p.plate_number or '—' }}{% endif %}</td>
+          <td class="r">{{ p.quantity }}</td>
+          <td>{{ p.city or '—' }}</td>
+          <td>{{ p.material or '—' }}</td>
+          <td>{{ p.reason or '—' }}</td>
+          <td>{{ p.vehicle_brand or '—' }}</td>
+          <td>{% if p.is_plate_annulled %}<span class="tag">Sí</span>{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">Esta orden no tiene placas.</p>
+    {% endif %}
+  </fieldset>
+
+  {% for item in declarations %}
+  {% set d = item.d %}
+  {% set declarant = item.declarant %}
+  <fieldset id="declaration-{{ d.id }}">
+    <legend>Declaración #{{ d.id }}</legend>
+    <dl>
+      <dt>Declarante</dt><dd>{{ declarant.get('name') or '—' }}</dd>
+      <dt>Documento</dt><dd>{{ declarant.get('document_type') or '—' }} {{ declarant.get('document_number') or '' }}</dd>
+      <dt>Teléfono</dt><dd>{{ declarant.get('phone') or '—' }}</dd>
+    </dl>
+    {% if d.declarant_id_front_path or d.declarant_id_back_path %}
+    <h3 class="sub">Cédula del declarante</h3>
+    <div class="photos">
+      {% for kind, label, path in (('id_front', 'Frente', d.declarant_id_front_path), ('id_back', 'Atrás', d.declarant_id_back_path)) if path %}
+      {% set url = url_for('production.declaration_file', order_id=order.id, declaration_id=d.id, kind=kind) %}
+      <figure>
+        <a href="{{ url }}" target="_blank"><img alt="Cédula ({{ label|lower }})" src="{{ url }}" loading="lazy"></a>
+        <figcaption>Cédula · {{ label }}</figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% for card in item.cards %}
+    {% set card_number = loop.index %}
+    <div class="card">
+      <h3 class="sub">Tarjeta de propiedad {{ card_number }} · placa {{ card.plate_number or '—' }}</h3>
+      <dl>
+        <dt>Placa</dt><dd>{{ card.plate_number or '—' }}</dd>
+        <dt>Tipo de vehículo</dt><dd>{{ card.vehicle_type or '—' }}</dd>
+        <dt>Motivo</dt><dd><span class="badge reason {{ 'loss' if card.reason == loss_reason else 'deterioration' }}">{{ card.reason }}</span></dd>
+        <dt>Cantidad de placas</dt><dd>{{ card.plate_quantity }}</dd>
+        <dt>Licencia de tránsito</dt><dd>{{ card.transit_license or '—' }}</dd>
+        <dt>N° de motor</dt><dd>{{ card.engine_number or '—' }}</dd>
+        <dt>N° de chasis</dt><dd>{{ card.chassis_number or '—' }}</dd>
+        <dt>Matriculado en</dt><dd>{{ card.registered_in or '—' }}</dd>
+        <dt>Marca</dt><dd>{{ card.vehicle_brand or '—' }}</dd>
+      </dl>
+      {% if card.card_front_path or card.card_back_path or card.used_plates_photo_path %}
+      <div class="photos">
+        {% for side, label, path in (('front', 'Frente', card.card_front_path), ('back', 'Atrás', card.card_back_path), ('used_plates', 'Placas usadas', card.used_plates_photo_path)) if path %}
+        {% set url = url_for('production.declaration_card_photo', order_id=order.id, declaration_id=d.id, card_id=card.id, side=side) %}
+        <figure>
+          <a href="{{ url }}" target="_blank"><img alt="Tarjeta de propiedad {{ card_number }} ({{ label|lower }})" src="{{ url }}" loading="lazy"></a>
+          <figcaption>{{ label }}</figcaption>
+        </figure>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </fieldset>
+  {% endfor %}
+
+  <fieldset>
+    <legend>Historial</legend>
+    {% if events %}
+    <ul class="history">
+      {% for e in events %}
+      <li>{{ e.created_at | bogota }} · {{ e.username or '—' }} · {{ production_status_labels[e.from_status] }} → {{ production_status_labels[e.to_status] }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">Sin cambios todavía.</p>
+    {% endif %}
+  </fieldset>
+
+  <p><a class="back" href="{{ url_for('production.production') }}">← Volver a Producción</a></p>
+</body>
+</html>

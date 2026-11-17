@@ -21,6 +21,9 @@ one module per domain:
   declarations.py  -- GET /declaraciones, GET /declaraciones/<id>[/file/<kind>],
                       POST /declaraciones/<id>/approve|reject (review of the
                       sworn declarations from the public form)
+  production.py    -- GET /produccion, GET /produccion/<id> (+ its declaration
+                      photos), POST /produccion/<id>/advance|undo (the
+                      production board and its status steps)
   users.py         -- GET /usuarios, GET/POST /usuarios/nuevo,
                       GET/POST /usuarios/<id>, POST /usuarios/<id>/password
                       (admin-only login account management)
@@ -63,6 +66,8 @@ from app.web.blueprints.declarations import bp as declarations_bp
 from app.web.blueprints.ingest import bp as ingest_bp
 from app.web.blueprints.inventory import bp as inventory_bp
 from app.web.blueprints.pricing import bp as pricing_bp
+from app.web.blueprints.production import PRODUCTION_STATUS_LABELS
+from app.web.blueprints.production import bp as production_bp
 from app.web.blueprints.public_declaration import bp as public_declaration_bp
 from app.web.blueprints.records import bp as records_bp
 from app.web.blueprints.review import bp as review_bp
@@ -106,6 +111,7 @@ app.register_blueprint(declarations_bp)
 app.register_blueprint(ingest_bp)
 app.register_blueprint(inventory_bp)
 app.register_blueprint(pricing_bp)
+app.register_blueprint(production_bp)
 app.register_blueprint(public_declaration_bp)
 app.register_blueprint(records_bp)
 app.register_blueprint(review_bp)
@@ -156,6 +162,8 @@ def _inject_permissions() -> dict:
 
 app.jinja_env.filters["cop"] = format_cop
 app.jinja_env.filters["bogota"] = format_bogota
+# The production-status labels, for _production_badge.html on every screen.
+app.jinja_env.globals["production_status_labels"] = PRODUCTION_STATUS_LABELS
 
 
 @app.get("/")
