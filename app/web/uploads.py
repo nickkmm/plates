@@ -2,7 +2,9 @@
 
 Files live in `uploads_dir()` (a Docker volume), are named with a random
 uuid4 (never the client's filename) and are never served by a public URL: the
-authenticated download route must go through `resolve_upload_path`.
+authenticated download routes must go through `resolve_upload_path`, and
+serve the file with `send_stored_file` (shared by /declaraciones and
+/produccion).
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ import re
 import uuid
 from pathlib import Path
 from typing import Any
+
+from flask import abort, send_file
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_SIGNATURE_BYTES = 200 * 1024
@@ -112,3 +116,25 @@ def resolve_upload_path(name: str) -> Path:
     if not isinstance(name, str) or not _STORED_NAME_RE.fullmatch(name):
         raise UploadError("Archivo no encontrado.")
     return uploads_dir() / name
+
+
+def send_stored_file(stored_name: str | None, mimetype: str | None):
+    """Serve an upload by its stored name (never a client-supplied path):
+    inline, `nosniff`, `no-store`; 404 when there is none or it is gone.
+    `mimetype=None` means a photo, typed by the stored extension."""
+    if not stored_name:
+        abort(404)
+    try:
+        path = resolve_upload_path(stored_name)
+    except UploadError:
+        abort(404)
+    if not path.is_file():
+        abort(404)
+    if mimetype is None:
+        mimetype = PHOTO_MIMETYPES.get(path.suffix.lstrip("."))
+        if mimetype is None:
+            abort(404)
+    response = send_file(path, mimetype=mimetype, as_attachment=False)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "no-store"
+    return response
