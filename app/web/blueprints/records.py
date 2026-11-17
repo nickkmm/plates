@@ -145,6 +145,7 @@ def record_detail(order_id):
         order, plates = db.order_detail(conn, order_id)
         requesters, cities = _options(conn)
         prices = {pt: str(price) for pt, price in db.current_prices(conn).items()}
+        production_status = db.get_production_status(conn, order_id)
     if not order:
         return redirect(url_for("records.records"))
     return render_template("record_detail.html", order=order, plates=plates,
@@ -152,7 +153,7 @@ def record_detail(order_id):
                            receipt_types=RECEIPT_TYPES, payment_methods=PAYMENT_METHODS,
                            reasons=REASONS, prices=prices,
                            today=today_iso(), order_voided=_order_voided(plates),
-                           back_query=back_query)
+                           production_status=production_status, back_query=back_query)
 
 
 def _record_detail_error(order_id: int, error: str):
@@ -162,11 +163,13 @@ def _record_detail_error(order_id: int, error: str):
         order, plates = db.order_detail(conn, order_id)
         requesters, cities = _options(conn)
         prices = {pt: str(price) for pt, price in db.current_prices(conn).items()}
+        production_status = db.get_production_status(conn, order_id)
     return render_template("record_detail.html", order=order, plates=plates,
                            cities=cities, requesters=requesters, categories=FORM_PLATE_TYPES,
                            receipt_types=RECEIPT_TYPES, payment_methods=PAYMENT_METHODS,
                            reasons=REASONS, prices=prices,
-                           today=today_iso(), order_voided=_order_voided(plates), error=error), 400
+                           today=today_iso(), order_voided=_order_voided(plates),
+                           production_status=production_status, error=error), 400
 
 
 @bp.post("/records/<int:order_id>/save")

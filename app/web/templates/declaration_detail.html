@@ -1,3 +1,4 @@
+{% import "_production_badge.html" as production %}
 <!doctype html>
 <html lang="es">
 <head>
@@ -73,6 +74,7 @@
       .tabs { overflow-x:auto; }
     }
   </style>
+  {{ production.style() }}
 </head>
 <body>
   {% include "_nav.html" %}
@@ -100,6 +102,7 @@
   <div class="next done" id="attended">
     <p><strong>Atendida.</strong> Con esta declaración se creó el pedido
       {% if attended_order %}<a href="{{ url_for('records.record_detail', order_id=d.production_order_id) }}">{{ attended_order.order_number }}</a>{% else %}<a href="{{ url_for('records.record_detail', order_id=d.production_order_id) }}">#{{ d.production_order_id }}</a>{% endif %}.</p>
+    {% if production_status %}<p>Estado en producción: {{ production.badge(production_status) }}</p>{% endif %}
   </div>
   {% elif stage == 'awaiting_notarization' %}
   <div class="next waiting" id="create-order">
