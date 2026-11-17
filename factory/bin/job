@@ -17,6 +17,9 @@ Usage:
   job agents <job> <json>        record the routed agent set (called by factory/bin/route)
   job sync <job>                 refresh reviews, gate and cost from the job's files
   job summary [<job>...]         table of jobs: issue, stage, PR, cost, time
+  job cleanup-dbs                drop the test databases of every merged or rejected job
+  job drop-dbs <n> [<n>...]      internal (used by job itself): drop the test databases
+                                 of job numbers <n>, as JSON on stdout
 
 <job> is a job id (004-dark-mode) or an issue number (12).
 """
@@ -24,6 +27,7 @@ Usage:
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -32,7 +36,7 @@ from pathlib import Path
 # On Windows, Python reads and writes files and subprocess output in the
 # locale codepage (cp1252), which garbles Spanish text from issues and specs.
 # Re-run this script in UTF-8 mode there.
-if sys.platform == "win32" and not sys.flags.utf8_mode:
+if __name__ == "__main__" and sys.platform == "win32" and not sys.flags.utf8_mode:
     import subprocess
 
     sys.exit(subprocess.call([sys.executable, "-X", "utf8", *sys.argv]))
@@ -69,6 +73,8 @@ GH = os.environ.get("FACTORY_GH", "gh")  # tests point this at a fake gh
 # Off by default: merging to the base branch deploys to production, so a
 # person reviews and merges every PR, even one the approver approved.
 AUTO_MERGE = CONFIG.get("auto_merge", False)
+# The local Postgres from `docker compose up -d db`, the same one factory/bin/gate uses.
+DB_HOST, DB_PORT = "127.0.0.1", 5433
 
 
 class Refused(Exception):
@@ -367,6 +373,122 @@ def sync(job):
     return job
 
 
+# ---- Test databases --------------------------------------------------------
+
+
+class CleanupFailed(Exception):
+    pass
+
+
+def job_number(job_id):
+    """The job number in its test database names, like factory/bin/gate: `004-x` → 4."""
+    return int(job_id.split("-", 1)[0])
+
+
+def job_db_names(n, names):
+    """The names among `names` that are job n's test databases: `plates_test_<n>`
+    and its pytest-xdist copies `plates_test_<n>_gw<digits>`. Each one must also
+    pass the rule of `_check_test_db_name` in tests/conftest.py."""
+    pattern = re.compile(rf"plates_test_{int(n)}(_gw[0-9]+)?")
+    return sorted(name for name in names
+                  if pattern.fullmatch(name)
+                  and name.startswith("plates_test") and name.replace("_", "").isalnum())
+
+
+def oneline(e):
+    return " ".join(str(e).split()) or type(e).__name__
+
+
+def db_credentials():
+    """(user, password) from the same sources as factory/bin/gate, once Postgres is reachable."""
+    env = dict(os.environ)
+    dotenv = REPO / ".env"
+    if dotenv.exists():
+        for line in dotenv.read_text().splitlines():
+            key, sep, value = line.strip().partition("=")
+            if sep and key.strip() in ("POSTGRES_USER", "POSTGRES_PASSWORD"):
+                env.setdefault(key.strip(), value.strip())
+    if not env.get("POSTGRES_PASSWORD"):
+        raise CleanupFailed("no POSTGRES_PASSWORD in the environment or in the main checkout's .env")
+    try:
+        socket.create_connection((DB_HOST, DB_PORT), timeout=3).close()
+    except OSError:
+        raise CleanupFailed(f"Postgres is not reachable at {DB_HOST}:{DB_PORT}")
+    return env.get("POSTGRES_USER") or "plates_user", env["POSTGRES_PASSWORD"]
+
+
+def drop_with_psycopg(numbers):
+    """{n: {"dropped": [names], "failed": [[name, error]]}} for each job number."""
+    import psycopg
+    from psycopg import sql
+
+    user, password = db_credentials()
+    try:
+        conn = psycopg.connect(host=DB_HOST, port=DB_PORT, dbname="postgres", user=user,
+                               password=password, autocommit=True, connect_timeout=5)
+    except psycopg.Error as e:
+        raise CleanupFailed(f"can't connect to Postgres: {oneline(e)}")
+    results = {}
+    with conn:
+        existing = [row[0] for row in conn.execute("SELECT datname FROM pg_database")]
+        for n in numbers:
+            dropped, failed = [], []
+            for name in job_db_names(n, existing):
+                try:
+                    conn.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(name)))
+                    dropped.append(name)
+                except psycopg.Error as e:
+                    failed.append([name, oneline(e)])
+            results[n] = {"dropped": dropped, "failed": failed}
+    return results
+
+
+def drop_test_dbs(numbers):
+    """Drop the test databases of these job numbers; returns what drop_with_psycopg does.
+
+    The Python running job may lack psycopg (the system Python does); then the
+    main checkout's .venv drops them through `job drop-dbs`.
+    """
+    try:
+        import psycopg  # noqa: F401
+    except ImportError:
+        pass
+    else:
+        return drop_with_psycopg(numbers)
+    db_credentials()  # fail fast, without starting another Python, when Postgres is down
+    if not numbers:
+        return {}
+    venv = REPO / ".venv"
+    python = next((p for p in (venv / "Scripts" / "python.exe", venv / "bin" / "python") if p.exists()), None)
+    if python is None:
+        raise CleanupFailed("psycopg isn't installed in this Python and the main checkout has no .venv")
+    try:
+        res = subprocess.run([str(python), "-X", "utf8", str(BIN / "job"), "drop-dbs", *map(str, numbers)],
+                             capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise CleanupFailed("`job drop-dbs` timed out after 60 s")
+    if res.returncode != 0:
+        lines = res.stderr.strip().splitlines() or [f"`job drop-dbs` exited {res.returncode}"]
+        raise CleanupFailed(lines[-1].removeprefix("job: "))
+    return {int(n): r for n, r in json.loads(res.stdout).items()}
+
+
+def cleanup_test_dbs(job_id):
+    """Best effort: drop a finished job's test databases. Notes go to stderr only,
+    so `job queue` output stays parseable."""
+    n = job_number(job_id)
+    try:
+        result = drop_test_dbs([n])[n]
+    except Exception as e:
+        print(f"job: the test databases of job {n} weren't cleaned up: {oneline(e)}", file=sys.stderr)
+        return
+    if result["dropped"]:
+        print(f"job: dropped the test databases of job {n}: {', '.join(result['dropped'])}", file=sys.stderr)
+    if result["failed"]:
+        why = "; ".join(f"{name}: {err}" for name, err in result["failed"])
+        print(f"job: the test databases of job {n} weren't cleaned up: {why}", file=sys.stderr)
+
+
 # ---- Transitions -----------------------------------------------------------
 
 
@@ -537,9 +659,11 @@ def advance(job, stage):
             comment("issue", job["issue"], body)
         label("issue", job["issue"], add=LABELS["needs_human"])
 
-    if stage in TERMINAL and Path(job["worktree"]).exists():
-        run(["git", "worktree", "remove", "--force", job["worktree"]])
-        run(["git", "branch", "-D", job["branch"]], check=False)
+    if stage in TERMINAL:
+        if Path(job["worktree"]).exists():
+            run(["git", "worktree", "remove", "--force", job["worktree"]])
+            run(["git", "branch", "-D", job["branch"]], check=False)
+        cleanup_test_dbs(job["id"])
 
     job["stage"] = stage
     job["ended"] = now() if stage in TERMINAL | WAITING else None
@@ -729,6 +853,37 @@ def cmd_summary(args):
     print(f"total ${sum(j['cost_usd'] for j in jobs):.2f} (API-equivalent, factory agents only)")
 
 
+def cmd_cleanup_dbs():
+    finished = [j for j in all_jobs() if j["stage"] in TERMINAL]
+    try:
+        results = drop_test_dbs([job_number(j["id"]) for j in finished])
+    except Exception as e:
+        die(f"the test databases weren't cleaned up: {oneline(e)}")
+    failed = False
+    for j in finished:
+        r = results[job_number(j["id"])]
+        print(f"{j['id']}: dropped {', '.join(r['dropped'])}" if r["dropped"] else f"{j['id']}: nothing to drop")
+        for name, err in r["failed"]:
+            print(f"job: couldn't drop {name}: {err}", file=sys.stderr)
+            failed = True
+    if failed:
+        sys.exit(1)
+
+
+def cmd_drop_dbs(numbers):
+    """Run by drop_test_dbs under the .venv Python. It takes only job numbers and
+    never loads a job: the parent process holds that job's lock."""
+    try:
+        import psycopg  # noqa: F401
+    except ImportError:
+        die(f"psycopg isn't installed in {sys.executable}")
+    try:
+        results = drop_with_psycopg([int(n) for n in numbers])
+    except Exception as e:
+        die(oneline(e))
+    print(json.dumps({str(n): r for n, r in results.items()}))
+
+
 def main(argv):
     if not argv or argv[0] in {"-h", "--help"}:
         print(__doc__.strip())
@@ -758,6 +913,10 @@ def main(argv):
             print(f"{job['id']}: {job['stage']} round {job['round']} gate {job['gate'] or '-'} {reviews}".rstrip())
         elif cmd == "summary":
             cmd_summary(args)
+        elif cmd == "cleanup-dbs" and not args:
+            cmd_cleanup_dbs()
+        elif cmd == "drop-dbs" and args and all(a.isdigit() for a in args):
+            cmd_drop_dbs(args)
         else:
             die(f"bad arguments: {' '.join(argv)}\n\n{__doc__.strip()}")
     except Refused as e:
