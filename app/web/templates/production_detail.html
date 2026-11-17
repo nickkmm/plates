@@ -25,7 +25,6 @@
     th, td { border:1px solid #e3e3e3; padding:.4rem .5rem; text-align:left; vertical-align:top; }
     th { background:#f6f6f6; font-size:.78rem; }
     td.r, th.r { text-align:right; }
-    tr.annulled td { color:#999; }
     .tag { font-size:.8rem; color:#b50; }
     .badge { display:inline-block; border-radius:5px; padding:.15rem .5rem; font-size:.78rem; margin-right:.2rem; }
     .badge.reason { font-weight:600; font-size:.82rem; }
@@ -41,7 +40,7 @@
     .actions form { margin:0; }
     .actions p { margin:0; font-weight:600; }
     button, a.back { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
-    .advance { background:#1a9c5b; color:#fff; font-size:1.05rem; font-weight:600; padding:.65rem 1.3rem; }
+    .advance { background:#1a7a45; color:#fff; font-size:1.05rem; font-weight:600; padding:.65rem 1.3rem; }
     .undo { background:#eee; color:#444; }
     a.back { background:#0b6bcb; color:#fff; font-size:.9rem; }
     @media (max-width:700px) {
@@ -103,7 +102,7 @@
       </thead>
       <tbody>
         {% for p in plates %}
-        <tr class="{{ 'annulled' if p.is_plate_annulled }}">
+        <tr>
           <td>{{ p.plate_type }}</td>
           <td>{% if p.plate_number and p.plate_to %}{{ p.plate_number }} – {{ p.plate_to }}{% else %}{{ p.plate_number or '—' }}{% endif %}</td>
           <td class="r">{{ p.quantity }}</td>
