@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Put the local Docker stack (http://localhost:8000) on the code to test.
+
+Usage:
+  local-env <job>     run the job's branch (its worktree) locally, so a person
+                      tries the PR in a browser before merging it
+  local-env main      fast-forward the main checkout to origin/<base> and run it
+
+Either way it rebuilds the `web` image, recreates the container and runs
+`python -m app.schema_migrate`, so the local database has every migration of
+the code that is running. The main checkout's branch is never switched: a
+job's code is built from its worktree, and only the image changes.
+
+<job> is a job id (004-dark-mode) or an issue number (12).
+
+Caveat: migrations are recorded by file name. If a job's migration changes
+after it ran here, the local database keeps the old version; reset the local
+volume if that matters.
+"""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+if sys.platform == "win32" and not sys.flags.utf8_mode:
+    sys.exit(subprocess.call([sys.executable, "-X", "utf8", *sys.argv]))
+
+REPO = Path(__file__).resolve().parents[2]
+JOBS = REPO / "factory" / "jobs"
+BASE = json.loads((REPO / "factory" / "config.json").read_text())["base_branch"]
+IMAGE = "plates-web"  # compose project `plates`, service `web`
+# docker-compose.yml expects this network (shared with `informes` on the VPS).
+EDGE_NETWORK = "informes_informes_net"
+
+
+def die(msg):
+    print(f"local-env: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def run(cmd, cwd=REPO):
+    res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if res.returncode != 0:
+        die(f"`{' '.join(cmd)}` failed: {(res.stderr or res.stdout).strip()[-2000:]}")
+    return res.stdout
+
+
+def find_job(arg):
+    if arg.isdigit():
+        for path in sorted(JOBS.glob("*/job.json")):
+            job = json.loads(path.read_text())
+            if job.get("issue") == int(arg):
+                return job
+        die(f"no job for issue #{arg}")
+    path = JOBS / arg / "job.json"
+    if not path.exists():
+        die(f"no job {arg}")
+    return json.loads(path.read_text())
+
+
+def source_for(arg):
+    """The directory to build from, and a label for the report."""
+    if arg == BASE or arg == "main":
+        branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+        if branch != BASE:
+            die(f"the main checkout is on `{branch}`, not `{BASE}`: switch it back first")
+        if run(["git", "status", "--porcelain", "--untracked-files=no"]).strip():
+            die("the main checkout has uncommitted changes: commit or discard them first")
+        run(["git", "pull", "--ff-only", "origin", BASE])
+        head = run(["git", "log", "-1", "--format=%h %s"]).strip()
+        return REPO, f"{BASE} ({head})"
+    job = find_job(arg)
+    worktree = Path(job["worktree"])
+    if not worktree.exists():
+        die(f"{job['id']} has no worktree (stage {job['stage']}); use `local-env main`")
+    run(["git", "fetch", "-q", "origin"], cwd=worktree)
+    head = run(["git", "log", "-1", "--format=%h %s"], cwd=worktree).strip()
+    pr = f" PR #{job['pr']}" if job.get("pr") else ""
+    return worktree, f"{job['id']}{pr} ({head})"
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] in {"-h", "--help"}:
+        print(__doc__.strip())
+        sys.exit(0 if len(sys.argv) == 2 else 2)
+    src, label = source_for(sys.argv[1])
+
+    networks = run(["docker", "network", "ls", "--format", "{{.Name}}"]).split()
+    if EDGE_NETWORK not in networks:
+        run(["docker", "network", "create", EDGE_NETWORK])
+
+    run(["docker", "build", "-q", "-t", IMAGE, "-f", str(src / "web.Dockerfile"), str(src)])
+    run(["docker", "compose", "up", "-d", "db"])
+    run(["docker", "compose", "up", "-d", "--no-build", "--force-recreate", "web"])
+    migrated = run(["docker", "compose", "exec", "-T", "web", "python", "-m", "app.schema_migrate"])
+    applied = [line for line in migrated.splitlines() if line.startswith("applied")]
+
+    print(f"local-env: http://localhost:8000 now runs {label}")
+    for line in applied:
+        print(f"local-env: {line}")
+    if not applied:
+        print("local-env: database already up to date")
+
+
+if __name__ == "__main__":
+    main()

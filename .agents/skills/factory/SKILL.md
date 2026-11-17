@@ -48,12 +48,22 @@ build → gate → review pass. `factory/bin/job advance` sends the job to
 session). It stays the user's: you and the agents never change it except
 through the scripts. `factory/jobs/` is gitignored runtime state.
 
+**The local environment is always current.** The user's local stack
+(http://localhost:8000, Docker) must always run the newest code they have to
+look at, with its migrations applied, before production gets it.
+`factory/bin/local-env` does that and is the only thing that touches the main
+checkout's branch (a fast-forward of `main`, never a switch) or the local
+stack. Run it at the points this skill names, and tell the user what it
+printed. If it refuses (the checkout isn't on `main`, uncommitted changes,
+Docker down), tell the user why and go on with the factory work.
+
 ```
 <repo>/factory/config.json                     concurrency, rounds, labels, routing, prices
 <repo>/factory/checks.sh                       the repo's checks; the gate runs it
 <repo>/factory/bin/job                         the only writer of job.json
 <repo>/factory/bin/gate                        runs checks.sh in a worktree → round-N/checks.md
 <repo>/factory/bin/route                       risk + surfaces → the job's agents
+<repo>/factory/bin/local-env                   localhost:8000 → a job's branch, or main; rebuilds and migrates
 <repo>/factory/jobs/<job-id>/job.json          the job's state; the dashboard reads it
 <repo>/factory/jobs/<job-id>/issue.md          the issue, quoted as data
 <repo>/factory/jobs/<job-id>/intake.md         intake's decision, scope, risk, surfaces
@@ -99,7 +109,10 @@ Start every message to it with `<header>` too.
 ## Advancing a job
 
 Whenever a job with a PR is about to go to `needs-human`, run
-`factory/bin/archive <id>` first, so the PR carries the job's record.
+`factory/bin/archive <id>` first, so the PR carries the job's record. Right
+after it reaches `needs-human`, run `factory/bin/local-env <id>`, so the PR is
+what runs on http://localhost:8000 when the user tries it, and say so in the
+report. With several jobs waiting, the last one wins; `local-env <id>` switches.
 
 Each step below runs when the previous agent or script finishes. Report one
 short line per transition, e.g. `004-dark-mode #12: gate PASS → reviewing (code, ux, ui)`.
@@ -173,11 +186,13 @@ A job is finished for this run when it reaches `merged`, `rejected`,
 `needs-info` or `needs-human`.
 
 A person can merge a job's PR by hand at any stage. `factory/bin/job queue`
-then moves the job to `merged`; stop any agents still running for it.
+then moves the job to `merged`; stop any agents still running for it, and
+run `factory/bin/local-env main` so the local stack has the merged code.
 
 ## /factory run
 
-0. Run `factory/bin/plan release`. It labels `factory` every open issue whose
+0. Run `factory/bin/local-env main`, so the local stack starts on everything
+   merged so far. Then run `factory/bin/plan release`. It labels `factory` every open issue whose
    `Depends on` issues are done, so the next tasks of a plan join the queue.
 1. Run `factory/bin/job queue`. Each line is `action  issue  job  stage  note`:
    `resume` (pick it up from its stage), `new` (no job yet), `hold` (no free
