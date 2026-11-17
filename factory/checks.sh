@@ -33,8 +33,8 @@ fi
 echo "== Dev dependencies"
 # Installed by the setup in AGENTS.md (a .venv in the worktree); never here,
 # so the gate never touches a global Python.
-if ! "$PY" -c 'import ruff, mypy, pytest' >/dev/null 2>&1; then
-  echo "ruff/mypy/pytest missing for $PY: run the AGENTS.md setup in this checkout" >&2
+if ! "$PY" -c 'import ruff, mypy, pytest, xdist' >/dev/null 2>&1; then
+  echo "ruff/mypy/pytest/xdist missing for $PY: run the AGENTS.md setup in this checkout" >&2
   exit 1
 fi
 
@@ -45,7 +45,7 @@ echo "== Type-check (mypy)"
 "$PY" -m mypy app/
 
 echo "== Tests (pytest)"
-"$PY" -m pytest -q -p no:cacheprovider
+"$PY" -m pytest -q -p no:cacheprovider -n auto
 
 echo "== Check shell scripts"
 for f in scripts/*.sh factory/checks.sh; do bash -n "$f"; done
