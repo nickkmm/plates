@@ -22,6 +22,7 @@ no se repite.
 | [`DATABASE.md`](DATABASE.md) | Esquema completo, diagrama ER, columnas, rarezas de datos |
 | [`CORE.md`](CORE.md) | `app/core/`: normalización, extracción de PDF, pipeline de ingesta |
 | [`WEB.md`](WEB.md) | `app/web/`: rutas, roles/permisos, templates, flujos completos |
+| [`PRODUCTION.md`](PRODUCTION.md) | Pantalla de Producción: flujo de una orden hasta la entrega, estados, permisos y rutas |
 | [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md) | Gotchas de infra local, testing, variables de entorno |
 
 ## Vista general del sistema
