@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plates — {% if role %}Rol {{ role.label }}{% else %}Nuevo rol{% endif %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.3rem; }
+    .tabs { display:flex; gap:.3rem; margin-bottom:1.4rem; border-bottom:2px solid #eee; }
+    .tabs a { padding:.55rem 1rem; text-decoration:none; color:#555; font-weight:600; border-radius:8px 8px 0 0; }
+    .tabs a:hover { background:#f3f6fb; }
+    .tabs a.on { color:#0b6bcb; border-bottom:3px solid #0b6bcb; margin-bottom:-2px; }
+    .error { background:#fdecec; border:1px solid #d33; border-radius:8px; padding:1rem; color:#900; margin-bottom:1rem; }
+    .notice { background:#e8f6ee; border:1px solid #1a7a45; border-radius:8px; padding:.8rem 1rem; color:#1a7a45; margin-bottom:1rem; }
+    fieldset { border:1px solid #ddd; border-radius:10px; margin-bottom:1.2rem; padding:1rem; }
+    legend { font-weight:600; padding:0 .4rem; }
+    .header { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:.8rem; align-items:end; }
+    label { font-size:.8rem; color:#555; display:flex; flex-direction:column; gap:.25rem; }
+    label.check { flex-direction:row; align-items:center; gap:.45rem; font-size:.9rem; color:#222; }
+    input[type=text]:disabled { background:#f3f3f3; color:#555; }
+    input { padding:.3rem; border:1px solid #ccc; border-radius:5px; font-size:.9rem; box-sizing:border-box; width:100%; }
+    input[type=checkbox] { width:auto; }
+    .permissions { display:flex; flex-direction:column; gap:.4rem; }
+    .readonly { background:#f3f6fb; border:1px solid #c9d8ea; border-radius:8px; padding:.8rem 1rem; color:#333; margin-bottom:1rem; }
+    .delete-row { display:flex; justify-content:flex-end; }
+    .delete { background:#c62828; color:#fff; }
+    .delete:hover { background:#a31f1f; }
+    .muted { color:#777; font-size:.9rem; }
+    .save-row { display:flex; justify-content:flex-end; align-items:center; gap:.7rem; margin-top:.8rem; }
+    button { border:0; border-radius:7px; padding:.5rem .9rem; font-size:.95rem; cursor:pointer; display:inline-block; text-decoration:none; }
+    .submit { background:#1a9c5b; color:#fff; font-size:1.05rem; padding:.65rem 1.4rem; }
+    a.back { display:inline-block; background:#0b6bcb; color:#fff; text-decoration:none; padding:.5rem .95rem; border-radius:7px; font-size:.9rem; }
+    a.back:hover { background:#095bb0; }
+    h1 { overflow-wrap:anywhere; }
+    @media (max-width:700px) {
+      .tabs { overflow-x:auto; }
+    }
+  </style>
+</head>
+<body>
+  {% include "_nav.html" %}
+  {% if role %}<h1>{{ role.label }}</h1>{% else %}<h1>Nuevo rol</h1>{% endif %}
+  {% for message in get_flashed_messages() %}<div class="notice">{{ message }}</div>{% endfor %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if is_admin %}<div class="readonly">El rol Administrador siempre tiene todos los permisos y no se puede editar.</div>{% endif %}
+
+  {% macro role_fields() %}
+  <fieldset>
+    <legend>Rol</legend>
+    <div class="header">
+      {% if role and role.is_system %}
+      <label>Nombre del rol<input type="text" value="{{ label }}" disabled></label>
+      {% else %}
+      <label>Nombre del rol<input type="text" name="label" value="{{ label }}" maxlength="60" autocomplete="off" required></label>
+      {% endif %}
+    </div>
+    {% if role and role.is_system %}<p class="muted">El nombre de un rol del sistema no se cambia.</p>{% endif %}
+  </fieldset>
+  <fieldset>
+    <legend>Permisos</legend>
+    <div class="permissions">
+      {% for permission in all_permissions %}
+      <label class="check"><input type="checkbox" name="permissions" value="{{ permission.code }}" {% if is_admin or permission.code in selected_permissions %}checked{% endif %} {% if is_admin %}disabled{% endif %}> {{ permission.label }}</label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  {% endmacro %}
+
+  {% if is_admin %}
+  {{ role_fields() }}
+  <div class="save-row">
+    <a class="back" href="{{ url_for('users.roles') }}">← Volver a Roles y permisos</a>
+  </div>
+  {% else %}
+  <form method="post" action="{% if role %}{{ url_for('users.role_edit', name=role.name) }}{% else %}{{ url_for('users.role_new') }}{% endif %}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {{ role_fields() }}
+    <div class="save-row">
+      <a class="back" href="{{ url_for('users.roles') }}">← Volver a Roles y permisos</a>
+      <button type="submit" class="submit">{% if role %}Guardar cambios{% else %}Crear rol{% endif %}</button>
+    </div>
+  </form>
+  {% if role and not role.is_system %}
+  <form method="post" action="{{ url_for('users.role_delete', name=role.name) }}" onsubmit='return confirm("¿Eliminar el rol " + {{ role.label|tojson }} + "?")'>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="delete-row">
+      <button type="submit" class="delete">Eliminar rol</button>
+    </div>
+  </form>
+  {% endif %}
+  {% endif %}
+</body>
+</html>
