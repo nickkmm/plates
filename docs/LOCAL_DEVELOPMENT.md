@@ -56,7 +56,11 @@ mano igual que el bloque de `cargador.ingse.co`). En local, directo en
   corren en paralelo (los worktrees de la fábrica usan
   `plates_test_<n>`), así las migraciones de una rama no se cuelan en la
   corrida de otra. Tiene que empezar por `plates_test`; cualquier otro
-  nombre hace fallar `conftest.py` al importarse.
+  nombre hace fallar `conftest.py` al importarse. Con `pytest -n auto`
+  (pytest-xdist) cada worker usa su propia base, `<base>_gwN` (por ejemplo
+  `plates_test_12_gw0`, `plates_test_12_gw1`, ...): se crea y se migra la
+  primera vez que se usa y se reutiliza en las corridas siguientes. Sin
+  `-n`, pytest corre en serie contra `<base>` como siempre.
 - **`TEST_REQUIRE_DB=1`** convierte "Postgres no disponible" en fallo en
   vez de skip. El gate de la fábrica lo pone para no aprobar una rama con
   las pruebas de base de datos saltadas.
@@ -87,13 +91,12 @@ mano igual que el bloque de `cargador.ingse.co`). En local, directo en
   ver el docstring de `clean_db` en `tests/conftest.py` para el detalle
   completo (por qué no se usó `conn.transaction()` de psycopg, cómo se
   recupera una transacción abortada por un error esperado, etc.).
-  **Esto NO habilita correr pytest en paralelo contra el mismo
-  `plates_test`** — se investigó y descartó explícitamente: dos workers
-  compitiendo por las mismas filas/tablas se serializan por los locks de
-  Postgres igual que con `TRUNCATE`, paralelismo real necesitaría un
-  esquema o base separada por worker (fuera de alcance). El beneficio real
-  logrado es velocidad (sin trabajo de disco/WAL por test) y que un test que
-  falla a medias nunca deja datos corruptos para el siguiente.
+  Por sí solo esto no permite que dos workers compartan la misma base (se
+  serializarían por los locks de Postgres igual que con `TRUNCATE`); correr
+  en paralelo con `pytest -n auto` funciona porque cada worker tiene su
+  propia base `<base>_gwN` (ver `TEST_POSTGRES_DB` arriba). El beneficio de
+  este fixture es velocidad (sin trabajo de disco/WAL por test) y que un
+  test que falla a medias nunca deja datos corruptos para el siguiente.
 - **Gotcha silencioso**: si Postgres no está corriendo o no es alcanzable
   en `127.0.0.1:5433`, los tests dependientes de BD se **saltan**
   (`pytest.skip`), no fallan. Una corrida "en verde" con muchos `skipped`

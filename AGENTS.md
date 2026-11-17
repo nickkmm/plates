@@ -48,7 +48,9 @@ runs them. In a factory worktree, run them against the job's own database
 so other jobs' migrations don't leak in: `TEST_POSTGRES_DB=plates_test_<n>`
 (`<n>` is the job number, `004` → `plates_test_4`), the same one the gate
 uses. The gate takes the credentials from the main checkout's `.env` and
-stops if Postgres isn't up.
+stops if Postgres isn't up. The suite can run in parallel with
+`pytest -n auto`; each worker then uses its own `<TEST_POSTGRES_DB>_gwN`
+database.
 
 ## Branches
 
