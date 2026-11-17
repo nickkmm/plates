@@ -50,7 +50,10 @@ so other jobs' migrations don't leak in: `TEST_POSTGRES_DB=plates_test_<n>`
 uses. The gate takes the credentials from the main checkout's `.env` and
 stops if Postgres isn't up. The suite can run in parallel with
 `pytest -n auto`; each worker then uses its own `<TEST_POSTGRES_DB>_gwN`
-database.
+database. `factory/bin/job` drops a job's `plates_test_<n>` and `_gwN`
+databases when it reaches `merged` or `rejected`, and
+`factory/bin/job cleanup-dbs` drops those of jobs that finished earlier; both
+need psycopg, either in the running Python or in the main checkout's `.venv`.
 
 ## Branches
 
