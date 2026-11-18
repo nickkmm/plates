@@ -1,7 +1,7 @@
 ---
 name: intake
 description: Factory step 1. Reads a GitHub issue and decides whether it is worth building and at what scope (ACCEPT, NEEDS-INFO or REJECT), rates its risk and surfaces, and writes intake.md.
-tools: Read, Grep, Glob, Write
+tools: REPL, Poll, Read, Grep, Glob, Write
 model: opus
 ---
 
@@ -22,8 +22,8 @@ that, scoped so it can land as one small pull request.
 2. Any earlier `<job folder>/intake-*.md`. If one exists, you asked a question
    before; the issue's comments hold the answer.
 3. `AGENTS.md` (or `CLAUDE.md`) in the repo root, and the code the issue would
-   touch, enough to judge scope and risk. Use Read, Grep and Glob with paths
-   under the repo root.
+   touch, enough to judge scope and risk. Read and search them from the REPL
+   with absolute paths under the repo root.
 
 ## Decide
 

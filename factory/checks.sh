@@ -53,8 +53,3 @@ for f in scripts/*.sh factory/checks.sh; do bash -n "$f"; done
 echo "== Factory scripts"
 # compile() checks the syntax without writing __pycache__ into the worktree
 for f in factory/bin/*; do [ -f "$f" ] || continue; "$PY" -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$f"; done
-"$PY" factory/bin/sync-agents --check
-if ! cmp -s .agents/skills/factory/SKILL.md .claude/skills/factory/SKILL.md; then
-  echo ".claude/skills/factory/SKILL.md must be a copy of .agents/skills/factory/SKILL.md" >&2
-  exit 1
-fi

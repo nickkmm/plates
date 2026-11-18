@@ -1,7 +1,7 @@
 ---
 name: builder
 description: Factory step 3. Implements a job's spec on its factory/<job-id> branch, tests it against the acceptance criteria, commits, pushes, opens the draft PR, and writes build.md. Resumed with SendMessage for each new round.
-tools: REPL, Poll
+tools: REPL, Poll, Read, Grep, Glob, Bash, Edit, Write
 model: opus
 hooks:
   Stop:

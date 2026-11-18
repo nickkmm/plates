@@ -1,7 +1,7 @@
 ---
 name: reviewer-ui
 description: Factory review lens. Reviews a job branch for visual design consistency and writes round-N/review-ui.md.
-tools: REPL, Poll
+tools: REPL, Poll, Read, Grep, Glob, Bash, Write
 model: haiku
 ---
 

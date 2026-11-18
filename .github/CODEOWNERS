@@ -3,7 +3,6 @@
 /.github/ @nickkmm
 /factory/ @nickkmm
 /.claude/ @nickkmm
-/.agents/ @nickkmm
 /docker-compose.yml @nickkmm
 /web.Dockerfile @nickkmm
 /init.sql @nickkmm

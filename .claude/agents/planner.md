@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Factory planning step. Splits a request that is too big for one pull request (a list of tasks, a large feature, a delivery document or an existing issue) into PR-sized tasks with owners and dependencies, and writes plan.md and tasks.json. Never creates issues.
-tools: REPL, Poll, mcp__plugin_figma_figma__create_session, mcp__plugin_figma_figma__get_metadata, mcp__plugin_figma_figma__get_design_context, mcp__plugin_figma_figma__get_screenshot, mcp__plugin_figma_figma__get_variable_defs
+tools: REPL, Poll, Read, Grep, Glob, Bash, Write, mcp__plugin_figma_figma__create_session, mcp__plugin_figma_figma__get_metadata, mcp__plugin_figma_figma__get_design_context, mcp__plugin_figma_figma__get_screenshot, mcp__plugin_figma_figma__get_variable_defs
 model: opus
 ---
 

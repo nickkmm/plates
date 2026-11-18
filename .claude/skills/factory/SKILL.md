@@ -299,24 +299,6 @@ If the request was an existing issue, comment on it with the plan's number
 (`gh issue comment <n> --body "Split into #<plan>."`) and leave it open for the
 user to close.
 
-## In Antigravity
-
-The same skill, scripts and job files run in Antigravity (App or CLI, not the
-IDE). The agents are in `.agents/agents/`, generated from `.claude/agents/` by
-`factory/bin/sync-agents`. The differences:
-
-- Spawn agents with `invoke_subagent`, workspace mode `inherit` (the job's
-  worktree is created by `factory/bin/job`, not by Antigravity). Don't pass a
-  model for intake, spec-writer, builder, approver or planner: their file sets
-  it.
-- Antigravity takes a model tier, not a model id. For reviewers, translate the
-  model in `job.json` `agents.reviewers`: `opus` → `inherit`, `sonnet` and
-  `haiku` → `flash`. `inherit` is the session's model (`agy --model`).
-- To resume the builder or the planner, message it by name (`@<name>` in the
-  CLI). If that isn't possible, spawn a new one told it is resuming.
-- There is no builder hook; the gate still decides. Job cost shows `$0.00`
-  because it is read from Claude Code's transcripts.
-
 ## Guardrails
 
 - Only issues labeled `factory` run. Labels need triage or write access, so the

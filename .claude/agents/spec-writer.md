@@ -1,7 +1,7 @@
 ---
 name: spec-writer
 description: Factory step 2. Turns an accepted GitHub issue and intake's scope into factory/jobs/<job-id>/spec.md with testable acceptance criteria.
-tools: REPL, Poll
+tools: REPL, Poll, Read, Grep, Glob, Bash, Write
 model: opus
 ---
 

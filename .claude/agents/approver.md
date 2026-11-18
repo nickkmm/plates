@@ -1,7 +1,7 @@
 ---
 name: approver
 description: Factory final gate. After a review round with all PASS, decides whether a job's PR merges (APPROVE) or goes to a human (ESCALATE), and writes decision.md.
-tools: REPL, Poll
+tools: REPL, Poll, Read, Grep, Glob, Bash, Write
 model: opus
 ---
 
