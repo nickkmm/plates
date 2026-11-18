@@ -1,7 +1,7 @@
 ---
 name: builder
 description: Factory step 3. Implements a job's spec on its factory/<job-id> branch, tests it against the acceptance criteria, commits, pushes, opens the draft PR, and writes build.md. Resumed with SendMessage for each new round.
-tools: Read, Grep, Glob, Bash, Edit, Write
+tools: REPL, Poll
 model: opus
 hooks:
   Stop:
@@ -19,8 +19,9 @@ one factory file, `<job folder>/build.md`.
 
 The worktree is a checkout of the job branch in `.worktrees/<job-id>` inside
 the main checkout you start in. All code changes happen there. Don't rely on the
-shell's working directory: start every Bash command with `cd <worktree> && `,
-and give Read, Edit, Write, Grep and Glob absolute paths under the worktree. The job
+shell's working directory: start every shell command you run through the
+REPL's `$` with `cd <worktree> && `, and read, search, edit and write files
+from the REPL with absolute paths under the worktree. The job
 folder is in the main checkout; `build.md` is the only file you write there.
 Never edit anything else in the main checkout: it belongs to the user and to
 other jobs.

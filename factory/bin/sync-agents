@@ -10,7 +10,8 @@ is copied as is, with a note on tool names. The frontmatter is translated:
 
 - tools: Claude Code names become Antigravity's native names. Antigravity
   replaces its default tool list with this one, and an unknown name can hang
-  the agent, so only the names below are emitted.
+  the agent, so only the names below are emitted. Code Mode's REPL becomes
+  the native file tools and run_command; Poll has no equivalent and is dropped.
 - model: Antigravity only takes a tier per agent (inherit, flash_lite, flash,
   pro); the concrete model is the session's (`agy --model`). Opus-level agents
   inherit the session model; Sonnet and Haiku agents run on flash.
@@ -24,7 +25,7 @@ from pathlib import Path
 # On Windows, Python reads and writes files and subprocess output in the
 # locale codepage (cp1252), which garbles Spanish text from issues and specs.
 # Re-run this script in UTF-8 mode there.
-if sys.platform == "win32" and not sys.flags.utf8_mode:
+if __name__ == "__main__" and sys.platform == "win32" and not sys.flags.utf8_mode:
     import subprocess
 
     sys.exit(subprocess.call([sys.executable, "-X", "utf8", *sys.argv]))
@@ -40,11 +41,16 @@ TOOLS = {
     "Grep": ["grep_search"],
     "Glob": ["find_by_name", "list_dir"],
     "Bash": ["run_command"],
+    "REPL": ["view_file", "write_to_file", "replace_file_content", "multi_replace_file_content",
+             "grep_search", "find_by_name", "list_dir", "run_command"],
+    "Poll": [],
 }
 MODELS = {"opus": "inherit", "fable": "inherit", "sonnet": "flash", "haiku": "flash"}
 NOTE = ("> Generated from `.claude/agents/{name}.md` by `factory/bin/sync-agents`; edit that file, not this one.\n"
         "> Tool names below are Claude Code's. In Antigravity: Read = `view_file`, Write = `write_to_file`, "
-        "Edit = `replace_file_content`, Grep = `grep_search`, Glob = `find_by_name`, Bash = `run_command`.\n\n")
+        "Edit = `replace_file_content`, Grep = `grep_search`, Glob = `find_by_name`, Bash = `run_command`. "
+        "Where it says REPL (and `$`), use the native file tools and `run_command`; "
+        "`Poll` has no Antigravity equivalent and can be ignored.\n\n")
 
 
 def die(msg):

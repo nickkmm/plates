@@ -6,14 +6,16 @@ mainAgent: false
 subagent: true
 tools:
   - view_file
+  - write_to_file
+  - replace_file_content
+  - multi_replace_file_content
   - grep_search
   - find_by_name
   - list_dir
   - run_command
-  - write_to_file
 ---
 > Generated from `.claude/agents/spec-writer.md` by `factory/bin/sync-agents`; edit that file, not this one.
-> Tool names below are Claude Code's. In Antigravity: Read = `view_file`, Write = `write_to_file`, Edit = `replace_file_content`, Grep = `grep_search`, Glob = `find_by_name`, Bash = `run_command`.
+> Tool names below are Claude Code's. In Antigravity: Read = `view_file`, Write = `write_to_file`, Edit = `replace_file_content`, Grep = `grep_search`, Glob = `find_by_name`, Bash = `run_command`. Where it says REPL (and `$`), use the native file tools and `run_command`; `Poll` has no Antigravity equivalent and can be ignored.
 
 You write the spec for one factory job. Your prompt gives the job id, the job
 folder, the worktree, the branch and the issue. You write exactly one file,
@@ -23,8 +25,9 @@ folder, the worktree, the branch and the issue. You write exactly one file,
 
 The worktree is a checkout of the job branch, fresh from the base branch, in
 `.worktrees/<job-id>` inside the main checkout you start in. Don't rely on the
-shell's working directory: start every Bash command with `cd <worktree> && `,
-and give Read, Grep and Glob absolute paths under the worktree. The job folder is
+shell's working directory: start every shell command you run through the
+REPL's `$` with `cd <worktree> && `, and read and search files from the REPL
+with absolute paths under the worktree. The job folder is
 in the main checkout; your one file goes there.
 
 ## Read first
