@@ -43,6 +43,9 @@ Every POST/PUT/PATCH/DELETE also needs a valid CSRF token (Flask-WTF
 CSRFProtect, app/web/csrf.py); a missing or invalid one answers the 400 page
 csrf_error.html. /declaracion checks it by hand, after raising its own body
 cap. See docs/WEB.md, "CSRF protection".
+
+Every 404 (an unknown URL or an abort(404)) answers the standalone Spanish
+page not_found.html, with no nav and no database lookup.
 """
 
 from __future__ import annotations
@@ -52,7 +55,7 @@ import os
 from datetime import timedelta
 
 import sentry_sdk
-from flask import Flask, Response, make_response, redirect, render_template, request, url_for
+from flask import Flask, Response, make_response, redirect, render_template, request, session, url_for
 from flask_wtf.csrf import CSRFError
 from sentry_sdk.integrations.flask import FlaskIntegration
 
@@ -145,6 +148,20 @@ def _csrf_error(_exc: CSRFError) -> Response:
     back_url = "/declaracion" if request.path == "/declaracion" else url_for("index")
     body = app.jinja_env.get_template("csrf_error.html").render(back_url=back_url)
     response = make_response(body, 400)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.errorhandler(404)
+def _not_found(_exc: Exception) -> Response:
+    """Unknown URL or abort(404): a standalone Spanish page with a link back
+    to the public form (a visitor without a session under /declaracion) or to
+    `/`. Like _csrf_error it skips the context processors and never shows
+    the request or the abort() message."""
+    on_public_form = request.path == "/declaracion" or request.path.startswith("/declaracion/")
+    back_url = "/declaracion" if on_public_form and "user_id" not in session else url_for("index")
+    body = app.jinja_env.get_template("not_found.html").render(back_url=back_url)
+    response = make_response(body, 404)
     response.headers["Cache-Control"] = "no-store"
     return response
 

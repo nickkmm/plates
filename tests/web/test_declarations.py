@@ -1291,11 +1291,11 @@ class TestPdf:
         resp = authenticated_client.get(f"{_detail(declaration_id)}/pdf")
         assert resp.status_code == 200 and resp.data.startswith(b"%PDF-")
 
-    def test_pending_with_loss_is_404_with_a_clear_message(self, authenticated_client, db_conn, calls):
+    def test_pending_with_loss_is_404_with_the_not_found_page(self, authenticated_client, db_conn, calls):
         pending_id = _three_cards_one_flagged(db_conn)
         resp = authenticated_client.get(f"{_detail(pending_id)}/pdf")
         assert resp.status_code == 404
-        assert "solo está disponible para declaraciones aprobadas" in resp.data.decode()
+        assert "Página no encontrada" in resp.data.decode()
         assert calls == []
 
     def test_rejected_is_404(self, authenticated_client, db_conn, calls):
