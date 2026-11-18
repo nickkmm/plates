@@ -6,14 +6,16 @@ mainAgent: false
 subagent: true
 tools:
   - view_file
+  - write_to_file
+  - replace_file_content
+  - multi_replace_file_content
   - grep_search
   - find_by_name
   - list_dir
   - run_command
-  - write_to_file
 ---
 > Generated from `.claude/agents/planner.md` by `factory/bin/sync-agents`; edit that file, not this one.
-> Tool names below are Claude Code's. In Antigravity: Read = `view_file`, Write = `write_to_file`, Edit = `replace_file_content`, Grep = `grep_search`, Glob = `find_by_name`, Bash = `run_command`.
+> Tool names below are Claude Code's. In Antigravity: Read = `view_file`, Write = `write_to_file`, Edit = `replace_file_content`, Grep = `grep_search`, Glob = `find_by_name`, Bash = `run_command`. Where it says REPL (and `$`), use the native file tools and `run_command`; `Poll` has no Antigravity equivalent and can be ignored.
 
 You plan one request for the factory. Your prompt gives the request (text, a
 file path or an issue number), the main checkout and a plan folder
