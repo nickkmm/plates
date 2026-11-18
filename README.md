@@ -1,129 +1,182 @@
 # plates
 
-Plate production tracking for INGSE (Colombia). Replaces a spreadsheet-based
-workflow with a Flask + PostgreSQL app running on a VPS, deployed automatically
-on every push to `main` via GitHub Actions.
+plates is the internal plate-production and point-of-sale app of INGSE, a
+vehicle-plate manufacturer in Colombia. It replaced a spreadsheet-based
+workflow: customers file a sworn declaration from their phone, the counter
+reviews it and captures the order, and the workshop takes it through
+production to delivery. It runs in production and handles the business's
+daily work.
 
-For architecture, database schema, and internal request-flow reference docs
-(with diagrams), see [`docs/README.md`](docs/README.md).
+## Features
 
-## Stack
+The UI is in Spanish; screen and status names are quoted as staff see them.
 
-- Flask web app (`app/web/`) behind gunicorn (connection-pooled via
-  `psycopg_pool`), gated by session login: **Registrar** (full order
-  capture — customer, payment, per-plate pricing), **Precios** (tariff
-  editor, admin-only), **Cuadre** (daily cash-reconciliation report, with
-  PDF export), **Inventario** (stock per material), **Registros** (order
-  history + per-order detail), **Revisión** (flagged possible duplicates).
-  Routes live one blueprint per domain under `app/web/blueprints/`.
-- Shared business logic (`app/core/`) used by both the web app and the
-  one-off Excel migration (`app/migrate.py`): normalization, validation,
-  duplicate detection, inventory calculation, plus `app/core/db/` (one
-  module per table) and `app/core/cash_summary.py` (the cuadre
-  aggregation).
-- PostgreSQL 16 in Docker (single `db` service via `docker-compose.yml`).
-  Schema in `init.sql` (applied on first volume initialization); schema
-  changes since then are applied by `python -m app.schema_migrate`
-  (`app/migrations/*.sql`), run automatically on every deploy.
-- CI/CD in `.github/workflows/deploy.yml`: SSH into the VPS, pull `main`,
-  rebuild and restart the stack, then run the migration runner.
-- Sentry (optional, `SENTRY_DSN` env var) for error monitoring; Docker log
-  rotation configured in `docker-compose.yml`.
+### Public sworn-declaration form (`/declaracion`)
 
-See [`docs/README.md`](docs/README.md) and `PLAN_ARQUITECTURA_Y_POS.md`
-for the full history of the POS feature (customer capture, pricing, cash
-reconciliation) that built on top of the original plate-production
-tracker.
+- Customers reach it from a QR code at the counter, no login needed.
+- One declaration covers one declarant and one to many ownership cards
+  (*tarjetas de propiedad*), each with its reason (loss or wear) and number
+  of plates.
+- Required photos: the declarant's ID and each card, front and back, plus a
+  photo of the used plates for each card unless the customer ticks «Perdí mis
+  placas».
+- A signature drawn on screen, the declarant's personal-data authorization
+  under Ley 1581 de 2012, acceptance of the terms, and an optional marketing
+  consent.
+- Anti-spam: Cloudflare Turnstile, a honeypot field, a signed form token and
+  a per-IP rate limit.
+
+### Point of sale
+
+- «Declaraciones» (`/declaraciones`): a review queue with one stage per
+  declaration (*Por revisar*, *Falta autenticación*, *Lista para pedido*,
+  *Atendida*, *Rechazada*) and automatic flags such as *Placa reciente*,
+  *Tarjeta de otro dueño* or *Documento distinto*. Staff approve or reject
+  each declaration, view the photos, and download them as a ZIP.
+- Notarization step: declarations for lost plates produce a printable PDF the
+  customer has authenticated at a notary; staff mark it as received before
+  the order can be created.
+- «Registrar» (`/ingest`): order capture, pre-filled from an approved
+  declaration («Crear pedido») or from an uploaded PDF or Excel order form
+  (`/ingest/pdf`), with customer, payment method, per-plate prices and
+  duplicate warnings.
+- «Cuadre» (`/cuadre`): the daily cash summary by date and payment method,
+  with PDF export (`/cuadre/pdf`).
+- «Registros» (`/records`): order history and per-order detail.
+
+### Production
+
+- «Producción» (`/produccion`): a status board where each order moves
+  *Por realizar* → *En realización* → *Lista para entregar* → *Entregada*,
+  with an undo for the last change.
+- The order detail (`/produccion/<order_id>`) shows the plates, the linked
+  declarations with their photos, and the order's status history, without
+  prices or payment data.
+
+### Admin
+
+- «Usuarios» (`/usuarios`): create and edit users, reset passwords, and
+  define roles (`/usuarios/roles`) with their permissions. `admin` always
+  holds every permission; every other role gets exactly the permissions
+  assigned to it.
+- «Precios» (`/precios`): suggested price per plate type.
+- «Clientes» (`/customers`): customer records with their ownership cards.
+- «Inventario» (`/inventory`): stock per material and blank preparation.
+- «Revisión» (`/review`): review of flagged possible duplicate plates.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A["Customer submits /declaracion"] --> B["Por revisar"]
+    B -->|"Rejected"| R["Rechazada"]
+    B -->|"Approved, plates lost"| N["Falta autenticación"]
+    B -->|"Approved, plates worn"| L["Lista para pedido"]
+    N -->|"Notarized PDF received"| L
+    L -->|"Crear pedido in /ingest"| P["Por realizar"]
+    P --> I["En realización"]
+    I --> F["Lista para entregar"]
+    F -->|"Customer picks up"| E["Entregada"]
+```
+
+The app is a Flask application with one blueprint per domain in
+`app/web/blueprints/` and Jinja templates. Business rules live in `app/core/`
+as pure, strictly typed Python with no Flask dependency, and data access in
+`app/core/db/`, one module per table. Data is stored in PostgreSQL 16; the
+schema is `init.sql` plus ordered migrations in `app/migrations/` applied by
+`python -m app.schema_migrate`. It runs under gunicorn in Docker Compose
+(`docker-compose.yml`, `web.Dockerfile`), with uploaded photos, signatures
+and PDFs kept in a dedicated uploads volume.
+
+## Tech stack
+
+- Python 3.11, Flask, Jinja, Flask-WTF (CSRF protection)
+- PostgreSQL 16 with psycopg 3 and a connection pool
+- pydantic for input models
+- pdfplumber and openpyxl to read PDF and Excel order forms; reportlab to
+  render PDFs
+- gunicorn, Docker Compose
+- Cloudflare Turnstile on the public form
+- Sentry (optional) for error monitoring, Dozzle for logs
+- GitHub Actions for CI/CD
+
+## Quality
+
+- **ruff** for linting and import order (`pyproject.toml`).
+- **mypy** over `app` and `tests`, with `disallow_untyped_defs` on
+  `app/core`.
+- **pytest** against a real PostgreSQL database (no mocks of the database),
+  each test in a transaction that is rolled back.
+- **Coverage** reported in CI with `pytest-cov`.
+- **CodeQL** code scanning and **Dependabot** updates for pip, GitHub
+  Actions and Docker.
+- The `factory/checks.sh` gate, which every branch built by the software
+  factory has to pass.
+
+## CI/CD
+
+- Tests run on every pull request (`.github/workflows/test.yml`).
+- Deploy to the VPS (`.github/workflows/deploy.yml`) happens only from
+  `main`, only after the same test workflow passes, and only through a
+  protected GitHub environment. Database migrations run as part of the
+  deploy.
+- Third-party actions are pinned to commit SHAs.
+
+Details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Local development
 
 ```sh
-cp .env.example .env   # then set a real POSTGRES_PASSWORD
+cp .env.example .env          # set POSTGRES_PASSWORD and SECRET_KEY
 docker compose up -d
-docker compose exec db psql -U plates_user -d plates -c '\dt'
-```
-
-**Running migrations locally**: `init.sql` only applies the first time a
-Postgres volume is created — rebuilding `web`/`db` against an
-already-existing local volume does **not** re-run it. After any rebuild,
-bring the schema up to date (and run any user backfill still pending) with:
-
-```sh
 docker compose exec web python -m app.schema_migrate
 ```
 
-Safe to run any number of times — it records each applied step in
-`schema_migrations` and skips what's already there. `deploy.yml` already
-runs this automatically after every production deploy.
+**First admin.** Hash a password with
+`python -m app.web.hash_password 'the-password'` and put the user in
+`AUTH_USERS` (`username:hash`, plus `AUTH_ROLES` as `username:role` if it
+should not be `admin`) before the first `python -m app.schema_migrate`. That
+backfill runs once, only on a brand-new database; after that, users and
+roles are managed at `/usuarios`.
 
-## Web authentication
+**Compose gotcha.** Password hashes contain `$`, and Docker Compose
+interpolates `$VAR` in `.env`. Double every `$` as `$$` or the hash is
+silently corrupted and login fails.
 
-The web app is gated by a session-based login page (`/login`). Login is
-**DB-backed**: `app/web/auth.py` checks the `users` table (username,
-password hash, active, and the user's roles in `user_roles`) on every
-request, not env vars.
+**Tests.** Run `pytest` (optionally `pytest -n auto`). Database tests need
+the local `db` service on port 5433 and `POSTGRES_PASSWORD` set in the
+environment; without them they are skipped.
 
-- `SECRET_KEY` — signs session cookies. Generate with
-  `python -c "import secrets; print(secrets.token_hex(32))"`. Required,
-  no default.
-- `COOKIE_SECURE=1` in production (HTTPS) so the cookie is marked `Secure`.
-- `SENTRY_DSN` — optional; if unset, Sentry is never initialized (dev/test
-  never send anything).
+More gotchas, the test database setup and every environment variable are in
+[`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md).
 
-**Provisioning users** (`AUTH_USERS`/`AUTH_ROLES` — historical, one-time
-only): on a **brand-new** database, `python -m app.schema_migrate` reads
-these two env vars once and backfills `users` from them — comma-separated
-`username:passwordhash` (`AUTH_USERS`) and `username:role` (`AUTH_ROLES`,
-defaults to `admin` if a username has no entry). Hash a password with
-`python -m app.web.hash_password 'the-password'`.
-**Docker Compose gotcha:** the generated hash contains `$` (e.g.
-`scrypt:32768:8:1$salt$hash`). Compose interpolates `$VAR` in files loaded
-via `env_file:`, so a literal `$` in `.env` must be escaped as `$$` or
-Compose silently strips it (and everything that looks like a variable name
-right after it), corrupting the hash. Double every `$` before pasting it
-in. **This backfill only ever runs once** (recorded in
-`schema_migrations`) — on an already-migrated database (including
-production), adding/editing `AUTH_USERS`/`AUTH_ROLES` does **nothing**;
-add or update a user by inserting/updating a row in `users` directly
-(there is no admin UI for this yet).
+## Software factory
 
-`/healthz` stays open for liveness probes. Sessions last 12 hours.
+Work is planned as GitHub issues, and AI agents build each issue into a pull
+request through a spec, build, checks and review pipeline. A human always
+reviews and merges every PR; the factory never merges on its own. See
+[`AGENTS.md`](AGENTS.md).
 
-## Deployment
+## Documentation
 
-Push to `main`. The workflow connects to the VPS, syncs `/opt/plates` to the
-latest `main`, writes `.env` from the `ENV_FILE_B64` secret, and runs
-`docker compose up -d --build`.
+Technical reference, in Spanish, starting at [`docs/README.md`](docs/README.md):
 
-### Required GitHub secrets
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): components, deployment and
+  the CI/CD pipeline
+- [`docs/DATABASE.md`](docs/DATABASE.md): full schema and ER diagram
+- [`docs/CORE.md`](docs/CORE.md): business logic in `app/core/`
+- [`docs/WEB.md`](docs/WEB.md): routes, roles and permissions, templates
+- [`docs/PRODUCTION.md`](docs/PRODUCTION.md): the production screen and
+  order statuses
+- [`docs/LOCAL_DEVELOPMENT.md`](docs/LOCAL_DEVELOPMENT.md): local setup,
+  testing and environment variables
+- [`docs/BACKUPS.md`](docs/BACKUPS.md): backups
 
-| Secret         | Description                                  |
-|----------------|----------------------------------------------|
-| `VPS_HOST`     | VPS IP address                               |
-| `VPS_USER`     | SSH user (`root`)                            |
-| `VPS_SSH_KEY`  | Private key for the Actions → VPS deploy key |
-| `ENV_FILE_B64` | base64-encoded contents of the prod `.env`   |
+## Security
 
-The VPS uses its own read-only **deploy key** registered on this repo to pull
-the private code.
+See [`SECURITY.md`](SECURITY.md) for how to report a vulnerability.
 
-## Schema
+## License / status
 
-- `production_orders` — one row per production order, plus the full POS
-  header (customer, receipt, payment method, tracking/claim numbers,
-  dates, dispatch/receipt names, notes).
-- `plates` — plates within an order (`plate_number` may be NULL for batch
-  replacements; multiple `plate_type` rows per order are normal), plus
-  per-plate `unit_price`/`reason`/`vehicle_brand`.
-- `customers` — sale customers (same entity as the historical
-  `requested_by` text), one row per canonical name.
-- `users` — login accounts (replaces the old `AUTH_USERS`/`AUTH_ROLES`
-  env-var-only setup — see "Web authentication" above).
-- `plate_type_prices` — suggested tariff per plate type, editable at
-  `/precios`.
-- `inventory_categories` — per-category stock tracking.
-- `blank_preparations` — "alistamiento" events (blanks prepared/received),
-  feeds `inventory_categories.prepared`.
-
-Full schema reference (ER diagram, every column, data quirks) in
-[`docs/DATABASE.md`](docs/DATABASE.md).
+This is the production code of a private business, published for portfolio
+purposes. No license is granted: all rights reserved.
