@@ -4,7 +4,7 @@ The real orchestration logic behind `/cuadre`: aggregating money already
 stored on `plates`/`production_orders` into the exact buckets the manual
 daily cuadre needs, plus the missing-price warning list. This has real logic
 beyond CRUD (grouping, exclusion rules, the "never silently zero a missing
-price" rule), so per PLAN_ARQUITECTURA_Y_POS.md's "Fase 5b" section it gets
+price" rule), so per ARCHITECTURE_AND_POS_PLAN.md's "Fase 5b" section it gets
 its own orchestration module instead of living directly in a app/core/db/*.py
 file.
 
@@ -90,7 +90,7 @@ class CashSummary:
 def build_cash_summary(conn: psycopg.Connection[DictRow], *, desde: date, hasta: date) -> CashSummary:
     """Aggregate paid production for [desde, hasta] (both inclusive dates),
     grouped by `order_date` then `payment_method` -- see the module docstring
-    and PLAN_ARQUITECTURA_Y_POS.md's "Cuadre de caja" section for the full
+    and ARCHITECTURE_AND_POS_PLAN.md's "Cuadre de caja" section for the full
     reasoning behind every rule enforced here:
 
     - Always grouped by order_date, never payment_date/fecha de transferencia.

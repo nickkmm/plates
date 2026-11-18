@@ -229,7 +229,7 @@ def _card_id_for(
 def _resnapshot_unit_price(
     cur: psycopg.Cursor[DictRow], plate_id: int, new_plate_type: str
 ) -> Decimal | None:
-    """The unit_price re-snapshot rule (see PLAN_ARQUITECTURA_Y_POS.md /
+    """The unit_price re-snapshot rule (see ARCHITECTURE_AND_POS_PLAN.md /
     docs/DATABASE.md), shared by update_plate and update_plate_full -- both
     let plate_type change, so both need it:
 

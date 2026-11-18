@@ -1,664 +1,662 @@
 # Core (`app/core/`)
 
-[← volver al índice](README.md)
+[← back to the index](README.md)
 
-Lógica de negocio independiente del framework web — compartida entre
-`app/web` y la migración histórica de Excel (`app/migrate.py`). Ninguna
-consulta SQL ni regla de negocio debería vivir fuera de esta carpeta.
+Business logic independent of the web framework — shared between
+`app/web` and the historical Excel migration (`app/migrate.py`). No SQL
+query or business rule should live outside this folder.
 
-## Pipeline de ingesta completo
+## Full ingestion pipeline
 
 ```mermaid
 flowchart TD
-    A["3 fuentes: form manual / PDF / migración Excel"] --> B["ExtractedRow<br/>(models.py)"]
+    A["3 sources: manual form / PDF / Excel migration"] --> B["ExtractedRow<br/>(models.py)"]
     B --> C["normalize_row<br/>(normalize.py)"]
-    C --> D{"¿fila de ALISTAMIENTO?"}
-    D -- sí --> E[insert_blank_preparation]
-    D -- no --> F["is_real_plate?<br/>(filtra MUESTRA/INGSE/S:.../None)"]
-    F --> G["chequeo de duplicados:<br/>existing_plate_numbers (ya en BD)<br/>+ repetidos dentro del batch"]
-    G --> H["insert_order + insert_plate<br/>(marca is_possible_duplicate)"]
+    C --> D{"ALISTAMIENTO row?"}
+    D -- yes --> E[insert_blank_preparation]
+    D -- no --> F["is_real_plate?<br/>(filters MUESTRA/INGSE/S:.../None)"]
+    F --> G["duplicate check:<br/>existing_plate_numbers (already in DB)<br/>+ repeats within the batch"]
+    G --> H["insert_order + insert_plate<br/>(sets is_possible_duplicate)"]
     E --> I[recalc_inventory]
     H --> I
     I --> J[(commit)]
 ```
 
-Todo el pipeline corre en **una sola transacción** por llamada: el
-llamador abre `with db.get_conn() as conn:` y se lo pasa explícito a
-`ingestion.process_rows(conn, rows)` / `replace_order(conn, ...)` — un
-fallo a mitad de camino revierte tanto los inserts como cualquier borrado
-(en el caso de `replace_order`, ver más abajo). Antes de la Fase 1d cada
-una de esas funciones abría su propia conexión por separado (un solo `POST
-/ingest` corría en varias transacciones no atómicas entre sí); ver la nota
-de "Contrato de transacción" más abajo.
+The whole pipeline runs in **a single transaction** per call: the
+caller opens `with db.get_conn() as conn:` and passes it explicitly to
+`ingestion.process_rows(conn, rows)` / `replace_order(conn, ...)` — a
+failure midway rolls back both the inserts and any deletes (in the case of
+`replace_order`, see below). Before Phase 1d each of those functions opened
+its own connection separately (a single `POST /ingest` ran in several
+transactions that were not atomic with respect to each other); see the
+"Transaction contract" note below.
 
 ## `models.py`
 
-Esquema pydantic de una línea del libro/pedido, compartido tal cual por
-cada puerta de ingesta para que `ingestion.py` solo tenga que manejar una
-forma de dato.
+Pydantic schema for one ledger/order line, shared as-is by every ingestion
+entry point so that `ingestion.py` only has to handle one data shape.
 
-- **`ExtractedRow`** — `order_number` (str, no int: hay valores como
+- **`ExtractedRow`** — `order_number` (str, not int: there are values like
   `"NT 895"`), `order_date`, `requested_by`, `plate_type`, `city`,
-  `plate_number` (celda RANGO cruda), `plate_to`, `quantity` (default 1),
-  `material`, `prepared_by`, y tres flags que por defecto son `False` y
-  normalmente se infieren después en `normalize_row`. **Campos POS (Fase
-  2)**, todos opcionales con default `None` (para que `app/migrate.py`,
-  que nunca los llena, siga sin tocarse): a nivel de orden —
+  `plate_number` (raw RANGO cell), `plate_to`, `quantity` (default 1),
+  `material`, `prepared_by`, and three flags that default to `False` and
+  are normally inferred later in `normalize_row`. **POS fields (Phase
+  2)**, all optional with default `None` (so `app/migrate.py`, which never
+  fills them, stays untouched): at order level —
   `receipt_type`/`receipt_number`/`payment_method`/`tracking_number`/
   `client_order_number`/`delivery_date`/`payment_date`/`dispatched_by`/
-  `received_by`/`notes`; a nivel de línea/placa — `reason`/
-  `vehicle_brand`/`unit_price`. `delivery_date`/`payment_date` tienen un
-  validador `mode="before"` que mapea `""` → `None` (un `<input
-  type="date">` vacío postea `""`, que pydantic rechazaría tal cual) —
-  sumados al `_blank_to_none` existente para el resto.
-- **`Extraction`** — `{rows: list[ExtractedRow]}`. Es la forma que
-  devolvería un paso de extracción por imagen (mencionado en el docstring
-  como "Claude lee la imagen del pedido") — **hoy no está conectado a
-  ninguna ruta real**, solo lo usan los tests. Un punto de integración
-  documentado pero no implementado, no una feature activa.
+  `received_by`/`notes`; at line/plate level — `reason`/
+  `vehicle_brand`/`unit_price`. `delivery_date`/`payment_date` have a
+  `mode="before"` validator that maps `""` → `None` (an empty `<input
+  type="date">` posts `""`, which pydantic would reject as is) —
+  in addition to the existing `_blank_to_none` for the rest.
+- **`Extraction`** — `{rows: list[ExtractedRow]}`. It is the shape that an
+  image extraction step would return (mentioned in the docstring as
+  "Claude reads the order image") — **today it is not wired to any real
+  route**, only the tests use it. A documented but unimplemented
+  integration point, not an active feature.
 
-Los validadores solo hacen coerción defensiva (floats como `598.0` →
-`"598"`, strings vacíos → `None`) — la normalización de negocio real vive
-en `normalize.py`.
+The validators only do defensive coercion (floats like `598.0` →
+`"598"`, empty strings → `None`) — the real business normalization lives
+in `normalize.py`.
 
 ## `normalize.py`
 
-Normalización pura, sin acceso a base de datos — testeable en aislamiento.
+Pure normalization, no database access — testable in isolation.
 
-| Función/constante | Qué hace |
+| Function/constant | What it does |
 |---|---|
-| `normalize_requested_by(value)` | Limpia mayúsculas/espacios y mapea ~40 variantes de escritura curadas a mano a un nombre canónico; nunca fusiona entidades distintas de verdad. |
-| `PLATE_TYPES` | Los 7 tipos de placa canónicos. |
-| `INVENTORY_CATEGORIES` | Las 3 categorías de inventario: `CARRO PARTICULAR`, `MOTO PARTICULAR`, `PÚBLICO`. |
-| `inventory_category(plate_type)` | Mapea un tipo de placa a su material de inventario (`ORNAMENTAL` → `None`, no consume material). |
-| `normalize_plate_type(value)` | Canonicaliza etiquetas libres, incluyendo el mapeo histórico `MOTO PÚBLICO` → `MOTO CARRO PÚBLICO`. |
-| `clean_plate(value)` | Mayúsculas + strip (`"arn 911"` → `"ARN911"`). |
-| `validate_plate(value, plate_type)` | Valida contra el patrón regex del tipo; lanza `ValueError` en español. Solo se usa en carga manual, no en datos históricos de migración. |
-| `normalize_city(value)` | Mayúsculas/un solo espacio; `None` para basura de puntuación. |
-| `is_real_plate(plate_number)` | `TypeGuard[str]` — `False` para `None` y marcadores no-identificadores (`MUESTRA`, `INGSE`, `KWP`, notas `S/...`). Es el filtro que decide qué entra a la detección de duplicados. |
-| `annulment_kind(*folded_texts)` | Clasifica texto de anulación encontrado en SOLICITADO/RANGO/CIUDAD en `"order"` (no consumida), `"plate"` (consumida pero perdida) o `"bare"`/`None`. |
-| `normalize_row(row)` | Punto de entrada principal — normaliza texto e infiere los 3 flags a partir del token RANGO (`REPOSICION` → `is_batch_replacement=True` + `plate_number=None`) y del resultado de `annulment_kind`; nunca apaga un flag que ya venía en `True`. |
-| `RECEIPT_TYPES`/`CUSTOMER_TYPES`/`DOCUMENT_TYPES`/`DOCUMENT_RELATIONS`/`PAYMENT_METHODS`/`REASONS` | Vocabularios fijos de la Fase 2 (POS) — nombres de constante en inglés, *valores* en español (`FACTURA`/`CLIENTE`/`CÉDULA`/`DUEÑO`/`EFECTIVO`/`DETERIORO`, etc.), cada uno un `<select>` en `/ingest`. `CUSTOMER_TYPES` = `TRÁNSITO`/`EMPRESA`/`GESTOR`/`CLIENTE` (`CLIENTE` es el antiguo `PERSONA NATURAL`; `OTROS` ya no existe) y `DOCUMENT_TYPES` = `NIT`/`CÉDULA`/`CÉDULA DE EXTRANJERÍA`/`OTROS`. |
-| `normalize_choice(value, allowed)` | Helper genérico detrás de los 6 vocabularios de arriba: vacío → `None`; si matchea `allowed` (comparando plegado, sin acentos) devuelve la entrada canónica; si no matchea, `None` — **nunca inventa un valor**, mismo espíritu que `is_real_plate`/`pdf_extract`. Un valor no reconocido queda como aviso para que la persona lo elija del dropdown. |
+| `normalize_requested_by(value)` | Cleans case/whitespace and maps ~40 hand-curated spelling variants to a canonical name; never merges genuinely distinct entities. |
+| `PLATE_TYPES` | The 7 canonical plate types. |
+| `INVENTORY_CATEGORIES` | The 3 inventory categories: `CARRO PARTICULAR`, `MOTO PARTICULAR`, `PÚBLICO`. |
+| `inventory_category(plate_type)` | Maps a plate type to its inventory material (`ORNAMENTAL` → `None`, consumes no material). |
+| `normalize_plate_type(value)` | Canonicalizes free-form labels, including the historical mapping `MOTO PÚBLICO` → `MOTO CARRO PÚBLICO`. |
+| `clean_plate(value)` | Uppercase + strip (`"arn 911"` → `"ARN911"`). |
+| `validate_plate(value, plate_type)` | Validates against the type's regex pattern; raises `ValueError` with a Spanish message. Only used in manual entry, not in historical migration data. |
+| `normalize_city(value)` | Uppercase/single spaces; `None` for punctuation garbage. |
+| `is_real_plate(plate_number)` | `TypeGuard[str]` — `False` for `None` and non-identifier markers (`MUESTRA`, `INGSE`, `KWP`, `S/...` notes). It is the filter that decides what enters duplicate detection. |
+| `annulment_kind(*folded_texts)` | Classifies annulment text found in SOLICITADO/RANGO/CIUDAD as `"order"` (not consumed), `"plate"` (consumed but lost) or `"bare"`/`None`. |
+| `normalize_row(row)` | Main entry point — normalizes text and infers the 3 flags from the RANGO token (`REPOSICION` → `is_batch_replacement=True` + `plate_number=None`) and from the result of `annulment_kind`; never turns off a flag that already came in as `True`. |
+| `RECEIPT_TYPES`/`CUSTOMER_TYPES`/`DOCUMENT_TYPES`/`DOCUMENT_RELATIONS`/`PAYMENT_METHODS`/`REASONS` | Fixed vocabularies of Phase 2 (POS) — constant names in English, *values* in Spanish (`FACTURA`/`CLIENTE`/`CÉDULA`/`DUEÑO`/`EFECTIVO`/`DETERIORO`, etc.), each one a `<select>` in `/ingest`. `CUSTOMER_TYPES` = `TRÁNSITO`/`EMPRESA`/`GESTOR`/`CLIENTE` (`CLIENTE` is the former `PERSONA NATURAL`; `OTROS` no longer exists) and `DOCUMENT_TYPES` = `NIT`/`CÉDULA`/`CÉDULA DE EXTRANJERÍA`/`OTROS`. |
+| `normalize_choice(value, allowed)` | Generic helper behind the 6 vocabularies above: empty → `None`; if it matches `allowed` (comparing folded, accent-insensitive) it returns the canonical entry; if it does not match, `None` — **it never invents a value**, same spirit as `is_real_plate`/`pdf_extract`. An unrecognized value is left as a warning so the person picks it from the dropdown. |
 
-**Lo más difícil de entender:**
+**The hardest parts to understand:**
 
-- La anulación se registra de forma inconsistente en el libro crudo (la
-  palabra puede aparecer en SOLICITADO, RANGO o CIUDAD) — por eso
-  `annulment_kind` inspecciona los tres campos juntos como un solo blob, en
-  vez de mirar una sola columna.
-- `is_plate_annulled` vs. `is_voided` codifica una distinción de negocio
-  real: anulación **de orden** = el blank nunca se gastó (no cuenta contra
-  inventario); anulación **de placa** = el blank se gastó físicamente
-  (sigue contando como consumido, pero se marca como desperdicio). Ver la
-  tabla comparativa completa en [`DATABASE.md`](DATABASE.md#los-4-flags-booleanos-de-plates--fácil-confundirlos).
-- El default de ciudad se evalúa al final y depende del orden: solo
-  `CARRO PARTICULAR`/`CARRO PÚBLICO` son realmente específicos de ciudad;
-  el resto recibe `"COLOMBIA"` si queda en blanco — este mismo paso también
-  rellena la ciudad de filas cuya celda CIUDAD quedó anulada por la
-  detección de "ANULAD" justo antes.
-- El mapa de curación de `requested_by` es un registro vivo de decisiones
-  humanas puntuales (hay comentarios con fechas de sesiones reales de
-  limpieza de datos), no un algoritmo genérico — varios casi-duplicados se
-  dejan sin fusionar a propósito, pendientes de confirmación.
+- Annulment is recorded inconsistently in the raw ledger (the word can
+  appear in SOLICITADO, RANGO or CIUDAD) — that is why `annulment_kind`
+  inspects the three fields together as a single blob, instead of looking
+  at one column.
+- `is_plate_annulled` vs. `is_voided` encodes a real business distinction:
+  **order** annulment = the blank was never spent (does not count against
+  inventory); **plate** annulment = the blank was physically spent
+  (still counts as consumed, but is flagged as waste). See the full
+  comparison table in [`DATABASE.md`](DATABASE.md#the-4-boolean-flags-of-plates--easy-to-confuse).
+- The city default is evaluated last and is order-dependent: only
+  `CARRO PARTICULAR`/`CARRO PÚBLICO` are really city-specific;
+  the rest get `"COLOMBIA"` if left blank — this same step also
+  fills in the city of rows whose CIUDAD cell was blanked by the
+  "ANULAD" detection just before.
+- The `requested_by` curation map is a living record of one-off human
+  decisions (there are comments with dates of real data-cleaning
+  sessions), not a generic algorithm — several near-duplicates are
+  deliberately left unmerged, pending confirmation.
 
 ## `pdf_extract.py`
 
-Parsea el PDF de "pedido" con formato fijo de INGSE hacia la misma forma
-`ExtractedRow` que produce el formulario manual, para que una persona pueda
-subir un PDF en vez de tipear cada placa a mano, y revisar/corregir antes
-de que llegue a `process_rows`.
+Parses INGSE's fixed-format "pedido" (order) PDF into the same
+`ExtractedRow` shape the manual form produces, so a person can upload a PDF
+instead of typing each plate by hand, and review/correct it before it
+reaches `process_rows`.
 
-| Función/clase | Qué hace |
+| Function/class | What it does |
 |---|---|
-| `PdfExtractError` | Excepción de mensaje en español ("esto no es un pedido legible") — nunca deja que un PDF malo tumbe la app con un 500. |
-| `ParsedLine` | Una línea de la tabla de placas: `line_type` (`"placa"`/`"rango"`), `plate_type`, `plate_number`, `plate_to`, `quantity`, `city`. |
-| `ParsedPedido` | Header (`order_number`, `order_date`, `requested_by`) + `lines`; `.to_rows()` convierte a `ExtractedRow`, avisando en español qué campo de header falta si está incompleto — las líneas de placa nunca quedan rehenes de un header malo. **Fase 4** agregó 10 campos más, todos texto crudo sin interpretación de negocio (`customer_document_number`, `tracking_number`, `client_order_number`, `delivery_date`, `payment_date`, `dispatched_by`, `customer_phone`, `received_by`, `payment_method`, `notes`) — mapear vocabularios (`normalize_choice`) y decidir qué es obligatorio es trabajo de `app/web/blueprints/ingest.py::_form_from_pedido`, no de este módulo. |
-| `parse_order_date(value)` | Prueba ISO, luego numérico día-primero (convención colombiana), luego nombres de mes en español; devuelve `None` en vez de adivinar. |
-| `parse_pedido_pdf(source)` | Parseo principal: extrae tablas de todas las páginas, ubica la fila de header `ITEM \| PLACA \| ...`, lee los campos de arriba (`_find_header_value`), y parsea las líneas de abajo hasta la fila `TOTAL PEDIDO`. |
-| `extract_rows_from_pdf(source)` | Atajo: `parse_pedido_pdf(source).to_rows()` para llamadores no interactivos. El flujo web usa `parse_pedido_pdf` directo para poder tolerar un header parcial y dejar que la persona complete lo que falta. |
+| `PdfExtractError` | Exception with a Spanish message ("this is not a readable order") — never lets a bad PDF bring the app down with a 500. |
+| `ParsedLine` | One line of the plate table: `line_type` (`"placa"`/`"rango"`), `plate_type`, `plate_number`, `plate_to`, `quantity`, `city`. |
+| `ParsedPedido` | Header (`order_number`, `order_date`, `requested_by`) + `lines`; `.to_rows()` converts to `ExtractedRow`, warning in Spanish which header field is missing if it is incomplete — the plate lines are never held hostage by a bad header. **Phase 4** added 10 more fields, all raw text with no business interpretation (`customer_document_number`, `tracking_number`, `client_order_number`, `delivery_date`, `payment_date`, `dispatched_by`, `customer_phone`, `received_by`, `payment_method`, `notes`) — mapping vocabularies (`normalize_choice`) and deciding what is required is the job of `app/web/blueprints/ingest.py::_form_from_pedido`, not of this module. |
+| `parse_order_date(value)` | Tries ISO, then numeric day-first (Colombian convention), then Spanish month names; returns `None` instead of guessing. |
+| `parse_pedido_pdf(source)` | Main parser: extracts tables from all pages, locates the `ITEM \| PLACA \| ...` header row, reads the fields above (`_find_header_value`), and parses the lines below up to the `TOTAL PEDIDO` row. |
+| `extract_rows_from_pdf(source)` | Shortcut: `parse_pedido_pdf(source).to_rows()` for non-interactive callers. The web flow uses `parse_pedido_pdf` directly so it can tolerate a partial header and let the person fill in what is missing. |
 
-### Pedido en Excel (`xlsx_extract.py`) y despacho (`pedido_upload.py`)
+### Excel order (`xlsx_extract.py`) and dispatch (`pedido_upload.py`)
 
-El cliente también puede enviar el **Excel del pedido** (`.xlsx`, la plantilla `FORMATO_PEDIDOS_INGSE_2026_v2/v3`) tal cual. La hoja es la misma
-cuadrícula de celdas que ve el parser en las tablas del PDF, así que **no hay un segundo parser**: `parse_pedido_xlsx` solo convierte las filas de la hoja
-a texto y las pasa a `pdf_extract.parse_pedido_rows` (la misma lógica de etiquetas y de fila `ITEM | PLACA`).
+The customer can also send the **order Excel** (`.xlsx`, the `FORMATO_PEDIDOS_INGSE_2026_v2/v3` template) as is. The sheet is the same
+grid of cells the parser sees in the PDF tables, so **there is no second parser**: `parse_pedido_xlsx` only converts the sheet rows
+to text and passes them to `pdf_extract.parse_pedido_rows` (the same label logic and the same `ITEM | PLACA` row logic).
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `parse_pedido_rows(rows)` (en `pdf_extract.py`) | Núcleo compartido: encuentra el header, los campos de arriba y de pie y las líneas. `parse_pedido_pdf` = tablas del PDF + este núcleo. |
-| `parse_pedido_xlsx(source)` | Valida que sea un `.xlsx` real (zip con `xl/workbook.xml`, tope de 50 MB descomprimido y 1000 entradas: el archivo viene de externos), lo abre con `openpyxl` en solo lectura (`data_only`, máx. 500 filas × 40 columnas) y usa la primera hoja que tenga la tabla de placas (ignora hojas auxiliares como la oculta `LISTAS` de la plantilla v3). Fechas → ISO, `1117521679.0` → `"1117521679"`. |
-| `parse_uploaded_pedido(data)` | Entrada única para las rutas: decide por el contenido (`%PDF` → PDF; zip `PK` → xlsx; `.xls` viejo → "guardalo como .xlsx"; cualquier otro → error). Siempre `PdfExtractError` en español. |
+| `parse_pedido_rows(rows)` (in `pdf_extract.py`) | Shared core: finds the header, the header and footer fields, and the lines. `parse_pedido_pdf` = PDF tables + this core. |
+| `parse_pedido_xlsx(source)` | Validates that it is a real `.xlsx` (zip with `xl/workbook.xml`, cap of 50 MB uncompressed and 1000 entries: the file comes from outsiders), opens it with `openpyxl` read-only (`data_only`, max. 500 rows × 40 columns) and uses the first sheet that has the plate table (ignores auxiliary sheets such as the template v3's hidden `LISTAS`). Dates → ISO, `1117521679.0` → `"1117521679"`. |
+| `parse_uploaded_pedido(data)` | Single entry point for the routes: decides by content (`%PDF` → PDF; `PK` zip → xlsx; old `.xls` → "save it as .xlsx"; anything else → error). Always `PdfExtractError` with a Spanish message. |
 
-**Lo más difícil de entender:**
+**The hardest parts to understand:**
 
-- **Por qué `extract_tables()` y nunca `extract_text()`**: decisión
-  documentada y forzada por comentario en el código. `extract_text()`
-  recorre el stream de caracteres crudo y se observó que mezclaba
-  etiquetas estáticas carácter por carácter en un documento real;
-  `extract_tables()` reconstruye celdas a partir de la geometría de líneas
-  del PDF y es inmune a eso. **Nunca revertir esta decisión.**
-- **Número de orden real vs. campo señuelo**: la orden de producción se
-  etiqueta `ORDEN DE PRODUCCION` en las plantillas actuales o `NT` en las
-  viejas; `PEDIDO #` es un número de reclamo de cara al cliente,
-  **deliberadamente excluido** de esa lista. `_find_header_value` compara
-  etiquetas exactas (no por substring) justamente para que `FECHA PEDIDO`
-  no matchee por accidente con `PEDIDO #`.
+- **Why `extract_tables()` and never `extract_text()`**: a decision
+  documented and enforced by a comment in the code. `extract_text()`
+  walks the raw character stream and was observed to mix up
+  static labels character by character in a real document;
+  `extract_tables()` rebuilds cells from the PDF's line geometry
+  and is immune to that. **Never revert this decision.**
+- **Real order number vs. decoy field**: the production order is
+  labeled `ORDEN DE PRODUCCION` in the current templates or `NT` in the
+  old ones; `PEDIDO #` is a customer-facing claim number,
+  **deliberately excluded** from that list. `_find_header_value` compares
+  exact labels (not by substring) precisely so that `FECHA PEDIDO`
+  does not accidentally match `PEDIDO #`.
 
-  Esto no fue solo teórico: en producción apareció una orden literalmente
-  numerada `"PEDIDO #"` porque una fila del PDF tenía esa etiqueta sin dos
-  puntos, empaquetada en la misma fila que el valor real de la orden — el
-  escaneo interno la confundió con el valor que buscaba. El fix agregó una
-  constante `_LABEL_PEDIDO_HASH_BARE` para que el escaneo reconozca esa
-  etiqueta "pelada" (sin `:`) y la trate como un límite, no como un valor.
-- Las posiciones de columna se leen dinámicamente desde la propia fila de
-  header del documento, no están hardcodeadas por índice — así que un
-  cambio de plantilla que mueva/inserte columnas sigue funcionando.
-- Una fila cuenta como línea de placa solo si trae un valor de placa o de
-  inicio de rango (`_parse_lines`) — esta única regla maneja a la vez filas
-  pre-impresas en blanco (se saltan, aunque tengan número de ITEM) y filas
-  con placa pero sin ITEM (se conservan). El parser es explícitamente
-  "fiel, no inteligente": nunca valida formatos de placa ni reglas de
-  negocio, eso es trabajo de `normalize.py` y del humano que revisa.
-- **El pie de página (Fase 4)**: seis etiquetas nuevas (`RESPONSABLE
+  This was not just theoretical: in production an order literally
+  numbered `"PEDIDO #"` showed up because a PDF row had that label without a
+  colon, packed in the same row as the real order value — the internal
+  scan mistook it for the value it was looking for. The fix added a
+  constant `_LABEL_PEDIDO_HASH_BARE` so the scan recognizes that
+  "bare" label (without `:`) and treats it as a boundary, not as a value.
+- Column positions are read dynamically from the document's own header
+  row, not hardcoded by index — so a template change that moves/inserts
+  columns keeps working.
+- A row counts as a plate line only if it carries a plate value or a
+  range-start value (`_parse_lines`) — this single rule handles both
+  pre-printed blank rows (skipped, even if they have an ITEM number) and
+  rows with a plate but no ITEM (kept). The parser is explicitly
+  "faithful, not smart": it never validates plate formats or business
+  rules, that is the job of `normalize.py` and of the human reviewing.
+- **The page footer (Phase 4)**: six new labels (`RESPONSABLE
   DESPACHO (INGSE SAS):`, `TELÉFONO:`, `NOMBRE QUIEN RECIBE EL PEDIDO:`,
-  `FORMA DE PAGO:`, `OBSERVACIONES:`) están físicamente DEBAJO de la fila
-  `TOTAL PEDIDO`, invisibles para `header_rows`. `parse_pedido_pdf` agrega
-  un segundo slice, `footer_rows` (desde la fila `TOTAL PEDIDO` en
-  adelante), y llama a `_find_header_value` contra ese slice también —
-  la función en sí **no se tocó**, el guard `_LABEL_PEDIDO_HASH_BARE` sigue
-  aplicando gratis. Las etiquetas siguen siendo texto exacto, nunca
-  abreviado. `PEDIDO #:` (con dos puntos, en la tabla declarativa del
-  header) usa a propósito el mismo texto plegado que
-  `_LABEL_PEDIDO_HASH_BARE` (el guard del bare `PEDIDO #` sin dos puntos)
-  — son casos distintos que `_split_label` distingue de forma segura
-  porque uno tiene `:` y el otro no; mantenerlos como una sola constante
-  evita que los dos conceptos se desincronicen.
-- **NIT / CÉDULA puede volver `""` legítimamente** cuando la celda de valor
-  cae en una fila distinta a la de la etiqueta (artefacto de celdas
-  combinadas) — el escaneo "misma fila solamente" de `_find_header_value`
-  ya lo maneja así; **nunca** agregar un heurístico de "mirar la fila
-  siguiente", arriesga traer el valor de otro campo.
-- **Los campos de dinero del PDF se ignoran a propósito**: `VALOR:` del
-  header, `VALOR PLACA`/`VALOR TOTAL` de las líneas, y `TOTAL PEDIDO:` del
-  pie (su fila sigue marcando el fin de la tabla de placas y ahora también
-  el inicio del bloque de pie, pero su *valor* no se lee) — `unit_price`
-  siempre sale de la tarifa vigente (`plate_type_prices`), nunca del PDF.
+  `FORMA DE PAGO:`, `OBSERVACIONES:`) are physically BELOW the
+  `TOTAL PEDIDO` row, invisible to `header_rows`. `parse_pedido_pdf` adds
+  a second slice, `footer_rows` (from the `TOTAL PEDIDO` row
+  onward), and calls `_find_header_value` against that slice too —
+  the function itself **was not touched**, the `_LABEL_PEDIDO_HASH_BARE` guard
+  still applies for free. The labels remain exact text, never
+  abbreviated. `PEDIDO #:` (with a colon, in the header's declarative
+  table) deliberately uses the same folded text as
+  `_LABEL_PEDIDO_HASH_BARE` (the guard for the bare `PEDIDO #` without a colon)
+  — they are distinct cases that `_split_label` tells apart safely
+  because one has `:` and the other does not; keeping them as a single constant
+  prevents the two concepts from drifting out of sync.
+- **NIT / CÉDULA may legitimately come back as `""`** when the value cell
+  falls in a different row than the label (a merged-cell artifact) —
+  the "same row only" scan of `_find_header_value`
+  already handles it that way; **never** add a "look at the next row"
+  heuristic, it risks pulling in the value of another field.
+- **The money fields of the PDF are ignored on purpose**: the header's `VALOR:`,
+  the lines' `VALOR PLACA`/`VALOR TOTAL`, and the footer's `TOTAL PEDIDO:`
+  (its row still marks the end of the plate table and now also
+  the start of the footer block, but its *value* is not read) — `unit_price`
+  always comes from the current rate (`plate_type_prices`), never from the PDF.
 
-## `ingestion.py` (antes `process.py`, renombrado en la Fase 1d)
+## `ingestion.py` (formerly `process.py`, renamed in Phase 1d)
 
-El único backend de ingesta al que convergen todas las puertas. Dado un
-batch de `ExtractedRow`: normaliza, detecta duplicados, agrupa por orden,
-inserta, recalcula inventario — todo en una transacción.
+The single ingestion backend that all entry points converge on. Given a
+batch of `ExtractedRow`: normalizes, detects duplicates, groups by order,
+inserts, recalculates inventory — all in one transaction.
 
-**Toma `conn` como primer parámetro explícito** en sus tres funciones
-públicas (`process_rows(conn, rows)`, `replace_order(conn, order_number,
-rows)`, `find_duplicate_plate_numbers(conn, rows)`) y nunca comitea ni
-hace rollback — el mismo contrato que sigue todo `app/core/db/` (ver más
-abajo). Antes de la Fase 1d cada una abría su propia `db.get_conn()`
-internamente, así que un solo `POST /ingest` corría en 3-4 transacciones
-separadas (el chequeo de duplicados y el insert que se supone protege no
-eran atómicos entre sí); el llamador (la ruta Flask) ahora abre **una
-sola** `with db.get_conn() as conn:` que envuelve el chequeo y el insert
-juntos. Ver `tests/core/test_ingestion.py`'s test de atomicidad (una
-excepción a mitad de `process_rows` revierte el batch entero) para el caso
-concreto que esto cierra.
+**Takes `conn` as an explicit first parameter** in its three public
+functions (`process_rows(conn, rows)`, `replace_order(conn, order_number,
+rows)`, `find_duplicate_plate_numbers(conn, rows)`) and never commits or
+rolls back — the same contract followed by everything in `app/core/db/` (see
+below). Before Phase 1d each one opened its own `db.get_conn()`
+internally, so a single `POST /ingest` ran in 3-4 separate
+transactions (the duplicate check and the insert it is supposed to protect
+were not atomic with respect to each other); the caller (the Flask route) now opens **a
+single** `with db.get_conn() as conn:` that wraps the check and the insert
+together. See the atomicity test in `tests/core/test_ingestion.py` (an
+exception midway through `process_rows` rolls back the entire batch) for the
+concrete case this closes.
 
-- **`Summary`** — conteos devueltos al llamador: `orders_inserted`,
+- **`Summary`** — counts returned to the caller: `orders_inserted`,
   `plates_inserted`, `blank_preparations`, `possible_duplicates`,
-  `voided`, `plate_annulled`, `batch_replacements`, `review_notes`, más
-  `orders_replaced`/`plates_deleted` que solo pone `replace_order` (nunca
-  `process_rows`, que jamás borra nada).
-- **`find_duplicate_plate_numbers(conn, rows)`** — dry run de solo
-  lectura: devuelve el conjunto de números de placa que *quedarían*
-  marcados como posible duplicado si se insertaran ahora. Lo usa el
-  formulario `/ingest` para avisar antes de guardar, en la misma
-  transacción que el guardado real.
-- **`process_rows(conn, rows, created_by=None) -> Summary`** — normaliza
-  cada fila → separa ALISTAMIENTO de placas reales → cuenta repetidos
-  dentro del batch → inserta cada fila de alistamiento (mapeando
-  `plate_type` a material vía `normalize.inventory_category()` — antes
-  de la Fase 2 pasaba `plate_type` directo como `category`, un bug real,
-  código muerto en la práctica porque el flujo real de `/inventory/alistado`
-  no pasaba por acá, corregido de una vez), calcula qué placas ya existen
-  en vivo, saca un snapshot único de `db.current_prices(conn)` para todo
-  el batch, agrupa las placas por `order_number` (resuelve/crea el
-  cliente del grupo vía `db.resolve_or_create_customer` y hace un
-  `insert_order` por grupo, usando la fila *cabeza* del grupo), inserta
-  cada placa (aplicando el snapshot de precio como fallback solo si la
-  fila no trae ya un `unit_price` propio) marcando `is_possible_duplicate`
-  → `recalc_inventory`. No comitea: eso lo hace el `with db.get_conn()`
-  del llamador al salir limpio. `created_by` (Fase 2, opcional) es el
-  `users.id` de quien guardó, hacia `production_orders.created_by`.
-  **Generaliza a `_ORDER_LEVEL_FIELDS`** (10 campos: `requested_by` +
-  las 9 columnas POS de orden, excluyendo `reason`/`vehicle_brand`/
-  `unit_price` que son genuinamente por línea) el chequeo de "¿todas las
-  filas del grupo coinciden?" que antes solo existía para `requested_by` —
-  cualquier desacuerdo dentro del mismo `order_number` genera un
-  `review_notes` por campo.
+  `voided`, `plate_annulled`, `batch_replacements`, `review_notes`, plus
+  `orders_replaced`/`plates_deleted`, which only `replace_order` sets (never
+  `process_rows`, which never deletes anything).
+- **`find_duplicate_plate_numbers(conn, rows)`** — read-only dry run:
+  returns the set of plate numbers that *would* be flagged as possible
+  duplicates if inserted now. Used by the `/ingest` form to warn before
+  saving, in the same transaction as the actual save.
+- **`process_rows(conn, rows, created_by=None) -> Summary`** — normalizes
+  each row → separates ALISTAMIENTO from real plates → counts repeats
+  within the batch → inserts each preparation row (mapping
+  `plate_type` to material via `normalize.inventory_category()` — before
+  Phase 2 it passed `plate_type` directly as `category`, a real bug,
+  dead code in practice because the real `/inventory/alistado` flow
+  did not go through here, fixed while at it), computes which plates already exist
+  live, takes a single snapshot of `db.current_prices(conn)` for the whole
+  batch, groups the plates by `order_number` (resolves/creates the group's
+  customer via `db.resolve_or_create_customer` and does one
+  `insert_order` per group, using the group's *head* row), inserts
+  each plate (applying the price snapshot as a fallback only if the
+  row does not already carry its own `unit_price`) setting `is_possible_duplicate`
+  → `recalc_inventory`. It does not commit: the `with db.get_conn()` of
+  the caller does that on clean exit. `created_by` (Phase 2, optional) is the
+  `users.id` of whoever saved, going to `production_orders.created_by`.
+  **It generalizes to `_ORDER_LEVEL_FIELDS`** (10 fields: `requested_by` +
+  the 9 POS order columns, excluding `reason`/`vehicle_brand`/
+  `unit_price`, which are genuinely per line) the "do all
+  rows of the group agree?" check that previously existed only for
+  `requested_by` — any disagreement within the same `order_number` generates a
+  `review_notes` per field.
 - **`replace_order(conn, order_number, rows, created_by=None) -> Summary`**
-  — acción explícita, opt-in (botón "Reemplazar" en `/ingest`): borra
-  **todas** las órdenes existentes que coincidan con `order_number` (puede
-  haber 2+, no hay `UNIQUE`) junto con sus placas, y luego inserta una
-  sola orden nueva a partir de `rows`. Exige que todas las `rows`
-  compartan el mismo `order_number` (si no, `ValueError`) y que haya al
-  menos una fila. **Las placas nuevas toman la tarifa vigente AL MOMENTO
-  DEL REEMPLAZO**, no la que regía en la fecha original de la orden —
-  documentado, no un bug (el texto del `confirm()` de "Reemplazar" en
-  `ingest.html` también lo advierte).
-- **`is_alistado(row)`** (pública desde la Fase 1d, antes `_is_alistado`
-  privada — `app/migrate.py` la importa cruzando el límite del módulo) —
-  detecta una fila ALISTAMIENTO mirando tanto `requested_by` como
+  — explicit, opt-in action ("Reemplazar" button in `/ingest`): deletes
+  **all** existing orders matching `order_number` (there can be
+  2+, there is no `UNIQUE`) along with their plates, and then inserts a
+  single new order from `rows`. It requires all `rows`
+  to share the same `order_number` (otherwise `ValueError`) and at
+  least one row. **The new plates take the rate in effect AT THE TIME
+  OF THE REPLACEMENT**, not the one in effect on the order's original date —
+  documented, not a bug (the `confirm()` text of "Reemplazar" in
+  `ingest.html` also warns about this).
+- **`is_alistado(row)`** (public since Phase 1d, formerly the private
+  `_is_alistado` — `app/migrate.py` imports it across the module boundary) —
+  detects an ALISTAMIENTO row by looking at both `requested_by` and
   `prepared_by`.
-- El filtro `is_real_plate(...) and not is_voided` y el bloque de conteo
-  por fila estaban duplicados 8-9 veces entre `process_rows`/
-  `replace_order` (y una novena copia divergente, directo en
-  `app/web/app.py`, que violaba la regla de este mismo archivo de no tener
-  lógica de negocio fuera de `core/`) — factorizados en los helpers
-  privados `_dedup_candidates(rows)` y `_count_row(summary, row, is_dup)`,
-  usados por ambas funciones; la ruta web ahora pasa por acá también.
+- The `is_real_plate(...) and not is_voided` filter and the per-row counting
+  block were duplicated 8-9 times between `process_rows`/
+  `replace_order` (and a ninth, divergent copy, directly in
+  `app/web/app.py`, which violated this very file's rule of having no
+  business logic outside `core/`) — factored into the private helpers
+  `_dedup_candidates(rows)` and `_count_row(summary, row, is_dup)`,
+  used by both functions; the web route now goes through here too.
 
-**Lo más difícil de entender:**
+**The hardest parts to understand:**
 
-- `replace_order` existe para arreglar una clase de bug real: una fila de
-  reposición no tiene identidad de placa contra la cual comparar, así que
-  si sus números reales se recuperan después (ej. resubiendo el PDF
-  original) y simplemente se vuelven a procesar con `process_rows`, se crea
-  en silencio una **segunda** orden bajo el mismo `order_number` en vez de
-  detectarse como duplicado. Esto ya pasó de verdad — caso real
-  `WCY449`/pedido 1030, documentado en
-  `data/duplicados_revision_2026-08-15.md` — y es exactamente el hueco que
-  `replace_order` tapa.
-- La detección de duplicados es **solo por número de placa**, calculada de
-  forma independiente en `process_rows` y en `replace_order`: ya-presente-
-  en-BD (`existing_plate_numbers`) O repetido-dentro-del-batch, y solo
-  aplica a filas donde `is_real_plate(...)` es verdadero y `is_voided` es
-  falso. Una reposición (sin `plate_number`) por diseño nunca puede
-  marcarse como duplicado — de ahí la necesidad de `replace_order` como
-  mecanismo separado basado en `order_number`, no en `plate_number`.
-- `process_rows` puede insertar varias órdenes en una sola llamada (agrupa
-  un batch multi-orden); `replace_order` está deliberadamente limitado a
-  un solo `order_number` y no puede abarcar varias órdenes.
+- `replace_order` exists to fix a class of real bug: a replacement
+  row has no plate identity to compare against, so
+  if its real numbers are recovered later (e.g. by re-uploading the original
+  PDF) and simply reprocessed with `process_rows`, a **second**
+  order is silently created under the same `order_number` instead of being
+  detected as a duplicate. This really happened — real case
+  `WCY449`/order 1030, documented in
+  `data/duplicados_revision_2026-08-15.md` — and it is exactly the gap that
+  `replace_order` closes.
+- Duplicate detection is **by plate number only**, computed
+  independently in `process_rows` and in `replace_order`: already-present-
+  in-DB (`existing_plate_numbers`) OR repeated-within-the-batch, and it only
+  applies to rows where `is_real_plate(...)` is true and `is_voided` is
+  false. A replacement (with no `plate_number`) can by design never be
+  flagged as a duplicate — hence the need for `replace_order` as a separate
+  mechanism based on `order_number`, not on `plate_number`.
+- `process_rows` can insert several orders in a single call (it groups
+  a multi-order batch); `replace_order` is deliberately limited to
+  a single `order_number` and cannot span several orders.
 
-## `db/` (paquete — antes un solo `db.py` plano, dividido en la Fase 1d)
+## `db/` (package — formerly a single flat `db.py`, split in Phase 1d)
 
-Todo el SQL crudo (psycopg 3, sin ORM) para `production_orders`, `plates`,
-`blank_preparations` e `inventory_categories`, dividido por dominio en vez
-de un único archivo de 556 líneas:
+All the raw SQL (psycopg 3, no ORM) for `production_orders`, `plates`,
+`blank_preparations` and `inventory_categories`, split by domain instead
+of a single 556-line file:
 
-| Módulo | Qué contiene |
+| Module | What it contains |
 |---|---|
-| `db/__init__.py` | `get_conn()` (ver pool más abajo) + re-export explícito de cada función pública de todos los submódulos — `db.insert_order(...)`, `db.recalc_inventory(...)`, `db.resolve_or_create_customer(...)`, etc. siguen llamándose exactamente igual desde fuera del paquete. |
-| `db/orders.py` | CRUD de `production_orders` + `OrderSummary` (dataclass tipado, `class_row`) — la forma de fila compartida por `recent_orders`/`find_orders_by_number`/`search_orders_by_number`. |
-| `db/plates.py` | CRUD de `plates`, incluida `distinct_cities` (agrupada acá por simetría con `distinct_requested_by` de `orders.py`, aunque ambas leen `plates`). |
+| `db/__init__.py` | `get_conn()` (see pool below) + explicit re-export of every public function of all the submodules — `db.insert_order(...)`, `db.recalc_inventory(...)`, `db.resolve_or_create_customer(...)`, etc. are still called exactly the same from outside the package. |
+| `db/orders.py` | CRUD of `production_orders` + `OrderSummary` (typed dataclass, `class_row`) — the row shape shared by `recent_orders`/`find_orders_by_number`/`search_orders_by_number`. |
+| `db/plates.py` | CRUD of `plates`, including `distinct_cities` (grouped here for symmetry with `distinct_requested_by` in `orders.py`, although both read `plates`). |
 | `db/inventory.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
-| `db/customers.py` (Fase 2) | CRUD de `customers` — ver detalle abajo. |
-| `db/ownership_cards.py` (Fase 2 declaraciones) | CRUD de `ownership_cards` (tarjeta de propiedad) y `find_card_conflicts` — ver detalle abajo. |
-| `db/declarations.py` (Fase 3 declaraciones) | Lectura/escritura de `declarations` y `declaration_cards` — ver detalle abajo. |
-| `db/users.py` (Fase 2) | CRUD/lookup de `users` — backend real del login (`app/web/auth.py`), ver detalle abajo. |
-| `db/roles.py` | CRUD de `roles`/`role_permissions` y lectura de `permissions` — ver detalle abajo. |
-| `db/pricing.py` (Fase 2) | CRUD de `plate_type_prices` — ver detalle abajo. |
+| `db/customers.py` (Phase 2) | CRUD of `customers` — see details below. |
+| `db/ownership_cards.py` (Phase 2 declarations) | CRUD of `ownership_cards` (ownership card) and `find_card_conflicts` — see details below. |
+| `db/declarations.py` (Phase 3 declarations) | Read/write of `declarations` and `declaration_cards` — see details below. |
+| `db/users.py` (Phase 2) | CRUD/lookup of `users` — real backend of the login (`app/web/auth.py`), see details below. |
+| `db/roles.py` | CRUD of `roles`/`role_permissions` and read of `permissions` — see details below. |
+| `db/pricing.py` (Phase 2) | CRUD of `plate_type_prices` — see details below. |
 
-Config de conexión desde variables de entorno (`DB_HOST` default `"db"` —
-**nunca usar ese default en Docker Compose**, ver
-[`ARCHITECTURE.md`](ARCHITECTURE.md)) más `DB_POOL_MIN_SIZE`/
-`DB_POOL_MAX_SIZE` (default `1`/`5`, ver "Pool de conexiones" abajo).
-Cada conexión se abre con `row_factory=dict_row` — toda fila que devuelve
-una consulta es un dict por nombre de columna, nunca una tupla posicional.
+Connection config from environment variables (`DB_HOST` default `"db"` —
+**never use that default in Docker Compose**, see
+[`ARCHITECTURE.md`](ARCHITECTURE.md)) plus `DB_POOL_MIN_SIZE`/
+`DB_POOL_MAX_SIZE` (default `1`/`5`, see "Connection pool" below).
+Every connection is opened with `row_factory=dict_row` — every row returned by
+a query is a dict by column name, never a positional tuple.
 
-**Contrato de transacción**: cada función de acá recibe una conexión ya
-abierta (`conn`) y **nunca hace commit ni rollback** — quien llama es
-siempre el dueño de la transacción (`with db.get_conn() as conn: ...`).
-Esto es deliberado (Fase 1d): pasar `conn` explícito en vez de esconderlo
-detrás de una interfaz deja visible en la firma quién controla el
-commit, que es justamente el punto que un bug real (varias funciones de
-`ingestion.py` abriendo cada una su propia conexión, ver más abajo) puso
-en evidencia.
+**Transaction contract**: every function here receives an already
+open connection (`conn`) and **never commits or rolls back** — the caller is
+always the owner of the transaction (`with db.get_conn() as conn: ...`).
+This is deliberate (Phase 1d): passing `conn` explicitly instead of hiding it
+behind an interface keeps visible in the signature who controls the
+commit, which is precisely the point that a real bug (several functions of
+`ingestion.py` each opening its own connection, see below) brought
+to light.
 
-**Pool de conexiones (Fase 1d)**: `get_conn()` ya no abre un socket nuevo
-en cada llamada — es un `@contextmanager` que envuelve un
-`psycopg_pool.ConnectionPool`, construido de forma perezosa (recién en la
-primera llamada real, nunca al importar el módulo, porque
-`tests/conftest.py` importa este paquete incluso sin `POSTGRES_PASSWORD`
-seteada). `with db.get_conn() as conn:` se comporta exactamente igual que
-antes en los ~21 call sites existentes (commit en salida limpia, rollback
-en excepción) — solo que ahora reusa una conexión del pool en vez de abrir
-una nueva. Gunicorn corre sin `--preload`, así que cada worker arma su
-propio pool en su primer request (si algún día se agrega `--preload`, ese
-razonamiento se rompe y la construcción del pool debe moverse a un hook
-`post_fork`).
+**Connection pool (Phase 1d)**: `get_conn()` no longer opens a new socket
+on every call — it is a `@contextmanager` that wraps a
+`psycopg_pool.ConnectionPool`, built lazily (only on the
+first real call, never on module import, because
+`tests/conftest.py` imports this package even without `POSTGRES_PASSWORD`
+set). `with db.get_conn() as conn:` behaves exactly as
+before at the ~21 existing call sites (commit on clean exit, rollback
+on exception) — except that it now reuses a connection from the pool instead of opening
+a new one. Gunicorn runs without `--preload`, so each worker builds its
+own pool on its first request (if `--preload` is ever added, that
+reasoning breaks and the pool construction must move to a
+`post_fork` hook).
 
-**Escrituras — órdenes/placas**
+**Writes — orders/plates**
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `insert_order(conn, *, row, customer_id, created_by)` | Inserta `production_orders` a partir de la `ExtractedRow` completa (Fase 2 — igual que `insert_plate`, en vez de listar cada campo POS como kwarg suelto) + `customer_id`/`created_by`, ambos obligatorios (sin default) para que cada llamador elija explícito. `row.plate_type`/etc. se ignoran (irrelevantes para el header). |
-| `update_order(conn, order_id, *, ..., customer_id=_UNSET, receipt_type=None, ...)` | Edita el header + los 10 campos POS. `customer_id` usa un sentinel privado `_UNSET` (no `None`) como default — pasarlo explícito (un int, o `None` para limpiarlo de verdad) lo cambia; omitirlo lo deja intacto. Es deliberado: si el default significara "poner `NULL`", cualquier guardado de Registro que todavía no resuelva cliente lo borraría sin querer. |
-| `delete_order` | Borra placas primero (no hay `ON DELETE CASCADE` en el FK), luego la orden. |
-| `insert_plate` | Inserta una placa con su flag `is_possible_duplicate` (+ `unit_price`/`reason`/`vehicle_brand`, Fase 2/3). También fija `ownership_card_id`: no viene de la fila, se calcula con el tipo de cliente de la orden (`_card_id_for`, ver `resolve_card_id_for_plate`). |
-| `relink_plates(conn, *, order_id=None, customer_id=None)` | Recalcula `plates.ownership_card_id` de todas las placas de una orden o de todas las órdenes de un cliente (exactamente un parámetro). Lo llaman `update_order` (si se pasa `customer_id`) y `update_customer`, porque cambiar el cliente o su tipo cambia qué placas pueden tener tarjeta. |
-| `update_plate(plate_id, ..., plate_type)` | Edición angosta usada por la cola de revisión de duplicados — siempre limpia `is_possible_duplicate` (editar = revisado). Aplica la regla de re-snapshot de `unit_price` (ver abajo), porque también permite cambiar `plate_type`. Recalcula `ownership_card_id` (se limpia si la placa pasa a anulada). |
-| `update_plate_full(plate_id, ..., plate_type, reason=None, vehicle_brand=None)` | Edición completa desde el detalle de Registro. **`is_batch_replacement` se debe pasar explícito** — así, corregir el `plate_number` de una reposición también puede apagar ese flag (bug ya corregido: antes se quedaba marcada como reposición para siempre). `unit_price` **no es un parámetro** — la regla de re-snapshot de abajo es el único camino que lo fija, nunca un caller directo. |
-| `resolve_plate` | Solo limpia `is_possible_duplicate` ("no es duplicado", acción del revisor). |
-| `delete_plate` | Borra la placa; si con eso queda exactamente **una** otra fila marcada con el mismo `plate_number`, también le limpia el flag (ya no hay nada más con qué compararla); si quedan 2+, las deja (sigue siendo ambiguo). |
+| `insert_order(conn, *, row, customer_id, created_by)` | Inserts `production_orders` from the full `ExtractedRow` (Phase 2 — like `insert_plate`, instead of listing each POS field as a loose kwarg) + `customer_id`/`created_by`, both required (no default) so every caller chooses explicitly. `row.plate_type`/etc. are ignored (irrelevant for the header). |
+| `update_order(conn, order_id, *, ..., customer_id=_UNSET, receipt_type=None, ...)` | Edits the header + the 10 POS fields. `customer_id` uses a private sentinel `_UNSET` (not `None`) as default — passing it explicitly (an int, or `None` to really clear it) changes it; omitting it leaves it untouched. This is deliberate: if the default meant "set `NULL`", any Registro save that does not yet resolve a customer would wipe it by accident. |
+| `delete_order` | Deletes plates first (there is no `ON DELETE CASCADE` on the FK), then the order. |
+| `insert_plate` | Inserts a plate with its `is_possible_duplicate` flag (+ `unit_price`/`reason`/`vehicle_brand`, Phase 2/3). It also sets `ownership_card_id`: it does not come from the row, it is computed from the order's customer type (`_card_id_for`, see `resolve_card_id_for_plate`). |
+| `relink_plates(conn, *, order_id=None, customer_id=None)` | Recomputes `plates.ownership_card_id` for all plates of an order or of all orders of a customer (exactly one parameter). Called by `update_order` (if `customer_id` is passed) and `update_customer`, because changing the customer or their type changes which plates can have a card. |
+| `update_plate(plate_id, ..., plate_type)` | Narrow edit used by the duplicate review queue — always clears `is_possible_duplicate` (editing = reviewed). Applies the `unit_price` re-snapshot rule (see below), because it also allows changing `plate_type`. Recomputes `ownership_card_id` (cleared if the plate becomes annulled). |
+| `update_plate_full(plate_id, ..., plate_type, reason=None, vehicle_brand=None)` | Full edit from the Registro detail. **`is_batch_replacement` must be passed explicitly** — this way, correcting the `plate_number` of a replacement can also turn that flag off (a bug already fixed: before, it stayed marked as a replacement forever). `unit_price` is **not a parameter** — the re-snapshot rule below is the only path that sets it, never a direct caller. |
+| `resolve_plate` | Only clears `is_possible_duplicate` ("not a duplicate", the reviewer's action). |
+| `delete_plate` | Deletes the plate; if that leaves exactly **one** other row flagged with the same `plate_number`, it also clears its flag (there is nothing left to compare it with); if 2+ remain, it leaves them (still ambiguous). |
 
-**Regla de re-snapshot de `unit_price`** (Fase 2, `db/plates.py::_resnapshot_unit_price`, compartida por `update_plate`/`update_plate_full`): lee el `plate_type`/`unit_price` actuales de la placa en el mismo cursor, antes del `UPDATE` —
-si el `plate_type` **no cambia**, el `unit_price` viejo se conserva tal cual (sin importar si cambia `quantity`); si el `plate_type` **sí cambia**, vuelve a tomar `db.current_prices(conn).get(nuevo_tipo)` (puede quedar `None` si ese tipo no tiene tarifa configurada — nunca un `0` silencioso). Placa nueva (`/ingest`, PDF, "+ agregar placa"): `ingestion.py::_snapshot_unit_price` aplica el mismo principio pero como fallback — solo si la fila no trae ya un `unit_price` propio (el form de `/ingest` siempre manda uno, pre-llenado por JS pero editable).
+**`unit_price` re-snapshot rule** (Phase 2, `db/plates.py::_resnapshot_unit_price`, shared by `update_plate`/`update_plate_full`): reads the plate's current `plate_type`/`unit_price` in the same cursor, before the `UPDATE` —
+if the `plate_type` **does not change**, the old `unit_price` is kept as is (regardless of whether `quantity` changes); if the `plate_type` **does change**, it takes `db.current_prices(conn).get(new_type)` again (it can end up `None` if that type has no configured rate — never a silent `0`). New plate (`/ingest`, PDF, "+ agregar placa"): `ingestion.py::_snapshot_unit_price` applies the same principle but as a fallback — only if the row does not already carry its own `unit_price` (the `/ingest` form always sends one, pre-filled by JS but editable).
 
-**Escrituras — inventario**
+**Writes — inventory**
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `insert_blank_preparation` | Registra un evento ALISTAMIENTO. |
-| `recalc_inventory(conn)` | Recalcula `prepared` (suma de `blank_preparations` por categoría) y `consumed` (suma de placas no anuladas, mapeadas de `plate_type` a material vía `inventory_category`) — **itera explícitamente sobre la lista fija de categorías**, no solo sobre las que devuelve el `GROUP BY`, para que una categoría que se quedó sin placas en vivo también vea su `consumed` puesto en 0 en vez de conservar el último valor (bug real ya corregido). |
+| `insert_blank_preparation` | Records an ALISTAMIENTO event. |
+| `recalc_inventory(conn)` | Recomputes `prepared` (sum of `blank_preparations` per category) and `consumed` (sum of non-annulled plates, mapped from `plate_type` to material via `inventory_category`) — **explicitly iterates over the fixed list of categories**, not only over those returned by the `GROUP BY`, so that a category that ran out of live plates also has its `consumed` set to 0 instead of keeping the last value (a real bug, already fixed). |
 
-**Lecturas (selección — ver el archivo para la lista completa)**
+**Reads (selection — see the file for the full list)**
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `existing_plate_numbers` | Subconjunto de números candidatos ya en vivo (`is_voided=false`) — primitiva base de la detección de duplicados. |
-| `find_orders_for_plate` | Órdenes en vivo que ya usaron un número de placa dado. |
-| `inventory_view` | `prepared`, `consumed`, `available = prepared - consumed` (**no suma `initial_stock`**, ver [`DATABASE.md`](DATABASE.md#initial_stock-es-una-columna-muerta)) y `wasted` (recalculado en vivo desde `is_plate_annulled`). |
-| `recent_orders(limit=50)` | Ordenado por `order_date DESC`, no por `created_at` — deliberado, para que una corrección de una orden vieja no tape la actividad real de hoy. |
-| `find_orders_by_number(order_number)` | Match **exacto** (no `ILIKE`), sin límite — puede devolver 0/1/2+ filas. La consume directamente `replace_order`. |
-| `search_plates_by_number` / `search_orders_by_number` | Búsqueda parcial (`ILIKE`) en toda la base, no solo en la ventana de `recent_orders`. |
-| `order_detail(conn, order_id)` | `(orden, placas)` — la orden viene con un `LEFT JOIN customers` (columnas `customer_*`, `LEFT` porque `customer_id` es nullable) para traer los atributos del cliente resuelto en un solo viaje; las placas incluyen `unit_price`/`reason`/`vehicle_brand` (Fase 2/3). |
-| `review_rows` | Cola de placas con `is_possible_duplicate = true`. |
+| `existing_plate_numbers` | Subset of candidate numbers already live (`is_voided=false`) — base primitive of duplicate detection. |
+| `find_orders_for_plate` | Live orders that already used a given plate number. |
+| `inventory_view` | `prepared`, `consumed`, `available = prepared - consumed` (**does not add `initial_stock`**, see [`DATABASE.md`](DATABASE.md#initial_stock-is-a-dead-column)) and `wasted` (recomputed live from `is_plate_annulled`). |
+| `recent_orders(limit=50)` | Ordered by `order_date DESC`, not by `created_at` — deliberate, so that a correction to an old order does not bury today's real activity. |
+| `find_orders_by_number(order_number)` | **Exact** match (not `ILIKE`), no limit — can return 0/1/2+ rows. Consumed directly by `replace_order`. |
+| `search_plates_by_number` / `search_orders_by_number` | Partial search (`ILIKE`) across the whole database, not only in the `recent_orders` window. |
+| `order_detail(conn, order_id)` | `(order, plates)` — the order comes with a `LEFT JOIN customers` (`customer_*` columns, `LEFT` because `customer_id` is nullable) to bring the attributes of the resolved customer in a single round trip; the plates include `unit_price`/`reason`/`vehicle_brand` (Phase 2/3). |
+| `review_rows` | Queue of plates with `is_possible_duplicate = true`. |
 
-### `db/customers.py` (Fase 2)
+### `db/customers.py` (Phase 2)
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `resolve_or_create_customer(conn, name, *, type=None, document_type=None, ...)` | Busca por `name` canónico (`normalize_requested_by`); si existe, `ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name, type = COALESCE(customers.type, EXCLUDED.type), ...` para cada atributo — nunca sobrescribe un atributo que el cliente YA tiene, pero sí completa cualquiera que siga en NULL (así los clientes del backfill histórico, todos con atributos NULL, se van completando solos con el uso normal en vez de quedar en blanco para siempre). Los atributos de un cliente genuinamente nuevo se escriben en la rama INSERT como siempre. `ingestion.py` (`process_rows`/`replace_order`) y `record_save` llaman esta función solo con el nombre (todo `None`), así que para ellos `COALESCE(existente, NULL) = existente` — no-op, igual que antes; `app/web/blueprints/ingest.py` la llama con los atributos tipeados en el fieldset "cliente". Los atributos son `type`/`document_type`/`document_number`/`document_relation`/`phone`/`email` más los datos de persona `address`/`neighborhood`/`municipality` (también con `COALESCE`: nunca se sobrescriben). |
-| `get_customer(conn, customer_id)` / `get_customer_by_name(conn, name)` | Lookups puntuales. |
-| `list_customers(conn)` | Todos los clientes, alfabético — embebido entero como JSON en `ingest.html` (Fase 3) para que el JS auto-llene el fieldset de cliente al matchear un nombre tipeado, mismo patrón que `distinct_requested_by`/`distinct_cities` (esta app no tiene endpoints AJAX); también usado por la lista de `/customers` (Fase 6). |
-| `update_customer(conn, customer_id, *, name, type, document_type, ...)` | Sobreescritura REAL, sin `COALESCE` — a diferencia de `resolve_or_create_customer`, esta sí reemplaza (o borra, si se pasa `None`) un atributo que el cliente ya tenía. Es la única función que puede hacerlo (incluidos `address`/`neighborhood`/`municipality`; `transit_license` ya no existe en `customers`); la usa exclusivamente `/customers` (Fase 6), la pantalla de admin para corregir a mano un dato mal tipeado o completar uno de los 191 clientes del backfill histórico. Sin pre-chequeo de unicidad de `name` — un rename que choca con otro cliente existente levanta `psycopg.errors.UniqueViolation`, que la ruta web atrapa para mostrar un error en español en vez de un 500. |
+| `resolve_or_create_customer(conn, name, *, type=None, document_type=None, ...)` | Looks up by canonical `name` (`normalize_requested_by`); if it exists, `ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name, type = COALESCE(customers.type, EXCLUDED.type), ...` for each attribute — it never overwrites an attribute the customer ALREADY has, but it does fill in any that is still NULL (so the customers from the historical backfill, all with NULL attributes, fill themselves in through normal use instead of staying blank forever). The attributes of a genuinely new customer are written in the INSERT branch as usual. `ingestion.py` (`process_rows`/`replace_order`) and `record_save` call this function with the name only (everything `None`), so for them `COALESCE(existing, NULL) = existing` — a no-op, same as before; `app/web/blueprints/ingest.py` calls it with the attributes typed in the "cliente" fieldset. The attributes are `type`/`document_type`/`document_number`/`document_relation`/`phone`/`email` plus the person data `address`/`neighborhood`/`municipality` (also with `COALESCE`: never overwritten). |
+| `get_customer(conn, customer_id)` / `get_customer_by_name(conn, name)` | Point lookups. |
+| `list_customers(conn)` | All customers, alphabetical — embedded whole as JSON in `ingest.html` (Phase 3) so the JS auto-fills the customer fieldset when a typed name matches, same pattern as `distinct_requested_by`/`distinct_cities` (this app has no AJAX endpoints); also used by the `/customers` list (Phase 6). |
+| `update_customer(conn, customer_id, *, name, type, document_type, ...)` | REAL overwrite, no `COALESCE` — unlike `resolve_or_create_customer`, this one does replace (or delete, if `None` is passed) an attribute the customer already had. It is the only function that can do so (including `address`/`neighborhood`/`municipality`; `transit_license` no longer exists in `customers`); it is used exclusively by `/customers` (Phase 6), the admin screen for manually correcting a mistyped value or completing one of the 191 customers from the historical backfill. No uniqueness pre-check on `name` — a rename that collides with another existing customer raises `psycopg.errors.UniqueViolation`, which the web route catches to show an error in Spanish instead of a 500. |
 
-### `db/ownership_cards.py` (Fase 2 declaraciones)
+### `db/ownership_cards.py` (Phase 2 declarations)
 
-Normaliza las entradas dentro de la capa: licencia con `strip` + mayúsculas,
-placa con `normalize.clean_plate`, textos libres con `strip` (vacío →
-`None`). No pre-chequea unicidad: `UniqueViolation`/`ForeignKeyViolation`
-suben tal cual (la BD es la fuente de verdad). Ver
-[`DATABASE.md`](DATABASE.md) para las columnas y los estados de conflicto.
+Normalizes inputs inside the layer: license with `strip` + uppercase,
+plate with `normalize.clean_plate`, free text with `strip` (empty →
+`None`). It does not pre-check uniqueness: `UniqueViolation`/`ForeignKeyViolation`
+propagate as is (the DB is the source of truth). See
+[`DATABASE.md`](DATABASE.md) for the columns and the conflict states.
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `create_ownership_card(conn, customer_id, *, transit_license, plate_number, engine_number=None, chassis_number=None, vehicle_type=None, registered_in=None, vehicle_brand=None)` | Inserta una tarjeta y devuelve su `id`. |
-| `get_ownership_card(conn, card_id)` | `OwnershipCardRecord` o `None`. |
-| `get_ownership_card_by_transit_license(conn, transit_license)` / `get_ownership_card_by_plate_number(conn, plate_number)` | Lookup exacto por la forma normalizada; `OwnershipCardRecord` o `None`. |
-| `list_ownership_cards_for_customer(conn, customer_id)` | Las tarjetas de un cliente, ordenadas por `id`. |
-| `reassign_ownership_card(conn, card_id, new_customer_id)` | Cambia el dueño de la tarjeta (`UPDATE` simple; acción de admin del flujo de revisión). |
-| `resolve_card_id_for_plate(conn, plate_number, customer_type, *, plate_to=None, is_voided=False, is_plate_annulled=False, is_batch_replacement=False)` | Solo lectura. Devuelve el `id` de la tarjeta a la que debe enlazarse una placa fabricada (`plates.ownership_card_id`) o `None`. Nunca enlaza si el cliente es `EMPRESA`/`TRÁNSITO` (`CARD_LINK_EXCLUDED_CUSTOMER_TYPES`), si es rango, reposición, anulada o sin placa real; con tipo `NULL` sí lo intenta. Compara con `clean_plate(plate_number)`. |
-| `find_card_conflicts(conn, *, customer_id, transit_license, plate_number)` | Solo lectura. Devuelve `CardLookup(by_transit_license, by_plate_number, status)` con `status` en `new` / `same_card` / `other_owner` / `data_mismatch` (constantes `CARD_STATUS_*`). La decisión pura está en `classify_card_lookup`. |
+| `create_ownership_card(conn, customer_id, *, transit_license, plate_number, engine_number=None, chassis_number=None, vehicle_type=None, registered_in=None, vehicle_brand=None)` | Inserts a card and returns its `id`. |
+| `get_ownership_card(conn, card_id)` | `OwnershipCardRecord` or `None`. |
+| `get_ownership_card_by_transit_license(conn, transit_license)` / `get_ownership_card_by_plate_number(conn, plate_number)` | Exact lookup by the normalized form; `OwnershipCardRecord` or `None`. |
+| `list_ownership_cards_for_customer(conn, customer_id)` | A customer's cards, ordered by `id`. |
+| `reassign_ownership_card(conn, card_id, new_customer_id)` | Changes the card's owner (simple `UPDATE`; admin action of the review flow). |
+| `resolve_card_id_for_plate(conn, plate_number, customer_type, *, plate_to=None, is_voided=False, is_plate_annulled=False, is_batch_replacement=False)` | Read-only. Returns the `id` of the card a manufactured plate must be linked to (`plates.ownership_card_id`) or `None`. Never links if the customer is `EMPRESA`/`TRÁNSITO` (`CARD_LINK_EXCLUDED_CUSTOMER_TYPES`), if it is a range, replacement, annulled or has no real plate; with a `NULL` type it does try. Compares with `clean_plate(plate_number)`. |
+| `find_card_conflicts(conn, *, customer_id, transit_license, plate_number)` | Read-only. Returns `CardLookup(by_transit_license, by_plate_number, status)` with `status` in `new` / `same_card` / `other_owner` / `data_mismatch` (`CARD_STATUS_*` constants). The pure decision is in `classify_card_lookup`. |
 
-### `db/declarations.py` (Fase 3 declaraciones)
+### `db/declarations.py` (Phase 3 declarations)
 
-Solo la capa de datos; las reglas de decisión están en `app/core/declarations.py`
-(más abajo). Una declaración tiene un declarante y varias tarjetas de propiedad
-(`declaration_cards`). Columnas, estados y alertas: [`DATABASE.md`](DATABASE.md).
-Constantes: `STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` y
+Data layer only; the decision rules are in `app/core/declarations.py`
+(below). A declaration has one declarant and several ownership cards
+(`declaration_cards`). Columns, states and alerts: [`DATABASE.md`](DATABASE.md).
+Constants: `STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` and
 `FLAG_PLATE_MADE_RECENTLY` / `FLAG_CARD_OTHER_OWNER` / `FLAG_CARD_DATA_MISMATCH` /
-`FLAG_CUSTOMER_TYPE_MISMATCH`, `FLAG_CUSTOMER_DOCUMENT_MISMATCH`. Registros:
-`DeclarationRecord` (fila de `declarations`) y `DeclarationCardRecord` (fila de
+`FLAG_CUSTOMER_TYPE_MISMATCH`, `FLAG_CUSTOMER_DOCUMENT_MISMATCH`. Records:
+`DeclarationRecord` (row of `declarations`) and `DeclarationCardRecord` (row of
 `declaration_cards`).
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `insert_declaration(conn, *, acting_as, status, submitted_data, review_flags=None, gestor_id=None, declarant_signature_path=None, notarized_pdf_path=None, submitter_ip=None, user_agent=None, accepted_terms_at=None, declarant_id_front_path=None, declarant_id_back_path=None, accepted_data_policy_at=None, accepts_marketing=None)` | Inserta el encabezado y devuelve el `id`. |
-| `insert_declaration_card(conn, declaration_id, *, position, reason, plate_quantity, plate_number, transit_license, owner_data, engine_number=None, ..., owner_relation=None, review_flags=None, customer_id=None, ownership_card_id=None)` | Inserta una tarjeta de la declaración y devuelve el `id`. |
-| `get_declaration(conn, declaration_id)` | `DeclarationRecord` o `None`. |
-| `list_declaration_cards(conn, declaration_id)` | Las tarjetas de una declaración, ordenadas por `position`. |
-| `list_cards_for_declarations(conn, declaration_ids)` | Las tarjetas de varias declaraciones en una sola consulta: `{declaration_id: [DeclarationCardRecord, ...]}` (para pantallas de listado, sin N+1). |
-| `list_declarations(conn, *, status=None, query=None)` | `pending_review` primero, luego las más nuevas. `query` busca (sin mayúsculas, con `%`/`_`/`\` literales) en nombre y documento del declarante (y del gestor enlazado) y, en **cualquiera** de las tarjetas, placa, licencia, nombre y documento del dueño declarado y los clientes/tarjetas enlazados. |
-| `count_recent_by_ip(conn, ip, *, since)` | Declaraciones de esa IP con `created_at >= since` (límite por IP del formulario). |
-| `set_declaration_review(conn, declaration_id, *, status, reviewed_by, note=None, gestor_id=None)` | Graba la decisión (`reviewed_at = now()`) y el `gestor_id`. No valida el estado previo. |
-| `set_declaration_card_links(conn, declaration_card_id, *, customer_id, ownership_card_id)` | Enlaza una tarjeta de la declaración con el dueño y la tarjeta de propiedad creados/enlazados al aprobar. |
-| `set_declaration_production_order(conn, declaration_id, production_order_id)` | Marca la declaración como atendida por un pedido (o `None` para limpiarla). No revisa el estado: lo hace quien llama (`/ingest`). |
-| `list_declarations_by_production_order(conn, order_id)` | Las declaraciones atendidas por esa orden (`production_order_id`), ordenadas por `id`; `[]` si no tiene ninguna. |
+| `insert_declaration(conn, *, acting_as, status, submitted_data, review_flags=None, gestor_id=None, declarant_signature_path=None, notarized_pdf_path=None, submitter_ip=None, user_agent=None, accepted_terms_at=None, declarant_id_front_path=None, declarant_id_back_path=None, accepted_data_policy_at=None, accepts_marketing=None)` | Inserts the header and returns the `id`. |
+| `insert_declaration_card(conn, declaration_id, *, position, reason, plate_quantity, plate_number, transit_license, owner_data, engine_number=None, ..., owner_relation=None, review_flags=None, customer_id=None, ownership_card_id=None)` | Inserts a card of the declaration and returns the `id`. |
+| `get_declaration(conn, declaration_id)` | `DeclarationRecord` or `None`. |
+| `list_declaration_cards(conn, declaration_id)` | The cards of a declaration, ordered by `position`. |
+| `list_cards_for_declarations(conn, declaration_ids)` | The cards of several declarations in a single query: `{declaration_id: [DeclarationCardRecord, ...]}` (for list screens, no N+1). |
+| `list_declarations(conn, *, status=None, query=None)` | `pending_review` first, then the newest. `query` searches (case-insensitive, with `%`/`_`/`\` literal) the declarant's name and document (and the linked gestor's) and, in **any** of the cards, plate, license, declared owner's name and document, and the linked customers/cards. |
+| `count_recent_by_ip(conn, ip, *, since)` | Declarations from that IP with `created_at >= since` (the form's per-IP limit). |
+| `set_declaration_review(conn, declaration_id, *, status, reviewed_by, note=None, gestor_id=None)` | Records the decision (`reviewed_at = now()`) and the `gestor_id`. It does not validate the previous state. |
+| `set_declaration_card_links(conn, declaration_card_id, *, customer_id, ownership_card_id)` | Links a card of the declaration to the owner and the ownership card created/linked on approval. |
+| `set_declaration_production_order(conn, declaration_id, production_order_id)` | Marks the declaration as served by an order (or `None` to clear it). It does not check the state: the caller does (`/ingest`). |
+| `list_declarations_by_production_order(conn, order_id)` | The declarations served by that order (`production_order_id`), ordered by `id`; `[]` if it has none. |
 
-`db/plates.py` suma `last_fabrication_date(conn, plate_number)`: solo lectura,
-la `order_date` más reciente de una placa con ese número exacto, **ignorando**
-placas `is_voided` o `is_plate_annulled`; `None` si nunca se fabricó.
+`db/plates.py` adds `last_fabrication_date(conn, plate_number)`: read-only,
+the most recent `order_date` of a plate with that exact number, **ignoring**
+`is_voided` or `is_plate_annulled` plates; `None` if it was never manufactured.
 
-### `declarations.py` (Fase 3 declaraciones)
+### `declarations.py` (Phase 3 declarations)
 
-Lógica de negocio sin Flask; recibe `conn` y nunca hace commit/rollback.
+Business logic without Flask; receives `conn` and never commits/rolls back.
 
-Modelo de entrada: `DeclarationInput(acting_as, declarant: PersonInput, cards:
-list[OwnershipCardInput], signature_file, ...)`, que además trae
-`accepted_data_policy: bool = False` y `accepts_marketing: bool | None = None`
-(autorización de tratamiento de datos de la Ley 1581 y SÍ/NO a información
-comercial; `submit_declaration` guarda `accepted_data_policy_at` y
-`accepts_marketing`). El texto legal de esa autorización está **una sola vez**
-en constantes de este módulo (`DATA_POLICY_TITLE`, `DATA_POLICY_PARAGRAPH_1`,
-`DATA_POLICY_PARAGRAPH_2` y `_PARTS`, `DATA_POLICY_EMAIL`, `DATA_POLICY_URL`,
-`MARKETING_STATEMENT`, `MARKETING_LINE`), que leen el formulario y el PDF;
-`parse_marketing_choice` convierte `SI`/`NO` del formulario en `True`/`False` y
-todo lo demás en `None`. Hay **un
-solo declarante** (el propietario/poseedor mismo, o un gestor) y **una sola
-firma**, que cubre todas las tarjetas. **No se sube ningún PDF con la
-declaración**: para una pérdida, el personal entrega la declaración como PDF,
-el cliente la autentica en una notaría y la trae de vuelta (flujo fuera del
-formulario), así que ningún motivo exige un archivo. Cada `OwnershipCardInput` trae sus
-campos de tarjeta, su `reason` (`DETERIORO` / `PÉRDIDA`), su `plate_quantity`
-(1..`normalize.max_plates_per_card`: 2 para carros, 1 para los demás; el total se
-deriva sumando) y, solo si el declarante es `GESTOR`, su propio `owner`
-(`PersonInput`) y `owner_relation` (`DUEÑO` / `POSEEDOR`). Si el declarante es
-propietario o poseedor, todas las tarjetas son suyas. Máximo `MAX_CARDS` = 30
-tarjetas por declaración.
+Input model: `DeclarationInput(acting_as, declarant: PersonInput, cards:
+list[OwnershipCardInput], signature_file, ...)`, which also carries
+`accepted_data_policy: bool = False` and `accepts_marketing: bool | None = None`
+(authorization for personal data processing under Law 1581 and YES/NO to
+commercial information; `submit_declaration` stores `accepted_data_policy_at` and
+`accepts_marketing`). The legal text of that authorization lives **only once**
+in constants of this module (`DATA_POLICY_TITLE`, `DATA_POLICY_PARAGRAPH_1`,
+`DATA_POLICY_PARAGRAPH_2` and `_PARTS`, `DATA_POLICY_EMAIL`, `DATA_POLICY_URL`,
+`MARKETING_STATEMENT`, `MARKETING_LINE`), which the form and the PDF read;
+`parse_marketing_choice` converts the form's `SI`/`NO` into `True`/`False` and
+everything else into `None`. There is **a
+single declarant** (the owner/holder themself, or a gestor) and **a single
+signature**, which covers all the cards. **No PDF is uploaded with the
+declaration**: for a loss, staff hand over the declaration as a PDF,
+the customer has it authenticated at a notary office and brings it back (a flow outside the
+form), so no reason requires a file. Each `OwnershipCardInput` carries its
+card fields, its `reason` (`DETERIORO` / `PÉRDIDA`), its `plate_quantity`
+(1..`normalize.max_plates_per_card`: 2 for cars, 1 for the rest; the total is
+derived by summing) and, only if the declarant is `GESTOR`, its own `owner`
+(`PersonInput`) and `owner_relation` (`DUEÑO` / `POSEEDOR`). If the declarant is
+the owner or holder, all the cards are theirs. Maximum `MAX_CARDS` = 30
+cards per declaration.
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `validate_declaration(inp)` | Lista de errores en español (vacía = válida): declarante (el nombre, de declarante o de dueño, no puede contener números, igual que "Solicitado por" en `/ingest`), firma única, términos, autorización de tratamiento de datos («Debe autorizar el tratamiento de datos personales.») y respuesta SÍ/NO a información comercial («Indique si autoriza el envío de información comercial.») siempre; 1..`MAX_CARDS` tarjetas; por tarjeta (con prefijo `Tarjeta N: `): obligatorios (incluido «Matriculado en» y las fotos frente/atrás de la tarjeta y la de la(s) placa(s) usada(s), sea el motivo `DETERIORO` o `PÉRDIDA`, salvo que la tarjeta traiga `plates_lost` («Perdí mis placas»); a nivel de declaración, las de la cédula), vocabulario con `normalize_choice`, placa con `validate_plate`, cantidad de placas dentro del rango del tipo, dueño y relación si es gestor; placa o licencia repetida dentro del envío. Una pérdida no exige ningún archivo adicional (la autenticación en notaría se hace por fuera). |
-| `submit_declaration(conn, inp, *, today=None)` | Calcula las alertas de cada tarjeta, guarda la declaración **siempre** en `pending_review` (con o sin alertas) y **no crea nada** (ni clientes, ni gestor, ni tarjetas de propiedad). Devuelve `SubmitResult(declaration_id, status, flags)`. `today` por defecto es la fecha de Bogotá. |
-| `approve_declaration(conn, id, reviewer_user_id, *, reassign_card_ids=(), note=None)` | Solo desde `pending_review` (el punto de venta la revisa). Aquí es donde se crean/enlazan el gestor (si lo hay) y, por **cada** tarjeta, su dueño y su tarjeta de propiedad; funciona igual con o sin alertas. `reassign_card_ids` son ids de `declaration_cards` cuya tarjeta existente es de otro cliente y se puede mover. Un cliente existente con tipo `NULL` pasa al tipo esperado; con otro tipo, `ValueError`. Tarjeta de otro dueño sin estar en `reassign_card_ids`: `ValueError`; licencia/placa que no cuadran: siempre `ValueError`. Un conflicto que apareció **después** del envío (la declaración se guardó sin alertas) se detecta aquí: `ValueError` claro y no cambia nada. Todo es verificado **antes** de escribir (todo o nada); los mensajes nombran la tarjeta y su placa. |
-| `reject_declaration(conn, id, reviewer_user_id, note)` | Marca `rejected` (nota obligatoria); no crea nada. |
+| `validate_declaration(inp)` | List of errors in Spanish (empty = valid): declarant (the name, of declarant or owner, cannot contain digits, same as "Solicitado por" in `/ingest`), single signature, terms, authorization for personal data processing («Debe autorizar el tratamiento de datos personales.») and YES/NO answer to commercial information («Indique si autoriza el envío de información comercial.») always; 1..`MAX_CARDS` cards; per card (prefixed with `Tarjeta N: `): required fields (including «Matriculado en» and the front/back photos of the card and that of the plate(s) used, whether the reason is `DETERIORO` or `PÉRDIDA`, unless the card carries `plates_lost` («Perdí mis placas»); at declaration level, those of the ID document), vocabulary with `normalize_choice`, plate with `validate_plate`, plate quantity within the type's range, owner and relation if gestor; plate or license repeated within the submission. A loss does not require any additional file (notary authentication happens outside). |
+| `submit_declaration(conn, inp, *, today=None)` | Computes the alerts of each card, stores the declaration **always** as `pending_review` (with or without alerts) and **creates nothing** (no customers, no gestor, no ownership cards). Returns `SubmitResult(declaration_id, status, flags)`. `today` defaults to the Bogotá date. |
+| `approve_declaration(conn, id, reviewer_user_id, *, reassign_card_ids=(), note=None)` | Only from `pending_review` (the point of sale reviews it). This is where the gestor (if any) and, for **each** card, its owner and its ownership card are created/linked; it works the same with or without alerts. `reassign_card_ids` are ids of `declaration_cards` whose existing card belongs to another customer and can be moved. An existing customer with `NULL` type is switched to the expected type; with another type, `ValueError`. A card of another owner not in `reassign_card_ids`: `ValueError`; license/plate that do not match: always `ValueError`. A conflict that appeared **after** submission (the declaration was saved without alerts) is detected here: a clear `ValueError` and nothing changes. Everything is verified **before** writing (all or nothing); the messages name the card and its plate. |
+| `reject_declaration(conn, id, reviewer_user_id, note)` | Marks `rejected` (note required); creates nothing. |
 
-Flujo: **todas las declaraciones llegan «Por revisar»**; el punto de venta las aprueba y solo entonces se crean el cliente y las tarjetas de propiedad. Las alertas (se evalúan **por tarjeta**) solo le indican al revisor qué mirar:
+Flow: **all declarations arrive as «Por revisar» (pending review)**; the point of sale approves them and only then are the customer and the ownership cards created. The alerts (evaluated **per card**) only tell the reviewer what to look at:
 
-| Situación al enviar | Resultado |
+| Situation on submission | Result |
 |---|---|
-| Cualquier alerta (`plate_made_recently`, `card_other_owner`, `card_data_mismatch`, `customer_type_mismatch`, `customer_document_mismatch`) en **alguna** tarjeta | Toda la declaración queda `pending_review`; **no se crea nada** (ni clientes, ni gestor, ni tarjetas); los enlaces quedan `NULL`. Cada tarjeta guarda sus alertas y `declarations.review_flags` es la unión. |
-| Sin alertas | También `pending_review`, con `review_flags` vacío; tampoco se crea nada. **No existe aprobación automática.** |
-| Al aprobar: dueños nuevos + tarjetas nuevas | `approved`; en la misma transacción se crean el GESTOR (si hay), los CLIENTES y las tarjetas. |
-| Al aprobar: el mismo dueño repetido en varias tarjetas (o en varias declaraciones) | Un **solo** cliente (se identifica por nombre canónico). |
-| Al aprobar: cliente existente (tipo `CLIENTE`) con otra tarjeta | `approved`; se enlaza el cliente sin modificarlo y se crea la tarjeta nueva. |
-| Al aprobar: mismo cliente, misma licencia y placa, pasados 6 meses | `approved`; se enlaza la tarjeta existente **sin modificarla** (los datos secundarios distintos solo quedan en `submitted_data`). |
-| Al aprobar: cliente/gestor existentes | Solo se enlazan, nunca se modifican. |
+| Any alert (`plate_made_recently`, `card_other_owner`, `card_data_mismatch`, `customer_type_mismatch`, `customer_document_mismatch`) on **any** card | The whole declaration stays `pending_review`; **nothing is created** (no customers, no gestor, no cards); the links stay `NULL`. Each card stores its alerts and `declarations.review_flags` is the union. |
+| No alerts | Also `pending_review`, with empty `review_flags`; nothing is created either. **There is no automatic approval.** |
+| On approval: new owners + new cards | `approved`; in the same transaction the GESTOR (if any), the CUSTOMERS and the cards are created. |
+| On approval: the same owner repeated across several cards (or several declarations) | A **single** customer (identified by canonical name). |
+| On approval: existing customer (type `CLIENTE`) with another card | `approved`; the customer is linked without modifying it and the new card is created. |
+| On approval: same customer, same license and plate, after 6 months | `approved`; the existing card is linked **without modifying it** (the differing secondary data stays only in `submitted_data`). |
+| On approval: existing customer/gestor | They are only linked, never modified. |
 
-`submitted_data` queda con la forma canónica `{"acting_as", "declarant",
-"cards": [{..., "owner", "owner_relation"}], "raw"}` (ver
+`submitted_data` ends up with the canonical shape `{"acting_as", "declarant",
+"cards": [{..., "owner", "owner_relation"}], "raw"}` (see
 [`DATABASE.md`](DATABASE.md)).
 
-**Privacidad:** `SubmitResult.flags` es solo para el personal y los logs. La capa
-web **nunca** debe mostrarlas al anónimo que envía (ni nada del dueño anterior o
-de la fecha de fabricación); solo "Recibimos tu declaración".
+**Privacy:** `SubmitResult.flags` is for staff and logs only. The web layer
+must **never** show them to the anonymous person submitting (nor anything about the previous owner or
+the manufacturing date); only "Recibimos tu declaración" (We received your declaration).
 
-### `db/users.py` (Fase 2)
+### `db/users.py` (Phase 2)
 
-Backend real del login — reemplaza los env vars `AUTH_USERS`/`AUTH_ROLES`.
+Real backend of the login — replaces the `AUTH_USERS`/`AUTH_ROLES` env vars.
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `get_user_by_username(conn, username)` | Usada por `app/web/auth.py::authenticate` en cada login. Devuelve la fila aunque `active=False` — es `authenticate` quien decide que un usuario inactivo no puede loguearse, no este lookup. |
-| `get_user_by_id(conn, user_id)` | Para `session["user_id"]` → `production_orders.created_by`, y para `current_user()` en cada request. |
-| `create_user(conn, *, username, password_hash, roles, active=True, assigned_by=None)` | Inserta el usuario y un renglón de `user_roles` por cada rol distinto (los repetidos se ignoran). Un rol inexistente lo rechaza la FK `user_roles_role_fkey` (`ForeignKeyViolation`). |
-| `list_users(conn)` | Todos los usuarios, por `id`. |
-| `list_users_with_role(conn, role)` | Los usuarios (activos o no) que tienen ese rol, por `id`. |
-| `update_user(conn, user_id, *, active)` | Cambia solo el estado activo. `False` si no existe el usuario. |
-| `set_user_roles(conn, user_id, roles, *, assigned_by=None)` | **Reemplaza** el conjunto de roles: borra los que no están en `roles` e inserta los que faltan con `assigned_by`; los que se quedan conservan su `assigned_at`. `False` sin escribir nada si no existe el usuario. |
-| `assign_role(conn, user_id, role, *, assigned_by=None)` | Agrega un rol. `True` si agregó el renglón, `False` si el usuario ya lo tenía. |
-| `unassign_role(conn, user_id, role)` | Quita un rol. `True` si borró el renglón. |
-| `get_user_permissions(conn, user_id)` | La unión de los códigos guardados en `role_permissions` para todos los roles del usuario, en una sola consulta (`frozenset`). No aplica `effective_permissions`: eso lo hace quien llama (`current_user()`). |
-| `set_user_password(conn, user_id, password_hash)` | Reemplaza el hash (formato werkzeug, lo calcula quien llama). `False` si no existe el usuario. |
-| `count_active_users_with_role(conn, role)` | Cuántos usuarios **activos** tienen ese rol en `user_roles` — para que una futura pantalla de gestión no deje sin ningún admin activo. |
+| `get_user_by_username(conn, username)` | Used by `app/web/auth.py::authenticate` on every login. Returns the row even if `active=False` — it is `authenticate` that decides that an inactive user cannot log in, not this lookup. |
+| `get_user_by_id(conn, user_id)` | For `session["user_id"]` → `production_orders.created_by`, and for `current_user()` on every request. |
+| `create_user(conn, *, username, password_hash, roles, active=True, assigned_by=None)` | Inserts the user and one `user_roles` row for each distinct role (repeats are ignored). A nonexistent role is rejected by the `user_roles_role_fkey` FK (`ForeignKeyViolation`). |
+| `list_users(conn)` | All users, by `id`. |
+| `list_users_with_role(conn, role)` | The users (active or not) that have that role, by `id`. |
+| `update_user(conn, user_id, *, active)` | Changes only the active state. `False` if the user does not exist. |
+| `set_user_roles(conn, user_id, roles, *, assigned_by=None)` | **Replaces** the set of roles: deletes those not in `roles` and inserts the missing ones with `assigned_by`; those that stay keep their `assigned_at`. `False` without writing anything if the user does not exist. |
+| `assign_role(conn, user_id, role, *, assigned_by=None)` | Adds a role. `True` if it added the row, `False` if the user already had it. |
+| `unassign_role(conn, user_id, role)` | Removes a role. `True` if it deleted the row. |
+| `get_user_permissions(conn, user_id)` | The union of the codes stored in `role_permissions` for all the user's roles, in a single query (`frozenset`). It does not apply `effective_permissions`: the caller does (`current_user()`). |
+| `set_user_password(conn, user_id, password_hash)` | Replaces the hash (werkzeug format, computed by the caller). `False` if the user does not exist. |
+| `count_active_users_with_role(conn, role)` | How many **active** users have that role in `user_roles` — so that a future management screen does not leave the system without any active admin. |
 
-`UserRecord` trae `roles`, los nombres de los roles del usuario en orden
-alfabético (lista vacía si no tiene ninguno), y `created_at` (default
-`None`, para no romper a quien lo construya a mano). Las funciones de
-escritura de roles todavía no las usa ninguna ruta: son para la futura
-pantalla de gestión de usuarios.
+`UserRecord` carries `roles`, the names of the user's roles in alphabetical
+order (empty list if none), and `created_at` (default
+`None`, so as not to break anyone constructing it by hand). The role write
+functions are not yet used by any route: they are for the future
+user management screen.
 
-### `permissions.py` (catálogo de permisos)
+### `permissions.py` (permission catalog)
 
-Python puro, sin Flask ni base de datos. `PERMISSIONS` es la tupla ordenada
-de los 13 pares `(código, etiqueta)`: el código es un identificador en
-inglés (`orders.capture`, `records.view`, `users.manage`, ...) que se guarda
-en `role_permissions.permission`, y la etiqueta es el texto en español que
-verá el personal. `PERMISSION_CODES` es el `frozenset` de esos códigos y
-`ADMIN_ROLE = "admin"`. El catálogo tiene un espejo en la tabla
-`permissions` (mismos códigos, etiquetas y orden; ver
-[`DATABASE.md`](DATABASE.md)) y un test exige que sean idénticos: agregar un
-código requiere una migración nueva y una entrada en la tupla.
+Pure Python, no Flask or database. `PERMISSIONS` is the ordered tuple
+of the 13 `(code, label)` pairs: the code is an English identifier
+(`orders.capture`, `records.view`, `users.manage`, ...) stored
+in `role_permissions.permission`, and the label is the Spanish text
+that staff will see. `PERMISSION_CODES` is the `frozenset` of those codes and
+`ADMIN_ROLE = "admin"`. The catalog has a mirror in the `permissions`
+table (same codes, labels and order; see
+[`DATABASE.md`](DATABASE.md)) and a test requires them to be identical: adding a
+code requires a new migration and an entry in the tuple.
 
-`effective_permissions(roles, stored)` devuelve los permisos reales de un
-usuario con esos roles: si `ADMIN_ROLE` está entre ellos, siempre los 13
-códigos (sin importar lo que haya guardado, así ningún admin queda sin
-acceso a un permiso nuevo); si no, los códigos guardados que siguen
-existiendo en el catálogo (los desconocidos se descartan). `stored` es la
-unión de los códigos de `role_permissions` de todos los roles del usuario
-(`db.get_user_permissions`). `app/web/auth.py` lo aplica en cada request:
-cada ruta protegida pide un código con `@permission_required` (ver
+`effective_permissions(roles, stored)` returns the real permissions of a
+user with those roles: if `ADMIN_ROLE` is among them, always all 13
+codes (regardless of what is stored, so no admin is left without
+access to a new permission); otherwise, the stored codes that still
+exist in the catalog (unknown ones are discarded). `stored` is the
+union of the `role_permissions` codes of all the user's roles
+(`db.get_user_permissions`). `app/web/auth.py` applies it on every request:
+each protected route asks for a code with `@permission_required` (see
 [`WEB.md`](WEB.md)).
 
 ### `db/roles.py`
 
-Lectura/escritura de `roles` y `role_permissions`, y lectura de
-`permissions` (ver [`DATABASE.md`](DATABASE.md)). `get_role_permissions` lee
-los códigos de un solo rol (para el acceso en cada request, `app/web/auth.py`
-usa `db.get_user_permissions`, la unión de todos los roles del usuario); las
-escrituras y `list_permissions` son para una futura pantalla de gestión de
-roles. El catálogo `permissions.PERMISSIONS` tiene un espejo en la tabla
-`permissions`. Los códigos de permiso se validan contra
-`permissions.PERMISSION_CODES` en Python antes de escribir, lo que da un
-`ValueError` claro, y además los exige la FK
-`role_permissions_permission_fkey` (migración `0017`). No protege los roles del
-sistema ni al último admin activo: eso lo decidirá la pantalla de gestión
-con `is_system` y `count_active_users_with_role`.
+Read/write of `roles` and `role_permissions`, and read of
+`permissions` (see [`DATABASE.md`](DATABASE.md)). `get_role_permissions` reads
+the codes of a single role (for per-request access, `app/web/auth.py`
+uses `db.get_user_permissions`, the union of all the user's roles); the
+writes and `list_permissions` are for a future role management
+screen. The `permissions.PERMISSIONS` catalog has a mirror in the `permissions`
+table. Permission codes are validated against
+`permissions.PERMISSION_CODES` in Python before writing, which gives a clear
+`ValueError`, and are also enforced by the FK
+`role_permissions_permission_fkey` (migration `0017`). It does not protect the system roles
+nor the last active admin: the management screen will decide that
+with `is_system` and `count_active_users_with_role`.
 
 `RoleRecord(name, label, is_system, permissions, user_count)`:
-`permissions` son los códigos guardados en orden alfabético y `user_count`
-cuenta todos los usuarios que tienen ese rol en `user_roles`, activos o no.
-`PermissionRecord(code, label)`: un renglón de `permissions`, un código del
-catálogo y su etiqueta en español.
+`permissions` are the stored codes in alphabetical order and `user_count`
+counts all users that have that role in `user_roles`, active or not.
+`PermissionRecord(code, label)`: a row of `permissions`, a code of the
+catalog and its Spanish label.
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `list_roles(conn)` | Todos los roles: primero los del sistema, luego por `label`. |
-| `list_permissions(conn)` | Todo el catálogo de `permissions` como `PermissionRecord`, en el orden de `sort_order` (el de `PERMISSIONS`). |
-| `get_role(conn, name)` | `RoleRecord` o `None`. |
-| `get_role_permissions(conn, name)` | Los códigos guardados (`frozenset`, vacío si el rol no existe). No aplica `effective_permissions`: eso lo hace quien llama. |
-| `create_role(conn, *, name, label, permissions)` | Inserta un rol no-sistema y sus permisos. `ValueError` antes de escribir si algún código no está en el catálogo; un `name` o `label` repetido levanta `UniqueViolation` (sin pre-chequeo). |
-| `update_role(conn, name, *, label, permissions)` | Cambia la etiqueta y **reemplaza** (no mezcla) los permisos. Misma validación `ValueError`; `False` sin escribir nada si el rol no existe. |
-| `delete_role(conn, name)` | Borra el rol y, en cascada, sus permisos. `False` si no existía. Si algún usuario todavía lo tiene, la FK `user_roles_role_fkey` levanta `ForeignKeyViolation` (sin pre-chequeo). |
+| `list_roles(conn)` | All roles: system ones first, then by `label`. |
+| `list_permissions(conn)` | The whole `permissions` catalog as `PermissionRecord`, in `sort_order` order (that of `PERMISSIONS`). |
+| `get_role(conn, name)` | `RoleRecord` or `None`. |
+| `get_role_permissions(conn, name)` | The stored codes (`frozenset`, empty if the role does not exist). It does not apply `effective_permissions`: the caller does. |
+| `create_role(conn, *, name, label, permissions)` | Inserts a non-system role and its permissions. `ValueError` before writing if any code is not in the catalog; a repeated `name` or `label` raises `UniqueViolation` (no pre-check). |
+| `update_role(conn, name, *, label, permissions)` | Changes the label and **replaces** (does not merge) the permissions. Same `ValueError` validation; `False` without writing anything if the role does not exist. |
+| `delete_role(conn, name)` | Deletes the role and, in cascade, its permissions. `False` if it did not exist. If any user still has it, the FK `user_roles_role_fkey` raises `ForeignKeyViolation` (no pre-check). |
 
-### `db/production.py` (estado de producción)
+### `db/production.py` (production status)
 
-Solo la capa de datos del estado de producción de las órdenes
-(`production_orders.production_status` y `production_order_events`, ver
-[`DATABASE.md`](DATABASE.md)); las reglas de transición están en
-`production.py` (más abajo). Nunca hace commit. Constantes: `STATUS_PENDING`,
+Data layer only for the production status of orders
+(`production_orders.production_status` and `production_order_events`, see
+[`DATABASE.md`](DATABASE.md)); the transition rules are in
+`production.py` (below). It never commits. Constants: `STATUS_PENDING`,
 `STATUS_IN_PROGRESS`, `STATUS_READY`, `STATUS_DELIVERED`,
-`PRODUCTION_STATUSES` (los cuatro, en ese orden) y `ACTIVE_STATUSES` (los tres
-primeros: lo que sigue en el taller). Registros: `ProductionOrderSummary` (una
-orden tal como la lista el tablero: `plate_count` suma `quantity` de las placas
-no anuladas, `plates` se arma igual que `OrderSummary.plates`,
-`declaration_ids` son las declaraciones atendidas por la orden y
-`status_changed_at` es el último evento o, si no hay, el `created_at` de la
-orden) y `ProductionEvent` (`from_status`, `to_status`, `username`,
+`PRODUCTION_STATUSES` (all four, in that order) and `ACTIVE_STATUSES` (the first
+three: what is still in the workshop). Records: `ProductionOrderSummary` (an
+order as the board lists it: `plate_count` sums `quantity` of the
+non-annulled plates, `plates` is built the same as `OrderSummary.plates`,
+`declaration_ids` are the declarations served by the order and
+`status_changed_at` is the last event or, if there is none, the order's
+`created_at`) and `ProductionEvent` (`from_status`, `to_status`, `username`,
 `created_at`).
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `list_production_orders(conn, *, status, query=None, limit=200)` | Órdenes para el tablero, sin las que tienen **todas** sus placas `is_voided` (una orden sin placas sí aparece). `status=None` = todas. `query` (si no está en blanco) busca parcial, sin mayúsculas, en `order_number` o en cualquier placa de la orden, limpiada con `normalize.clean_plate` (`"abc 123"` encuentra `ABC123`). Los estados activos salen de la más vieja a la más nueva (`order_date`, `id`); `delivered` y "todas", de la más nueva a la más vieja. |
-| `count_by_production_status(conn)` | `{estado: cantidad}` con las cuatro claves siempre (0 si no hay), con la misma exclusión de órdenes totalmente anuladas. |
-| `get_production_status(conn, order_id)` | El estado, o `None` si la orden no existe. |
-| `set_production_status(conn, order_id, *, from_status, to_status, user_id)` | `UPDATE ... WHERE id = %s AND production_status = from_status`: solo si cambió exactamente una fila inserta el evento y devuelve `True`; si no, no escribe nada y devuelve `False`. |
-| `list_production_events(conn, order_id)` | El historial de la orden, del más viejo al más nuevo; `username` es `None` si el evento no tiene usuario. |
-| `production_statuses_for_orders(conn, order_ids)` | `{order_id: estado}` en una sola consulta; `{}` sin consultar si la lista está vacía. |
+| `list_production_orders(conn, *, status, query=None, limit=200)` | Orders for the board, excluding those whose plates are **all** `is_voided` (an order with no plates does appear). `status=None` = all. `query` (if not blank) searches partially, case-insensitive, in `order_number` or in any plate of the order, cleaned with `normalize.clean_plate` (`"abc 123"` finds `ABC123`). Active statuses come out oldest to newest (`order_date`, `id`); `delivered` and "all", newest to oldest. |
+| `count_by_production_status(conn)` | `{status: count}` with all four keys always (0 if none), with the same exclusion of fully annulled orders. |
+| `get_production_status(conn, order_id)` | The status, or `None` if the order does not exist. |
+| `set_production_status(conn, order_id, *, from_status, to_status, user_id)` | `UPDATE ... WHERE id = %s AND production_status = from_status`: only if exactly one row changed it inserts the event and returns `True`; otherwise it writes nothing and returns `False`. |
+| `list_production_events(conn, order_id)` | The order's history, oldest to newest; `username` is `None` if the event has no user. |
+| `production_statuses_for_orders(conn, order_ids)` | `{order_id: status}` in a single query; `{}` without querying if the list is empty. |
 
-### `production.py` (reglas del estado de producción)
+### `production.py` (production status rules)
 
-Lógica de negocio sin Flask; recibe `conn` y nunca hace commit/rollback. Una
-orden avanza un paso a la vez: `pending` → `in_progress` → `ready` →
-`delivered`. `next_status(status)` / `previous_status(status)` siguen
-`PRODUCTION_STATUSES` y devuelven `None` pasado cualquiera de los extremos o
-para un estado desconocido.
+Business logic without Flask; receives `conn` and never commits/rolls back. An
+order advances one step at a time: `pending` → `in_progress` → `ready` →
+`delivered`. `next_status(status)` / `previous_status(status)` follow
+`PRODUCTION_STATUSES` and return `None` past either end or
+for an unknown status.
 
-`advance_order(conn, order_id, user_id, *, expected_status)` avanza un paso y
-devuelve el estado nuevo; `revert_order(...)`, con la misma firma, retrocede un
-paso (deshacer), también desde `delivered` a `ready` para corregir una entrega
-marcada por error. Ambas levantan `ValueError` con el mensaje para el personal,
-en este orden, y sin cambiar nada:
+`advance_order(conn, order_id, user_id, *, expected_status)` advances one step and
+returns the new status; `revert_order(...)`, with the same signature, goes back one
+step (undo), also from `delivered` to `ready` to correct a delivery
+marked by mistake. Both raise `ValueError` with the message for staff,
+in this order, and without changing anything:
 
-1. La orden no existe: `"La orden no existe."`
-2. Solo `advance_order`, con `expected_status == "delivered"`: `"La orden ya fue entregada."`
-   Solo `revert_order`, con `expected_status == "pending"`: `"La orden todavía no ha empezado."`
-3. El estado actual ya no es `expected_status`, o la actualización condicional
-   no cambió ninguna fila: `"El estado de la orden cambió mientras tanto. Revisa el estado actual e inténtalo de nuevo."`
+1. The order does not exist: `"La orden no existe."`
+2. Only `advance_order`, with `expected_status == "delivered"`: `"La orden ya fue entregada."`
+   Only `revert_order`, with `expected_status == "pending"`: `"La orden todavía no ha empezado."`
+3. The current status is no longer `expected_status`, or the conditional update
+   changed no row: `"El estado de la orden cambió mientras tanto. Revisa el estado actual e inténtalo de nuevo."`
 
-**Concurrencia optimista**: `expected_status` es el estado que la persona
-vio en pantalla. El cambio solo ocurre si la orden sigue en ese estado (se
-revisa al leer y se vuelve a exigir en el `UPDATE` condicional de
-`set_production_status`), así que dos personas que hacen clic a la vez nunca
-mueven la orden dos pasos: la segunda recibe el mensaje "cambió mientras
-tanto". **Sin roles**: estas funciones no reciben rol ni permiso; quién puede
-hacer cada transición (producción mueve todos los pasos, el punto de venta
-también puede marcar `ready` → `delivered`) lo decide la capa web.
+**Optimistic concurrency**: `expected_status` is the status the person
+saw on screen. The change only happens if the order is still in that status (it is
+checked on read and enforced again in the conditional `UPDATE` of
+`set_production_status`), so two people clicking at the same time never
+move the order two steps: the second one gets the "cambió mientras
+tanto" (changed in the meantime) message. **No roles**: these functions take no role or permission; who can
+make each transition (production moves all steps, the point of sale
+can also mark `ready` → `delivered`) is decided by the web layer.
 
-### `db/pricing.py` (Fase 2)
+### `db/pricing.py` (Phase 2)
 
-Tarifas sugeridas por tipo de placa (`plate_type_prices`) — ver
-[`DATABASE.md`](DATABASE.md) para la advertencia de namespace
-(`plate_type`, 7 valores, nunca `inventory_categories.category`, 3
-valores).
+Suggested rates per plate type (`plate_type_prices`) — see
+[`DATABASE.md`](DATABASE.md) for the namespace warning
+(`plate_type`, 7 values, never `inventory_categories.category`, 3
+values).
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `current_prices(conn) -> dict[str, Decimal]` | `{plate_type: unit_price}` solo para los tipos que YA tienen fila — un tipo sin tarifa configurada simplemente no aparece (nunca un `0`). Consumida por `ingestion.py` (snapshot al insertar) y `db/plates.py` (re-snapshot al editar). |
-| `price_list(conn) -> list[PriceRow]` | Una fila por cada `normalize.PLATE_TYPES`, en ese orden — un tipo sin tarifa aparece igual, con `unit_price=None` ("sin tarifa"). Consumida por `/precios`. |
-| `set_price(conn, plate_type, unit_price, updated_by)` | Valida `plate_type` contra `normalize.PLATE_TYPES` en Python (mensaje en español antes de llegar a la FK real de la Fase 1b) y hace `INSERT ... ON CONFLICT (plate_type) DO UPDATE` — funciona igual si la fila existe o no, porque la tabla arranca vacía a propósito. |
+| `current_prices(conn) -> dict[str, Decimal]` | `{plate_type: unit_price}` only for the types that ALREADY have a row — a type with no configured rate simply does not appear (never a `0`). Consumed by `ingestion.py` (snapshot on insert) and `db/plates.py` (re-snapshot on edit). |
+| `price_list(conn) -> list[PriceRow]` | One row for each `normalize.PLATE_TYPES`, in that order — a type with no rate appears anyway, with `unit_price=None` ("sin tarifa", no rate). Consumed by `/precios`. |
+| `set_price(conn, plate_type, unit_price, updated_by)` | Validates `plate_type` against `normalize.PLATE_TYPES` in Python (message in Spanish before reaching the real FK of Phase 1b) and does `INSERT ... ON CONFLICT (plate_type) DO UPDATE` — it works the same whether the row exists or not, because the table starts empty on purpose. |
 
-### `cash_summary.py` (Fase 5b)
+### `cash_summary.py` (Phase 5b)
 
-La única lógica de negocio de `app/core/` que **no** vive en `db/*.py` —
-tiene reglas propias más allá de CRUD (agrupación, exclusiones, "nunca
-convertir un precio faltante en 0"), suficiente para justificar su propio
-módulo de orquestación, per el plan. Sigue el mismo contrato de conexión
-que `db/*` (recibe `conn` abierto, nunca comitea).
+The only business logic in `app/core/` that does **not** live in `db/*.py` —
+it has its own rules beyond CRUD (grouping, exclusions, "never
+turn a missing price into 0"), enough to justify its own
+orchestration module, per the plan. It follows the same connection contract
+as `db/*` (receives an open `conn`, never commits).
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `build_cash_summary(conn, *, desde, hasta) -> CashSummary` | Agrega `plates JOIN production_orders` en `[desde, hasta]` (ambos inclusive), agrupado siempre por `order_date` y luego por `payment_method` (`COALESCE(..., 'SIN FORMA DE PAGO')` — casi toda orden histórica tiene esto en `NULL`, sin el bucket explícito un `GROUP BY` las escondería). Excluye `is_voided`/`is_plate_annulled` de todo total. Una placa con `unit_price IS NULL` **nunca** se cuenta como `0` — Postgres `SUM()` ya la salta del total, y aparte se devuelve completa (orden + tipo de placa) en `CashSummary.missing_price`, para que se vea como aviso explícito, nunca como plata perdida en silencio. |
-| `render_cash_summary_pdf(summary, *, desde, hasta) -> bytes` | Mismo `reportlab` (`SimpleDocTemplate`/`Table`/`TableStyle`, tamaño `letter`) que ya usa `tests/pdf_fixtures.py` para los PDFs sintéticos de test — una tabla de totales simple, sin logos ni gráficos, para que PTO.V la imprima y se la lleve al admin. |
+| `build_cash_summary(conn, *, desde, hasta) -> CashSummary` | Aggregates `plates JOIN production_orders` in `[desde, hasta]` (both inclusive), always grouped by `order_date` and then by `payment_method` (`COALESCE(..., 'SIN FORMA DE PAGO')` — almost every historical order has this as `NULL`; without the explicit bucket a `GROUP BY` would hide them). Excludes `is_voided`/`is_plate_annulled` from every total. A plate with `unit_price IS NULL` is **never** counted as `0` — Postgres `SUM()` already skips it in the total, and in addition it is returned in full (order + plate type) in `CashSummary.missing_price`, so that it shows up as an explicit warning, never as silently lost money. |
+| `render_cash_summary_pdf(summary, *, desde, hasta) -> bytes` | The same `reportlab` (`SimpleDocTemplate`/`Table`/`TableStyle`, `letter` size) already used by `tests/pdf_fixtures.py` for the synthetic test PDFs — a simple totals table, no logos or charts, so that PTO.V can print it and take it to the admin. |
 
-Dinero (`Decimal`) de punta a punta, nunca mezclado con `float` — ver
-[`DATABASE.md`](DATABASE.md) para las columnas `NUMERIC` involucradas.
+Money (`Decimal`) from end to end, never mixed with `float` — see
+[`DATABASE.md`](DATABASE.md) for the `NUMERIC` columns involved.
 
-### `timezones.py` (hora de Colombia)
+### `timezones.py` (Colombian time)
 
-Los contenedores y PostgreSQL corren en UTC y las columnas son `TIMESTAMP` sin
-zona, así que **toda marca de tiempo guardada es UTC**. Se guarda en UTC y se
-convierte solo al mostrarla: `to_bogota` (PDF) y el filtro de Jinja `bogota`
-(`format_bogota`, en las pantallas). `utc_now()` da la hora tal como se guarda.
-Las fechas de negocio (`order_date` y demás columnas `DATE`) no se convierten.
+The containers and PostgreSQL run in UTC and the columns are `TIMESTAMP` without
+time zone, so **every stored timestamp is UTC**. It is stored in UTC and
+converted only when displayed: `to_bogota` (PDF) and the Jinja filter `bogota`
+(`format_bogota`, on screens). `utc_now()` gives the time as it is stored.
+Business dates (`order_date` and other `DATE` columns) are not converted.
 
-### `declaration_pdf.py` (declaración juramentada en PDF)
+### `declaration_pdf.py` (sworn declaration as PDF)
 
-Función pura (sin Flask ni DB) que genera, con `reportlab`, la declaración
-juramentada tal como la envió el cliente, para que —cuando algún motivo es
-PÉRDIDA— el personal se la entregue y el cliente la lleve a autenticar en
-Notaría. La ruta de descarga la llama; este módulo no toca la base de datos.
+Pure function (no Flask or DB) that generates, with `reportlab`, the sworn
+declaration as the customer submitted it, so that —when any reason is
+PÉRDIDA— staff hand it over and the customer takes it to be authenticated at a
+notary office. The download route calls it; this module does not touch the database.
 
-| Función | Qué hace |
+| Function | What it does |
 |---|---|
-| `build_declaration_pdf(*, declaration, cards, signature_png, issued_at) -> bytes` | PDF tamaño carta: encabezado INGSE, número y fecha, calidad en la que actúa (PROPIETARIO / POSEEDOR / GESTOR), datos del declarante (de `submitted_data["declarant"]`), un bloque por tarjeta de propiedad (con el propietario de cada una si es GESTOR), los textos legales, la sección 7 «Autorización de tratamiento de datos personales» (texto de `app/core/declarations.py`, fecha de aceptación y `[X] SÍ / [ ] NO` según `accepts_marketing`; **solo** si `accepted_data_policy_at` no es NULL), la firma del declarante (sección 8, o «7. FIRMA» sin autorización registrada: las declaraciones anteriores se imprimen igual que antes) con su nombre y documento, y un recuadro en blanco para la autenticación notarial. Pie "Declaración N° X — página i de n" en todas las páginas; el bloque de firma no se parte entre páginas. Si `signature_png` es `None` o no se puede leer, se omite la imagen y queda el espacio para firmar a mano. |
+| `build_declaration_pdf(*, declaration, cards, signature_png, issued_at) -> bytes` | Letter-size PDF: INGSE header, number and date, capacity in which the person acts (PROPIETARIO / POSEEDOR / GESTOR), declarant data (from `submitted_data["declarant"]`), one block per ownership card (with each one's owner if GESTOR), the legal texts, section 7 «Autorización de tratamiento de datos personales» (text from `app/core/declarations.py`, acceptance date and `[X] SÍ / [ ] NO` according to `accepts_marketing`; **only** if `accepted_data_policy_at` is not NULL), the declarant's signature (section 8, or «7. FIRMA» with no recorded authorization: earlier declarations are printed the same as before) with their name and document, and a blank box for the notarial authentication. Footer "Declaración N° X — página i de n" on every page; the signature block is not split across pages. If `signature_png` is `None` or cannot be read, the image is omitted and the space is left for signing by hand. |
 
-Notas: todo texto del usuario se escapa (el `Paragraph` de reportlab
-interpreta marcado) y se reduce a caracteres que las fuentes estándar pueden
-imprimir. Los textos legales son una copia de la sección legal de
-`app/web/templates/declaration.html` (misma numeración, porque la cláusula
-4(b) cita "la sección 3"); `tests/core/test_declaration_pdf.py` falla si
-alguna de las dos se modifica sin la otra. La salida es determinista
+Notes: all user text is escaped (reportlab's `Paragraph`
+interprets markup) and reduced to characters the standard fonts can
+print. The legal texts are a copy of the legal section of
+`app/web/templates/declaration.html` (same numbering, because clause
+4(b) cites "la sección 3"); `tests/core/test_declaration_pdf.py` fails if
+either one is modified without the other. The output is deterministic
 (`invariant=True`).

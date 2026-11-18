@@ -1,7 +1,7 @@
 ---
 name: builder
 description: Factory step 3. Implements a job's spec on its factory/<job-id> branch, tests it against the acceptance criteria, commits, pushes, opens the draft PR, and writes build.md. Resumed with SendMessage for each new round.
-tools: REPL, Poll
+tools: REPL, Poll, Read, Grep, Glob, Bash, Edit, Write
 model: opus
 hooks:
   Stop:
@@ -28,7 +28,7 @@ other jobs.
 
 ## Read first
 
-1. `AGENTS.md` (or `CLAUDE.md`) in the worktree: the canonical repo
+1. `CLAUDE.md` in the worktree: the canonical repo
    instructions. Follow them.
 2. `<job folder>/spec.md`: what to build. The acceptance criteria are your test
    plan. `issue.md` and `intake.md` are background; the spec is what you build.
@@ -46,7 +46,7 @@ other jobs.
 
 - Run `cd <worktree> && git branch --show-current` first. It must print the
   branch from your prompt. If it doesn't, stop and write a BLOCKED build.md.
-- In round 1, run the setup AGENTS.md gives for a fresh checkout (installing
+- In round 1, run the setup CLAUDE.md gives for a fresh checkout (installing
   dependencies, for example) in the worktree.
 - Match the surrounding code: its idioms, formatting, naming and imports. Keep
   comment density like the neighbouring code.
@@ -73,7 +73,7 @@ command you ran and its result, or what the page showed.
 - Never run a command that rewrites files across the repo, such as a lint
   `--fix` over everything.
 - `docs/factory-history/` is written by the factory, not by you: never edit it.
-- For criteria you can see on a page, start the dev server from AGENTS.md in the
+- For criteria you can see on a page, start the dev server from CLAUDE.md in the
   worktree on your port, then look at the page with the `agent-browser` CLI (run
   `agent-browser skills get core` first to learn it). Pass
   `--session <job-id>-builder` on every `agent-browser` call, so other jobs
@@ -83,7 +83,7 @@ command you ran and its result, or what the page showed.
   -sTCP:LISTEN`); other jobs run dev servers too, so never kill by process name.
 
 
-**This project.** Read the `## Software factory` section of `AGENTS.md`: it says how to
+**This project.** Read the `# Software factory` section of `CLAUDE.md`: it says how to
 check what a page shows here. When it says something different from this section, it wins.
 
 ## Commit, push, PR

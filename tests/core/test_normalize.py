@@ -597,7 +597,7 @@ class TestNormalizeRow:
 
 class TestPosVocabularies:
     """Pin down the exact values (and spelling fixes) confirmed with the user
-    in PLAN_ARQUITECTURA_Y_POS.md -- these are load-bearing business data,
+    in ARCHITECTURE_AND_POS_PLAN.md -- these are load-bearing business data,
     not just arbitrary constants."""
 
     def test_receipt_types(self):

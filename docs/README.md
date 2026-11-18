@@ -1,34 +1,35 @@
-# Documentación de referencia — plates
+# Reference documentation — plates
 
-Plates es la app de producción y punto de venta de placas vehiculares de
-INGSE (Colombia), que reemplaza un flujo antes basado en Excel. Los permisos
-se asignan por rol y los roles se administran en `/usuarios`: `admin` tiene
-siempre todos los permisos y cada otro rol tiene solo los que se le asignan.
-El flujo de producción va de la declaración juramentada del cliente al
-pedido que crea el punto de venta, y de ahí *Por realizar* → *En
-realización* → *Lista para entregar* → *Entregada*.
+Plates is INGSE's (Colombia) production and point-of-sale app for vehicle
+license plates, replacing a workflow that used to be based on Excel.
+Permissions are assigned by role and roles are managed at `/usuarios`:
+`admin` always has all permissions and every other role has only the ones
+assigned to it. The production flow goes from the customer's sworn
+declaration to the order created by the point of sale, and from there
+*Por realizar* → *En realización* → *Lista para entregar* → *Entregada*
+(to do → in progress → ready for delivery → delivered).
 
-Esta carpeta es documentación **técnica de referencia** — para entender
-cómo funciona el sistema por dentro. Cómo desplegarlo, configurar auth o
-levantar el entorno local está en el [`README.md`](../README.md) raíz; acá
-no se repite.
+This folder holds **technical reference** documentation — to understand how
+the system works internally. How to deploy it, configure auth or bring up
+the local environment is covered in the root [`README.md`](../README.md);
+it is not repeated here.
 
-## Mapa de documentos
+## Document map
 
-| Documento | Qué cubre |
+| Document | What it covers |
 |---|---|
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Componentes, despliegue (Docker/redes), pipeline CI/CD |
-| [`DATABASE.md`](DATABASE.md) | Esquema completo, diagrama ER, columnas, rarezas de datos |
-| [`CORE.md`](CORE.md) | `app/core/`: normalización, extracción de PDF, pipeline de ingesta |
-| [`WEB.md`](WEB.md) | `app/web/`: rutas, roles/permisos, templates, flujos completos |
-| [`PRODUCTION.md`](PRODUCTION.md) | Pantalla de Producción: flujo de una orden hasta la entrega, estados, permisos y rutas |
-| [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md) | Gotchas de infra local, testing, variables de entorno |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Components, deployment (Docker/networks), CI/CD pipeline |
+| [`DATABASE.md`](DATABASE.md) | Full schema, ER diagram, columns, data quirks |
+| [`CORE.md`](CORE.md) | `app/core/`: normalization, PDF extraction, ingestion pipeline |
+| [`WEB.md`](WEB.md) | `app/web/`: routes, roles/permissions, templates, complete flows |
+| [`PRODUCTION.md`](PRODUCTION.md) | Production screen: an order's flow through to delivery, states, permissions and routes |
+| [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md) | Local infra gotchas, testing, environment variables |
 
-## Vista general del sistema
+## System overview
 
 ```mermaid
 flowchart LR
-    subgraph Usuarios["Usuarios (por rol)"]
+    subgraph Usuarios["Users (by role)"]
         A[admin]
         PV[point_of_sale]
         P[production]
@@ -41,10 +42,10 @@ flowchart LR
     A -- login --> WEB
     PV -- login --> WEB
     P -- login --> WEB
-    GH["GitHub Actions<br/>(push a main)"] -- "SSH deploy" --> VPS
-    WEB -.->|"red edge compartida"| INF["stack 'informes'<br/>(otro proyecto, mismo VPS)"]
+    GH["GitHub Actions<br/>(push to main)"] -- "SSH deploy" --> VPS
+    WEB -.->|"shared edge network"| INF["stack 'informes'<br/>(another project, same VPS)"]
 ```
 
-Ver [`ARCHITECTURE.md`](ARCHITECTURE.md) para el detalle de componentes y
-de despliegue, incluido un incidente real de producción que motivó parte
-del diseño actual.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the details of the components
+and deployment, including a real production incident that motivated part
+of the current design.

@@ -1,37 +1,37 @@
-# Producción
+# Production
 
-La pantalla **Producción** (`/produccion`) es donde el equipo de producción ve
-todas las órdenes que creó el punto de venta y las lleva hasta la entrega.
-Las reglas de negocio están en `app/core/production.py` (sin Flask) y la capa
-de datos en `app/core/db/production.py`; la pantalla está en
-`app/web/blueprints/production.py` con las plantillas `production.html` y
+The **Producción** screen (`/produccion`) is where the production team sees
+all the orders created by the point of sale and takes them through to
+delivery. The business rules are in `app/core/production.py` (no Flask) and
+the data layer in `app/core/db/production.py`; the screen is in
+`app/web/blueprints/production.py` with the templates `production.html` and
 `production_detail.html`.
 
-## El flujo completo
+## The full flow
 
-1. **Declaración.** El cliente llena el formulario público `/declaracion`
-   (declarante, tarjetas de propiedad, fotos y firma). Queda *Por revisar*.
-2. **Revisión del punto de venta.** En `/declaraciones` el punto de venta
-   revisa la declaración y la aprueba o la rechaza. Si tiene tarjetas por
-   pérdida, además debe llegar autenticada de la notaría.
-3. **Orden.** Con la declaración aprobada, el punto de venta crea el pedido en
-   `/ingest` («Crear pedido»). La orden nace en el estado *Por realizar* y la
-   declaración queda *Atendida*.
-4. **Producción.** Producción abre la orden en `/produccion/<order_id>`, ve los
-   datos de la orden, las placas y las declaraciones enlazadas (con las fotos
-   de la cédula y de las tarjetas) y la avanza: *En realización* y luego
-   *Lista para entregar*.
-5. **Entrega.** Cuando el cliente recoge las placas, producción o el punto de
-   venta la marca *Entregada*.
+1. **Declaration.** The customer fills in the public form `/declaracion`
+   (declarant, ownership cards, photos and signature). It starts as *Por revisar* (to review).
+2. **Point-of-sale review.** In `/declaraciones` the point of sale reviews the
+   declaration and approves or rejects it. If it has cards reported lost, it
+   must also arrive notarized (authenticated by the notary's office).
+3. **Order.** With the declaration approved, the point of sale creates the
+   order in `/ingest` («Crear pedido»). The order starts in the state *Por realizar* (to be made) and
+   the declaration becomes *Atendida* (handled).
+4. **Production.** Production opens the order at `/produccion/<order_id>`, sees
+   the order data, the plates and the linked declarations (with the photos of
+   the ID card and of the ownership cards) and advances it: *En realización* (in progress) and then
+   *Lista para entregar* (ready for delivery).
+5. **Delivery.** When the customer picks up the plates, production or the
+   point of sale marks it *Entregada* (delivered).
 
-La pantalla de producción **no muestra** precios, forma de pago, fecha de
-pago, comprobante, la firma del declarante ni el PDF notariado.
+The production screen **does not show** prices, payment method, payment date,
+receipt, the declarant's signature or the notarized PDF.
 
-## Estados
+## States
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: el punto de venta crea la orden
+    [*] --> pending: the point of sale creates the order
     pending --> in_progress: Empezar realización
     in_progress --> ready: Marcar lista para entregar
     ready --> delivered: Marcar entregada
@@ -40,50 +40,51 @@ stateDiagram-v2
     in_progress --> pending: Deshacer último cambio
 ```
 
-| Valor guardado | Etiqueta en pantalla |
+| Stored value | Label on screen |
 |---|---|
 | `pending` | Por realizar |
 | `in_progress` | En realización |
 | `ready` | Lista para entregar |
 | `delivered` | Entregada |
 
-Cada cambio guarda una fila en `production_order_events` (de, a, usuario y
-hora), que la orden muestra en su **Historial**. Las órdenes anuladas por
-completo no aparecen en el tablero.
+Each change saves a row in `production_order_events` (from, to, user and
+time), which the order shows in its **Historial** (history). Orders that have been fully
+voided do not appear on the board.
 
-El estado también se ve, como insignia, en la lista y el detalle de
-`/declaraciones` (declaraciones atendidas) y en el detalle de la orden en
-`/records/<order_id>`, que además enlaza a Producción («Ver en Producción»).
+The state is also shown, as a badge, in the list and detail of
+`/declaraciones` (handled declarations) and in the order detail at
+`/records/<order_id>`, which also links to Production («Ver en Producción»).
 
-## Quién puede hacer cada paso
+## Who can do each step
 
-| Permiso | Roles | Qué permite |
+| Permission | Roles | What it allows |
 |---|---|---|
-| `production.view` | admin, production, point_of_sale | Ver el tablero, el detalle y las fotos |
-| `production.manage` | admin, production | Hacer cualquier paso, adelante o atrás |
-| `production.deliver` | admin, production, point_of_sale | Marcar entregada una orden lista y deshacer esa entrega |
+| `production.view` | admin, production, point_of_sale | View the board, the detail and the photos |
+| `production.manage` | admin, production | Perform any step, forward or backward |
+| `production.deliver` | admin, production, point_of_sale | Mark a ready order as delivered and undo that delivery |
 
-El punto de venta solo tiene `production.deliver`: en una orden *Lista para
-entregar* ve «Marcar entregada», y en una *Entregada* ve «Deshacer último
-cambio» (vuelve a *Lista para entregar*). Cualquier otro paso le responde 403 y
-no cambia nada.
+The point of sale only has `production.deliver`: on an order that is *Lista para
+entregar* it sees «Marcar entregada», and on an *Entregada* order it sees «Deshacer último
+cambio» (goes back to *Lista para entregar*). Any other step returns 403 and
+changes nothing.
 
-## Estado desactualizado
+## Stale state
 
-Cada botón envía el estado que la persona estaba viendo (`expected_status`).
-El cambio solo se hace si la orden sigue en ese estado; si alguien la movió
-mientras tanto, la página se vuelve a mostrar con el mensaje «El estado de la
+Each button sends the state the person was looking at (`expected_status`).
+The change is only made if the order is still in that state; if someone moved
+it in the meantime, the page is shown again with the message «El estado de la
 orden cambió mientras tanto. Revisa el estado actual e inténtalo de nuevo.»
-(400) y no se guarda nada. Así dos personas que hacen clic a la vez nunca
-mueven la orden dos pasos.
+(the order's state changed in the meantime; check the current state and try again)
+(400) and nothing is saved. This way two people clicking at the same time
+never move the order two steps.
 
-## Rutas
+## Routes
 
-| Método | Ruta | Permiso | Qué hace |
+| Method | Route | Permission | What it does |
 |---|---|---|---|
-| GET | `/produccion` | `production.view` | Tablero: pestañas por estado (`?status=`), búsqueda por número de orden o placa (`?q=`) |
-| GET | `/produccion/<order_id>` | `production.view` | Detalle de la orden: datos, placas, declaraciones enlazadas, historial y acciones |
-| GET | `/produccion/<order_id>/declarations/<declaration_id>/file/<kind>` | `production.view` | Foto de la cédula (`id_front`, `id_back`) de una declaración enlazada a la orden |
-| GET | `/produccion/<order_id>/declarations/<declaration_id>/cards/<card_id>/photo/<side>` | `production.view` | Foto de una tarjeta (`front`, `back`, `used_plates`) de una declaración enlazada a la orden |
-| POST | `/produccion/<order_id>/advance` | `production.manage` o `production.deliver` | Avanza la orden un paso (con `expected_status`) |
-| POST | `/produccion/<order_id>/undo` | `production.manage` o `production.deliver` | Deshace el último paso (con `expected_status`) |
+| GET | `/produccion` | `production.view` | Board: tabs by state (`?status=`), search by order number or plate (`?q=`) |
+| GET | `/produccion/<order_id>` | `production.view` | Order detail: data, plates, linked declarations, history and actions |
+| GET | `/produccion/<order_id>/declarations/<declaration_id>/file/<kind>` | `production.view` | ID card photo (`id_front`, `id_back`) of a declaration linked to the order |
+| GET | `/produccion/<order_id>/declarations/<declaration_id>/cards/<card_id>/photo/<side>` | `production.view` | Photo of an ownership card (`front`, `back`, `used_plates`) of a declaration linked to the order |
+| POST | `/produccion/<order_id>/advance` | `production.manage` or `production.deliver` | Advances the order one step (with `expected_status`) |
+| POST | `/produccion/<order_id>/undo` | `production.manage` or `production.deliver` | Undoes the last step (with `expected_status`) |

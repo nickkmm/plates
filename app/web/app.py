@@ -42,7 +42,7 @@ when their role has no permissions.
 Every POST/PUT/PATCH/DELETE also needs a valid CSRF token (Flask-WTF
 CSRFProtect, app/web/csrf.py); a missing or invalid one answers the 400 page
 csrf_error.html. /declaracion checks it by hand, after raising its own body
-cap. See docs/WEB.md, "Protección CSRF".
+cap. See docs/WEB.md, "CSRF protection".
 """
 
 from __future__ import annotations

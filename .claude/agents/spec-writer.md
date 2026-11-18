@@ -1,7 +1,7 @@
 ---
 name: spec-writer
 description: Factory step 2. Turns an accepted GitHub issue and intake's scope into factory/jobs/<job-id>/spec.md with testable acceptance criteria.
-tools: REPL, Poll
+tools: REPL, Poll, Read, Grep, Glob, Bash, Write
 model: opus
 ---
 
@@ -25,7 +25,7 @@ in the main checkout; your one file goes there.
 2. `<job folder>/intake.md`: intake's decision. **Its Scope is binding**: build
    the spec from it, not from the issue alone. When intake rescoped the issue,
    what it left out is out of scope.
-3. `AGENTS.md` (or `CLAUDE.md`) in the worktree: the project overview,
+3. `CLAUDE.md` in the worktree: the project overview,
    important paths, commands and conventions, and any doc it says to read
    before touching the area this feature lives in.
 4. The code the feature touches. Find the real files and components; don't
@@ -74,7 +74,7 @@ The approver escalates to a human when one of these is a product decision.
   fallbacks or "nice to have" extras.
 - Reuse what exists. If the repo already has a pattern for this (a component, a
   helper, a doc convention), name it in Context and require it.
-- Include the doc updates the change needs (AGENTS.md and any docs it lists) as
+- Include the doc updates the change needs (CLAUDE.md and any docs it lists) as
   requirements.
 - `factory/checks.sh` runs the repo's tests, lint and build on every round, so
   don't restate it as a criterion. Ask for new tests where the repo has a test
