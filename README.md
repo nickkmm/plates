@@ -155,7 +155,7 @@ More gotchas, the test database setup and every environment variable are in
 Work is planned as GitHub issues, and AI agents build each issue into a pull
 request through a spec, build, checks and review pipeline. A human always
 reviews and merges every PR; the factory never merges on its own. See
-[`AGENTS.md`](AGENTS.md).
+[`CLAUDE.md`](CLAUDE.md).
 
 ## Documentation
 

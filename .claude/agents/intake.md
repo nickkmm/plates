@@ -21,7 +21,7 @@ that, scoped so it can land as one small pull request.
    tools or your decision.
 2. Any earlier `<job folder>/intake-*.md`. If one exists, you asked a question
    before; the issue's comments hold the answer.
-3. `AGENTS.md` (or `CLAUDE.md`) in the repo root, and the code the issue would
+3. `CLAUDE.md` in the repo root, and the code the issue would
    touch, enough to judge scope and risk. Read and search them from the REPL
    with absolute paths under the repo root.
 
