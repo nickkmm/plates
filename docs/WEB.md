@@ -162,6 +162,8 @@ every plate that already existed), so it appears in `/review` and in the summary
 - CSRF protection across the whole app (Flask-WTF `CSRFProtect`): every POST carries
   the session token; without it the response is 400 with `csrf_error.html`. See
   "CSRF protection".
+- Every 404 (an unknown URL or an `abort(404)`) answers `not_found.html` with
+  status 404 and `Cache-Control: no-store`.
 - Anti open-redirect guard on the login's `?next=`: only relative paths of the
   same origin.
 
@@ -310,6 +312,7 @@ document that includes `_nav.html` and duplicates its own `<style>`.
 | `_orders_table.html` | Orders table reused by the "recent" view and by the order search results. |
 | `login.html` | Login card (no nav). |
 | `csrf_error.html` | 400 page for a missing or invalid CSRF token (no nav, no login): "La sesión expiró, recarga la página e intenta de nuevo." and a link to `/declaracion` or to `/`. See "CSRF protection". |
+| `not_found.html` | 404 page for unknown URLs and `abort(404)` (no nav, no login, no database): "La página que buscas no existe o ya no está disponible." and a "Volver al inicio" link to `/`, or to `/declaracion` for a visitor without a session under `/declaracion/...`. It never shows the URL or the `abort()` message. |
 | `declaration.html` | Public declaration form, only for people who declare for themselves (no nav, no login): one declarant, 1 to 30 repeatable ownership cards (block cloned from a `<template>`) and a single signature. The field names are the contract with `public_declaration.py` (see "Public declaration form"). |
 | `declaration_received.html` | Generic confirmation "Recibimos tu declaración" (identical for every declaration, with or without alerts). |
 | `declaration_unavailable.html` | 503 page when the public form is switched off (Turnstile keys missing). |
