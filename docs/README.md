@@ -1,13 +1,12 @@
 # Documentación de referencia — plates
 
-Plates es la app de producción y venta de placas vehiculares de INGSE
-(Colombia): reemplaza un flujo antes basado en Excel, y desde la feature
-POS (Fases 1-5b, ver `PLAN_ARQUITECTURA_Y_POS.md` en la raíz del repo)
-también captura la orden de venta completa (cliente, forma de pago,
-precio) y genera el cuadre de caja diario. Tres roles: `admin` (acceso
-completo), `point_of_sale` (captura ventas en `/ingest` y consulta
-`/cuadre`), y `production` (solo lectura) sobre un registro
-único de órdenes de producción y las placas que contienen.
+Plates es la app de producción y punto de venta de placas vehiculares de
+INGSE (Colombia), que reemplaza un flujo antes basado en Excel. Los permisos
+se asignan por rol y los roles se administran en `/usuarios`: `admin` tiene
+siempre todos los permisos y cada otro rol tiene solo los que se le asignan.
+El flujo de producción va de la declaración juramentada del cliente al
+pedido que crea el punto de venta, y de ahí *Por realizar* → *En
+realización* → *Lista para entregar* → *Entregada*.
 
 Esta carpeta es documentación **técnica de referencia** — para entender
 cómo funciona el sistema por dentro. Cómo desplegarlo, configurar auth o
