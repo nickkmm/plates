@@ -1,329 +1,328 @@
 # Web (`app/web/`)
 
-[← volver al índice](README.md)
+[← back to index](README.md)
 
-Desde la Fase 1d, `app.py` solo crea el objeto `app`, inicializa Sentry
-(si `SENTRY_DSN` está seteada), registra un blueprint por dominio y
-retiene las 2 rutas demasiado chicas para tener el suyo propio (`/` y
-`/healthz`) — 83 líneas en total. Las rutas reales viven en
-`app/web/blueprints/`, un módulo por dominio; helpers compartidos por 2+
+Since Phase 1d, `app.py` only creates the `app` object, initializes Sentry
+(if `SENTRY_DSN` is set), registers one blueprint per domain and
+keeps the 2 routes too small to have their own (`/` and
+`/healthz`) — 83 lines in total. The real routes live in
+`app/web/blueprints/`, one module per domain; helpers shared by 2+
 blueprints (`today_iso`, `_options`, `_padded`, `_validate_order_header`,
-`customer_fields_from_form`, etc.) viven en `app/web/helpers.py`.
+`customer_fields_from_form`, etc.) live in `app/web/helpers.py`.
 
-## Rutas
+## Routes
 
-| Método | Path | Blueprint | Qué hace | Llama de `core` | Template | Auth |
+| Method | Path | Blueprint | What it does | Calls from `core` | Template | Auth |
 |---|---|---|---|---|---|---|
-| GET | `/` | `app.py` | Redirige a la primera pestaña de `NAV_ITEMS` que el usuario puede abrir (`landing_url()`); si su rol no tiene ningún permiso, responde 403 con `no_permissions.html` | — | (redirect) / `no_permissions.html` | `@authenticated` |
-| GET | `/healthz` | `app.py` | Liveness probe | — | — | abierta |
-| GET/POST | `/login` | `auth_routes.py` | Login (consulta `users`, Fase 2) | `auth.authenticate` | `login.html` | abierta |
-| POST | `/logout` | `auth_routes.py` | Cierra sesión (solo POST: un GET responde 405 y no cierra nada) | — | (redirect) | abierta |
-| GET/POST | `/declaracion` | `public_declaration.py` | Formulario público de declaración juramentada (QR en el mostrador), solo para personas que declaran por sí mismas (PROPIETARIO / POSEEDOR; un `GESTOR` enviado a mano se rechaza con 400; el endpoint para gestores está planeado). POST: honeypot, token firmado, Turnstile, límite por IP (20/hora; los clientes comparten la IP del wifi del local), lee de 1 a 30 tarjetas de propiedad (`card_<i>_*`) con un solo declarante y una sola firma, guarda la firma y las **fotos obligatorias** (cédula del declarante y tarjeta de propiedad, frente y atrás de cada una, y la foto de la(s) placa(s) usada(s) de cada tarjeta, tanto por deterioro como por pérdida, salvo que el cliente marque «Perdí mis placas» en esa tarjeta (`card_<i>_plates_lost`; entonces esa foto no se pide ni se guarda y el detalle de la declaración lo indica); JPG/PNG/WebP detectados por contenido, máx. 5 MB c/u, el navegador las reduce antes de enviar; el cuerpo de este POST admite hasta 40 MB) en `UPLOADS_DIR`, valida y guarda la declaración siempre como `pending_review` («Por revisar») **sin crear nada** (cliente y tarjetas de propiedad se crean cuando el punto de venta la aprueba). Responde **503** (`declaration_unavailable.html`) mientras no estén `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (o `TURNSTILE_BYPASS`). El nombre del declarante no puede contener números (misma regla que "Solicitado por" en `/ingest`, para que el personal pueda crear después el pedido): el navegador lo avisa (`pattern`) y el servidor lo rechaza con 400. La página de éxito es idéntica para toda declaración (con o sin alertas): nunca revela estado, alertas ni al dueño anterior | `declarations.validate_declaration`, `submit_declaration`, `db.count_recent_by_ip` | `declaration.html`, `declaration_received.html`, `declaration_unavailable.html` | **sin login** (única ruta pública que escribe) |
-| GET | `/ingest` | `ingest.py` | Form "Registrar" — captura completa de orden POS (Fase 3). Con `?declaration_id=N` (el botón de `/declaraciones`) llega **pre-llenado desde una declaración aprobada y todavía no atendida** (`production_order_id` NULL), igual que el PDF: **no guarda nada**. Encabezado: fecha de hoy, N° de orden y forma de pago vacíos (los decide el personal), cliente = el declarante (el gestor si actuó un gestor; si no, el cliente enlazado a las tarjetas) con todos sus datos. Una línea `placa` por tarjeta de propiedad, en orden: tipo de placa de la tarjeta (vacío si no se reconoce), placa, cantidad, motivo, marca y valor = tarifa vigente del tipo (vacío si no hay); la ciudad es el «matriculado en» de la tarjeta (en mayúsculas); si la tarjeta no lo trae queda vacía y un aviso la pide para las líneas `CARRO PARTICULAR`/`CARRO PÚBLICO`. Id inexistente o mal formado → 404; pendiente, rechazada, ya atendida o **aprobada con alguna tarjeta por `PÉRDIDA` cuya autenticación notarial todavía no se marcó como recibida** → el formulario normal con un error en español (si ya fue atendida, dice con qué orden y enlaza a su detalle; las declaraciones solo `DETERIORO` nunca se bloquean así) | `db.distinct_requested_by/cities`, `db.current_prices`, `db.list_customers`, `db.get_declaration`, `db.list_declaration_cards`, `db.get_customer` | `ingest.html` | `@permission_required("orders.capture")` |
-| POST | `/ingest` | `ingest.py` | Guarda orden+placas (resuelve/crea cliente, snapshotea precios); gestiona los avisos de orden/placa duplicada y el "Reemplazar" opt-in. **La ciudad es obligatoria en cada línea** (menos "Orden anulada"): el navegador la exige (`required`) y el servidor rechaza la línea sin ciudad con "Línea N: elegí la ciudad…" y no guarda nada. Solo `CARRO PARTICULAR` / `CARRO PÚBLICO` dependen de una ciudad (se dejan en blanco para elegirla); en los demás tipos el formulario sugiere `COLOMBIA` (editable). Si trae el campo oculto `declaration_id`, el servidor **vuelve a validar** la declaración (existe, aprobada, sin atender y, si tiene una tarjeta `PÉRDIDA`, con la autenticación notarial recibida; si no, no guarda y devuelve el formulario tal cual con el error); las placas de sus tarjetas **no se bloquean** como "ya existe" (el caso es reponer una placa perdida o deteriorada; escribir dos veces la misma placa en el envío sí sigue bloqueando) y, en la **misma transacción** del guardado (camino normal y "Reemplazar"), la declaración queda atendida por la orden creada (`db.set_declaration_production_order`). El campo oculto viaja en todos los re-renders (avisos de orden/placa duplicada, errores). Sin `declaration_id` el comportamiento no cambia | `ingestion.process_rows`, `ingestion.replace_order`, `ingestion.find_duplicate_plate_numbers`, `db.resolve_or_create_customer`, `db.find_orders_by_number`, `db.set_declaration_production_order` | `ingest.html` | `@permission_required("orders.capture")` |
-| GET | `/ingest/pdf` | `ingest.py` | Form de upload del pedido (PDF o Excel `.xlsx`; campo `file`) | — | `ingest_pdf.html` | `@permission_required("orders.capture")` |
-| POST | `/ingest/pdf` | `ingest.py` | Parsea el pedido (PDF o `.xlsx`, se distingue por el **contenido**, no por la extensión; también acepta el nombre de campo viejo `pdf`) incl. campos de pie de página, y re-renderiza `ingest.html` pre-llenado (**no guarda nada**). Un `.xls` viejo, un zip que no es Excel o cualquier otro archivo dan un error en español (400) | `pedido_upload.parse_uploaded_pedido`, `db.find_orders_by_number` | `ingest.html` | `@permission_required("orders.capture")` |
-| GET | `/review` | `review.py` | Cola de placas con `is_possible_duplicate` | `db.review_rows` | `review.html` | `@permission_required("duplicates.review")` |
-| POST | `/review/update` \| `/resolve` \| `/delete` | `review.py` | Edita/marca revisada/borra una fila flagged | `db.update_plate`, `resolve_plate`, `delete_plate`, `recalc_inventory` | (redirect) | `@permission_required("duplicates.review")` |
-| GET | `/inventory` | `inventory.py` | Cards de inventario por categoría | `db.inventory_view`, `ornamental_count` | `inventory.html` | `@permission_required("inventory.manage")` |
-| POST | `/inventory/alistado` | `inventory.py` | Registra un alistamiento | `db.insert_blank_preparation`, `recalc_inventory` | (redirect) | `@permission_required("inventory.manage")` |
-| GET | `/precios` | `pricing.py` | Tabla de tarifas por tipo de placa, editable (Fase 5a) | `db.price_list` | `pricing.html` | `@permission_required("pricing.manage")` (sembrado solo para admin) |
-| POST | `/precios/<plate_type>` | `pricing.py` | Fija/actualiza la tarifa de un tipo | `db.set_price` | (redirect) | `@permission_required("pricing.manage")` |
-| GET | `/customers` | `customers.py` | Lista de clientes, con filtro `?q=` por nombre (Fase 6) | `db.list_customers` | `customers.html` | `@permission_required("customers.manage")` (sembrado solo para admin, igual que `/precios`) |
-| GET | `/customers/<id>` | `customers.py` | Form de edición de un cliente | `db.get_customer` | `customer_detail.html` | `@permission_required("customers.manage")` |
-| POST | `/customers/<id>` | `customers.py` | Sobreescribe los atributos del cliente (nombre incluido, y dirección/barrio/municipio según el tipo) — a diferencia de `db.resolve_or_create_customer`, esto SÍ reemplaza un valor ya guardado | `db.update_customer` | (redirect) | `@permission_required("customers.manage")` |
-| GET | `/usuarios` | `users.py` | Lista de usuarios: usuario, roles (las etiquetas de `db.list_roles`, ordenadas, o "Sin roles"), estado Activo/Inactivo y fecha de creación, con el botón "Nuevo usuario", un "Editar" por fila y el aviso de la última acción (`flash`). Nunca muestra el hash de la contraseña ni el nombre interno de un rol | `db.list_users`, `db.list_roles` | `users.html` | `@permission_required("users.manage")` (sembrado solo para admin) |
-| GET/POST | `/usuarios/nuevo` | `users.py` | Crea un usuario: usuario (se le quitan los espacios de los extremos; 3 a 50 caracteres: letras, números, punto, guion o guion bajo), uno o más roles y una contraseña de al menos 10 caracteres repetida. Un error re-renderiza el form con 400 (conserva usuario y roles, nunca la contraseña) sin escribir nada; un usuario repetido responde "Ese usuario ya existe." por la restricción UNIQUE. Si sale bien, redirige a `/usuarios` con "Usuario creado." | `user_admin.validate_new_user`, `db.create_user` | `user_form.html` | `@permission_required("users.manage")` |
-| GET/POST | `/usuarios/<id>` | `users.py` | Edita los roles y la casilla Activo de un usuario (el usuario no se puede cambiar). Las reglas de `user_admin.validate_user_update` (ver "Roles y permisos") responden 400 con el mensaje y sin escribir nada; si sale bien, guarda roles y estado en una sola transacción y redirige a la misma página con "Cambios guardados.". Id desconocido → 404 | `user_admin.validate_user_update`, `db.get_user_by_id`, `db.set_user_roles`, `db.update_user` | `user_form.html` | `@permission_required("users.manage")` |
-| POST | `/usuarios/<id>/password` | `users.py` | Cambia la contraseña de un usuario (al menos 10 caracteres, repetida). Un error re-renderiza la página de edición con 400; si sale bien, redirige a `/usuarios/<id>` con "Contraseña actualizada.". Id desconocido → 404 | `user_admin.validate_password`, `db.set_user_password` | (redirect) / `user_form.html` | `@permission_required("users.manage")` |
-| GET | `/usuarios/roles` | `users.py` | "Roles y permisos": tabla Rol (la etiqueta, con "(del sistema)" para los roles sembrados) / Permisos ("Todos" para Administrador, si no cuántos códigos tiene guardados) / Usuarios (cuántos usuarios, activos o no, tienen el rol) / Editar, en el orden de `db.list_roles`, con el botón "Nuevo rol" y el aviso de la última acción. Nunca muestra el nombre interno de un rol | `db.list_roles` | `roles.html` | `@permission_required("users.manage")` |
-| GET/POST | `/usuarios/roles/nuevo` | `users.py` | Crea un rol propio: "Nombre del rol" (se le quitan los espacios de los extremos; 1 a 60 caracteres; no puede repetir el de otro rol aunque cambien mayúsculas o tildes) y al menos un permiso del catálogo (`db.list_permissions`; un código desconocido se ignora). El nombre interno (`custom_` + 8 hexadecimales) lo genera `user_admin.new_role_name`. Un error re-renderiza el form con 400 (conserva nombre y permisos) sin escribir nada; si sale bien, redirige a `/usuarios/roles` con "Rol creado." | `user_admin.clean_permissions`, `user_admin.validate_role`, `db.create_role` | `role_form.html` | `@permission_required("users.manage")` |
-| GET/POST | `/usuarios/roles/<name>` | `users.py` | Edita un rol. Administrador es de solo lectura (todas las casillas marcadas y deshabilitadas, sin botón de guardar; un POST responde 400 sin escribir). En los demás roles del sistema el nombre no se cambia (el que llegue se ignora) pero los permisos sí; en los roles propios se cambian los dos. Mismas reglas y errores que al crear; si sale bien, redirige a la misma página con "Cambios guardados.". El cambio aplica en el siguiente request de cada usuario con el rol. Nombre desconocido → 404 | `user_admin.clean_permissions`, `user_admin.validate_role`, `db.get_role`, `db.update_role` | `role_form.html` | `@permission_required("users.manage")` |
-| POST | `/usuarios/roles/<name>/delete` | `users.py` | Elimina un rol propio sin usuarios (botón "Eliminar rol" con confirmación, solo en los roles propios). Un rol del sistema o con usuarios asignados (activos o no) re-renderiza la página de edición con 400 y el mensaje; si sale bien, redirige a `/usuarios/roles` con "Rol eliminado.". Nombre desconocido → 404 | `user_admin.validate_role_delete`, `db.delete_role` | (redirect) / `role_form.html` | `@permission_required("users.manage")` |
-| GET | `/declaraciones` | `declarations.py` | Lista de declaraciones juramentadas del formulario público: **una fila por declaración** con el declarante (nombre y `acting_as`), la cantidad de tarjetas de propiedad, el **total de placas** (suma de `plate_quantity`), un resumen compacto (`ABC123 · DEF45G +3`, y los motivos contados por tarjeta, `PÉRDIDA` primero: `1 deterioro` o `2 pérdida · 1 deterioro`, en rojo si hay alguna pérdida), **una sola insignia de estado** (la *etapa* derivada, `declaration_stage`), alertas (unión) con el número de la tarjeta que las causó, y fecha. Toda declaración del formulario público queda `pending_review` (con o sin alertas) y no crea nada hasta que el punto de venta la aprueba. Etapas (insignia y pestañas `?stage=`, calculadas en SQL en `db.list_declarations(stage=...)`): **Por revisar** (`to_review`, pestaña por defecto con contador: `pending_review`), **Falta autenticación** (`awaiting_notarization`: aprobada, con alguna tarjeta `PÉRDIDA`, `notarized_received_at` NULL y sin pedido), **Lista para pedido** (`ready`: aprobada, sin paso notarial pendiente y sin pedido), **Atendidas** (`attended`: ya tiene `production_order_id`) y **Rechazadas** (`rejected`), más **Todas** (`?stage=all`); los parámetros viejos `?status=`/`?attended=` ya no se leen. El motivo (`PÉRDIDA`/`DETERIORO`) sigue siendo una insignia aparte por tarjeta. Filtro `?reason=` (`all` = Todos por defecto, `loss` = Pérdida, `deterioration` = Deterioro; basta **una** tarjeta con ese motivo; también acepta las palabras guardadas `PÉRDIDA`/`DETERIORO`; se combina con la etapa y la búsqueda y se conserva en las pestañas), búsqueda `?q=` (declarante o placa/licencia/dueño de **cualquier** tarjeta), pendientes primero y contador de pendientes. Las tarjetas se cargan con una sola consulta (`db.list_cards_for_declarations`). En pantallas angostas cada fila se muestra como tarjeta | `db.list_declarations(stage, query, reason)`, `db.declaration_stage`, `requires_notarization`, `db.list_cards_for_declarations` | `declarations.html` | `@permission_required("declarations.review")` (el rol `production` recibe 403: maneja datos de identidad) |
-| GET | `/declaraciones/<id>` | `declarations.py` | Detalle: la misma insignia única de etapa junto al título, bloque del declarante, su única firma y el PDF notariado, y **una sección por tarjeta de propiedad** ("Tarjeta de propiedad N de M") con sus datos, motivo, cantidad de placas, su dueño (y relación DUEÑO/POSEEDOR) y, una vez aprobada, el cliente y la tarjeta creados o enlazados (enlace a `/customers/<id>` solo para admin, porque esa pantalla es solo admin). El motivo de cada tarjeta es una insignia (`PÉRDIDA` en rojo, `DETERIORO` en azul). Si está pendiente, un resumen "Retenida por X de M tarjetas" (solo cuando alguna tarjeta tiene alertas; una declaración **sin alertas** también se revisa: el bloque "Aprobar" dice "Esta declaración no tiene alertas" y explica que al aprobar se crean o enlazan el cliente, el gestor si aplica y cada tarjeta de propiedad) con enlaces a las tarjetas que la retienen y, dentro de **cada** tarjeta, la explicación de **sus** alertas con el contexto real (fecha de la última fabricación y desde cuándo se puede repetir, tarjetas existentes y sus dueños, tipo/documento del cliente existente, mismo nombre repetido en la declaración). Las alertas del gestor (tipo/documento) se copian a todas las tarjetas y se rotulan "Gestor ...". Solo personal autenticado; las alertas nunca se muestran en páginas públicas. Si la declaración está **aprobada y sin atender**, arriba aparece el botón destacado **"Crear pedido"** (enlace a `/ingest?declaration_id=<id>`), visible para admin y `point_of_sale` (el punto de venta es quien revisa: aprobar, rechazar y reasignar también son de ambos roles); si está pendiente se muestra el aviso "el punto de venta revisa todas las declaraciones; el pedido se podrá crear cuando el punto de venta apruebe la declaración", y si está rechazada no aparece nada. Si está aprobada y tiene **al menos una tarjeta `PÉRDIDA`**, aparece el bloque **"Autenticación notarial"**: mientras `notarized_received_at` es NULL dice "Pendiente" (descargar el PDF, entregarlo al cliente y marcar cuando regrese autenticado), con el botón "Descargar PDF para autenticación" y el botón "Marcar autenticación recibida" (`POST .../notarized`), y **en lugar de "Crear pedido"** se muestra la nota "Falta la autenticación notarial…"; una vez recibida muestra fecha y quién la registró, con "Deshacer" (`POST .../notarized/undo`, oculto si ya hay pedido) y el botón "Crear pedido" vuelve. Las declaraciones solo `DETERIORO` nunca se bloquean y, si están aprobadas, muestran un botón opcional "Descargar PDF" (`#optional-pdf`). Si ya tiene `production_order_id` la insignia es **"Atendida"** con el enlace al pedido (`/records/<id>`, con su número de pedido) en lugar del botón. El bloque «Declaración» muestra «Tratamiento de datos: Autorizado el <fecha>» e «Información comercial: Sí / No» (o «No registrada» en las declaraciones anteriores a la migración 0013). Id desconocido redirige a la lista | `db.get_declaration`, `db.order_detail`, `db.list_declaration_cards`, `db.last_fabrication_date`, `db.find_orders_for_plate`, `db.get_ownership_card*`, `db.get_customer*` | `declaration_detail.html` | `@permission_required("declarations.review")` |
-| GET | `/declaraciones/<id>/file/<kind>` | `declarations.py` | Descarga autenticada (`kind` = `signature` (la firma única del declarante, que cubre todas las tarjetas), `notarized_pdf`, `id_front` o `id_back` (fotos de la cédula del declarante; el tipo sale de la extensión guardada); las fotos de cada tarjeta se sirven en `GET /declaraciones/<id>/cards/<card_id>/photo/<front|back|used_plates>` (`used_plates` = la foto de la(s) placa(s) usada(s) de la tarjeta), con las mismas cabeceras y 404 si la tarjeta no es de esa declaración). `GET /declaraciones/<id>/photos.zip` (`@permission_required("declarations.review")`) baja todas las fotos de la declaración en un ZIP (`cedula-frente/atras`, `tarjeta-N-PLACA-frente/atras`, `tarjeta-N-PLACA-placas-usadas`; omite las que ya no están en disco; 404 si no queda ninguna), `attachment`, `no-store`; el detalle muestra el botón «Descargar todas las fotos (ZIP)» cuando hay fotos vía `resolve_upload_path`; `inline`, `nosniff`, `no-store`; 404 si el tipo, la ruta o el archivo no existen. Nunca se acepta un nombre de archivo en la URL | `db.get_declaration` | (archivo) | `@permission_required("declarations.review")` |
-| POST | `/declaraciones/<id>/approve` | `declarations.py` | Aprueba **toda** la declaración (todo o nada; el botón "Aprobar declaración" aparece siempre en las pendientes, con o sin alertas). Campos: `note` (opcional) y una casilla `reassign_<id de la tarjeta de la declaración>` por cada tarjeta con la alerta `card_other_owner` (la casilla solo aparece en esas tarjetas y se envía con el atributo `form="approve-form"`), que se pasan como `reassign_card_ids`. Un `ValueError` (que nombra la tarjeta: "tarjeta 2 (placa DEF456)") re-renderiza el detalle con el mensaje (400), conserva las casillas marcadas y no cambia nada | `declarations.approve_declaration` | (redirect) | `@permission_required("declarations.review")` (sembrado para admin y `point_of_sale`; `reviewed_by` = el usuario de la sesión; `production` recibe 403) |
-| POST | `/declaraciones/<id>/reject` | `declarations.py` | Rechaza toda la declaración sin crear nada; la nota (`note`) es obligatoria | `declarations.reject_declaration` | (redirect) | `@permission_required("declarations.review")` |
-| GET | `/declaraciones/<id>/pdf` | `declarations.py` | PDF de la declaración para entregárselo al cliente (se imprime). Con alguna tarjeta `PÉRDIDA` es el que el cliente autentica en una notaría; para `DETERIORO` es una **descarga opcional** adicional (el detalle muestra un botón "Descargar PDF" y no exige autenticación). Disponible para cualquier declaración **aprobada**; pendiente o rechazada → 404 con un mensaje en español. Lee la firma del declarante con `resolve_upload_path` (sin firma o archivo faltante → `signature_png=None`) y llama `declaration_pdf.build_declaration_pdf(declaration, cards, signature_png, issued_at)`. Respuesta `attachment` `declaracion-<id>.pdf`, `application/pdf`, `nosniff`, `no-store` | `declaration_pdf.build_declaration_pdf`, `db.list_declaration_cards` | (archivo) | `@permission_required("declarations.review")` |
-| POST | `/declaraciones/<id>/notarized` | `declarations.py` | Marca que el cliente devolvió la declaración autenticada (`db.set_declaration_notarized_received` con el `user_id` de la sesión). Idempotente (marcar dos veces conserva la primera marca). Id desconocido → lista; declaración no aprobada o sin tarjeta `PÉRDIDA` → detalle con error (400), sin cambios | `db.set_declaration_notarized_received` | (redirect) | `@permission_required("declarations.review")` |
-| POST | `/declaraciones/<id>/notarized/undo` | `declarations.py` | Deshace la marca anterior (vuelve a NULL). Se rechaza (400) si la declaración ya fue atendida por un pedido | `db.set_declaration_notarized_received` | (redirect) | `@permission_required("declarations.review")` |
-| GET | `/cuadre` | `cash_summary.py` | Cuadre de caja: totales por fecha/forma de pago en `[desde, hasta]` (default hoy, Fase 5b) | `cash_summary.build_cash_summary` | `cash_summary.html` | `@permission_required("cash_summary.view")` |
-| GET | `/cuadre/pdf` | `cash_summary.py` | Mismo reporte, exportado a PDF | `cash_summary.build_cash_summary`, `render_cash_summary_pdf` | (descarga PDF) | `@permission_required("cash_summary.view")` |
-| GET | `/records` | `records.py` | Registros: recientes, o búsqueda por placa/orden | `db.recent_orders`, `search_plates_by_number`, `search_orders_by_number` | `records.html` | `@permission_required("records.view")` |
-| GET | `/records/<id>` | `records.py` | Detalle de orden (ver o editar según rol); preserva `?q=` para el link de volver | `db.order_detail` | `record_detail.html` | `@permission_required("records.view")` |
-| POST | `/records/<id>/save` | `records.py` | Guarda edición de header + placas (insert/update/delete) en una transacción; re-resuelve `customer_id` desde `requested_by` (nunca reescribe atributos de un cliente existente, B5) | `db.update_order`, `delete_plate`, `normalize.normalize_row`, `db.resolve_or_create_customer`, `update_plate_full`, `insert_plate`, `recalc_inventory` | `record_detail.html` / redirect | `@permission_required("orders.capture")` |
-| POST | `/records/search-pdf` | `records.py` | Sube un pedido (PDF o `.xlsx`) y chequea sus placas contra la BD (**solo lectura**) | `pedido_upload.parse_uploaded_pedido`, `normalize.is_real_plate`, `db.find_orders_for_plate` | `records.html` | `@permission_required("records.view")` |
-| POST | `/records/delete` | `records.py` | Borra una orden completa y sus placas | `db.delete_order`, `recalc_inventory` | (redirect) | `@permission_required("records.delete")` |
+| GET | `/` | `app.py` | Redirects to the first tab of `NAV_ITEMS` the user can open (`landing_url()`); if their role has no permission at all, responds 403 with `no_permissions.html` | — | (redirect) / `no_permissions.html` | `@authenticated` |
+| GET | `/healthz` | `app.py` | Liveness probe | — | — | open |
+| GET/POST | `/login` | `auth_routes.py` | Login (queries `users`, Phase 2) | `auth.authenticate` | `login.html` | open |
+| POST | `/logout` | `auth_routes.py` | Closes the session (POST only: a GET responds 405 and closes nothing) | — | (redirect) | open |
+| GET/POST | `/declaracion` | `public_declaration.py` | Public sworn-declaration form (QR at the counter), only for people who declare for themselves (PROPIETARIO / POSEEDOR; a `GESTOR` sent by hand is rejected with 400; the endpoint for gestores is planned). POST: honeypot, signed token, Turnstile, per-IP limit (20/hour; customers share the shop's wifi IP), reads 1 to 30 ownership cards (`card_<i>_*`) with a single declarant and a single signature, saves the signature and the **mandatory photos** (the declarant's ID card and the ownership card, front and back of each, and the photo of the used plate(s) of each card, for both deterioration and loss, unless the customer ticks «Perdí mis placas» ("I lost my plates") on that card (`card_<i>_plates_lost`; then that photo is neither requested nor saved and the declaration detail says so); JPG/PNG/WebP detected by content, max. 5 MB each, the browser shrinks them before sending; the body of this POST allows up to 40 MB) in `UPLOADS_DIR`, validates and saves the declaration always as `pending_review` («Por revisar», "To review") **without creating anything** (customer and ownership cards are created when the point of sale approves it). Responds **503** (`declaration_unavailable.html`) while `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (or `TURNSTILE_BYPASS`) are not set. The declarant's name cannot contain digits (same rule as "Solicitado por" ("Requested by") in `/ingest`, so staff can create the order afterwards): the browser warns (`pattern`) and the server rejects it with 400. The success page is identical for every declaration (with or without alerts): it never reveals status, alerts or the previous owner | `declarations.validate_declaration`, `submit_declaration`, `db.count_recent_by_ip` | `declaration.html`, `declaration_received.html`, `declaration_unavailable.html` | **no login** (the only public route that writes) |
+| GET | `/ingest` | `ingest.py` | "Registrar" ("Register") form — full capture of a POS order (Phase 3). With `?declaration_id=N` (the button in `/declaraciones`) it arrives **pre-filled from an approved declaration not yet attended** (`production_order_id` NULL), just like the PDF: **it saves nothing**. Header: today's date, order no. and payment method empty (staff decide those), customer = the declarant (the gestor if a gestor acted; otherwise, the customer linked to the cards) with all their data. One `placa` line per ownership card, in order: the card's plate type (empty if not recognized), plate, quantity, reason, brand and value = current rate for the type (empty if none); the city is the card's «matriculado en» ("registered in") (uppercased); if the card does not have it, it stays empty and a notice asks for it for `CARRO PARTICULAR`/`CARRO PÚBLICO` lines. Nonexistent or malformed id → 404; pending, rejected, already attended or **approved with some `PÉRDIDA` card whose notarial authentication has not yet been marked as received** → the normal form with a Spanish error (if already attended, it says with which order and links to its detail; `DETERIORO`-only declarations are never blocked this way) | `db.distinct_requested_by/cities`, `db.current_prices`, `db.list_customers`, `db.get_declaration`, `db.list_declaration_cards`, `db.get_customer` | `ingest.html` | `@permission_required("orders.capture")` |
+| POST | `/ingest` | `ingest.py` | Saves order+plates (resolves/creates customer, snapshots prices); handles the duplicate order/plate notices and the opt-in "Reemplazar" ("Replace"). **The city is mandatory on every line** (except "Orden anulada" ("Voided order")): the browser requires it (`required`) and the server rejects a line without a city with "Línea N: elegí la ciudad…" ("Line N: choose the city…") and saves nothing. Only `CARRO PARTICULAR` / `CARRO PÚBLICO` depend on a city (left blank so it is chosen); for the other types the form suggests `COLOMBIA` (editable). If it carries the hidden field `declaration_id`, the server **re-validates** the declaration (exists, approved, not attended and, if it has a `PÉRDIDA` card, with the notarial authentication received; otherwise it saves nothing and returns the form as is with the error); the plates of its cards are **not blocked** as "already exists" (the case is replacing a lost or deteriorated plate; typing the same plate twice in the submission still blocks) and, in the **same transaction** as the save (normal path and "Reemplazar"), the declaration is marked attended by the created order (`db.set_declaration_production_order`). The hidden field travels in all re-renders (duplicate order/plate notices, errors). Without `declaration_id` the behavior does not change | `ingestion.process_rows`, `ingestion.replace_order`, `ingestion.find_duplicate_plate_numbers`, `db.resolve_or_create_customer`, `db.find_orders_by_number`, `db.set_declaration_production_order` | `ingest.html` | `@permission_required("orders.capture")` |
+| GET | `/ingest/pdf` | `ingest.py` | Order upload form (PDF or Excel `.xlsx`; field `file`) | — | `ingest_pdf.html` | `@permission_required("orders.capture")` |
+| POST | `/ingest/pdf` | `ingest.py` | Parses the order (PDF or `.xlsx`, told apart by **content**, not by extension; also accepts the old field name `pdf`) including footer fields, and re-renders `ingest.html` pre-filled (**saves nothing**). An old `.xls`, a zip that is not Excel or any other file gives a Spanish error (400) | `pedido_upload.parse_uploaded_pedido`, `db.find_orders_by_number` | `ingest.html` | `@permission_required("orders.capture")` |
+| GET | `/review` | `review.py` | Queue of plates with `is_possible_duplicate` | `db.review_rows` | `review.html` | `@permission_required("duplicates.review")` |
+| POST | `/review/update` \| `/resolve` \| `/delete` | `review.py` | Edits/marks as reviewed/deletes a flagged row | `db.update_plate`, `resolve_plate`, `delete_plate`, `recalc_inventory` | (redirect) | `@permission_required("duplicates.review")` |
+| GET | `/inventory` | `inventory.py` | Inventory cards by category | `db.inventory_view`, `ornamental_count` | `inventory.html` | `@permission_required("inventory.manage")` |
+| POST | `/inventory/alistado` | `inventory.py` | Records a preparation (alistamiento) | `db.insert_blank_preparation`, `recalc_inventory` | (redirect) | `@permission_required("inventory.manage")` |
+| GET | `/precios` | `pricing.py` | Editable rate table by plate type (Phase 5a) | `db.price_list` | `pricing.html` | `@permission_required("pricing.manage")` (seeded for admin only) |
+| POST | `/precios/<plate_type>` | `pricing.py` | Sets/updates the rate of a type | `db.set_price` | (redirect) | `@permission_required("pricing.manage")` |
+| GET | `/customers` | `customers.py` | Customer list, with `?q=` filter by name (Phase 6) | `db.list_customers` | `customers.html` | `@permission_required("customers.manage")` (seeded for admin only, like `/precios`) |
+| GET | `/customers/<id>` | `customers.py` | Edit form for a customer | `db.get_customer` | `customer_detail.html` | `@permission_required("customers.manage")` |
+| POST | `/customers/<id>` | `customers.py` | Overwrites the customer's attributes (name included, and address/neighborhood/municipality depending on the type) — unlike `db.resolve_or_create_customer`, this DOES replace an already-stored value | `db.update_customer` | (redirect) | `@permission_required("customers.manage")` |
+| GET | `/usuarios` | `users.py` | User list: user, roles (the labels from `db.list_roles`, sorted, or "Sin roles" ("No roles")), Activo/Inactivo (Active/Inactive) status and creation date, with the "Nuevo usuario" ("New user") button, an "Editar" ("Edit") per row and the last-action notice (`flash`). It never shows the password hash or the internal name of a role | `db.list_users`, `db.list_roles` | `users.html` | `@permission_required("users.manage")` (seeded for admin only) |
+| GET/POST | `/usuarios/nuevo` | `users.py` | Creates a user: username (leading/trailing spaces are stripped; 3 to 50 characters: letters, digits, dot, hyphen or underscore), one or more roles and a password of at least 10 characters, repeated. An error re-renders the form with 400 (keeps username and roles, never the password) without writing anything; a duplicate username answers "Ese usuario ya existe." ("That user already exists.") through the UNIQUE constraint. On success, redirects to `/usuarios` with "Usuario creado." | `user_admin.validate_new_user`, `db.create_user` | `user_form.html` | `@permission_required("users.manage")` |
+| GET/POST | `/usuarios/<id>` | `users.py` | Edits a user's roles and the Activo (Active) checkbox (the username cannot be changed). The rules of `user_admin.validate_user_update` (see "Roles and permissions") answer 400 with the message and write nothing; on success, saves roles and status in a single transaction and redirects to the same page with "Cambios guardados." ("Changes saved."). Unknown id → 404 | `user_admin.validate_user_update`, `db.get_user_by_id`, `db.set_user_roles`, `db.update_user` | `user_form.html` | `@permission_required("users.manage")` |
+| POST | `/usuarios/<id>/password` | `users.py` | Changes a user's password (at least 10 characters, repeated). An error re-renders the edit page with 400; on success, redirects to `/usuarios/<id>` with "Contraseña actualizada." ("Password updated."). Unknown id → 404 | `user_admin.validate_password`, `db.set_user_password` | (redirect) / `user_form.html` | `@permission_required("users.manage")` |
+| GET | `/usuarios/roles` | `users.py` | "Roles y permisos" ("Roles and permissions"): table Rol (the label, with "(del sistema)" ("(system)") for the seeded roles) / Permisos ("Todos" ("All") for Administrador, otherwise how many codes it has stored) / Usuarios (how many users, active or not, have the role) / Editar, in the order of `db.list_roles`, with the "Nuevo rol" ("New role") button and the last-action notice. It never shows the internal name of a role | `db.list_roles` | `roles.html` | `@permission_required("users.manage")` |
+| GET/POST | `/usuarios/roles/nuevo` | `users.py` | Creates a custom role: "Nombre del rol" ("Role name") (leading/trailing spaces are stripped; 1 to 60 characters; it cannot repeat another role's name even if case or accents differ) and at least one permission from the catalog (`db.list_permissions`; an unknown code is ignored). The internal name (`custom_` + 8 hexadecimal characters) is generated by `user_admin.new_role_name`. An error re-renders the form with 400 (keeps name and permissions) without writing anything; on success, redirects to `/usuarios/roles` with "Rol creado." ("Role created.") | `user_admin.clean_permissions`, `user_admin.validate_role`, `db.create_role` | `role_form.html` | `@permission_required("users.manage")` |
+| GET/POST | `/usuarios/roles/<name>` | `users.py` | Edits a role. Administrador is read-only (all checkboxes ticked and disabled, no save button; a POST responds 400 without writing). For the other system roles the name is not changed (any submitted one is ignored) but the permissions are; for custom roles both are changed. Same rules and errors as on create; on success, redirects to the same page with "Cambios guardados.". The change applies on the next request of each user with the role. Unknown name → 404 | `user_admin.clean_permissions`, `user_admin.validate_role`, `db.get_role`, `db.update_role` | `role_form.html` | `@permission_required("users.manage")` |
+| POST | `/usuarios/roles/<name>/delete` | `users.py` | Deletes a custom role with no users ("Eliminar rol" ("Delete role") button with confirmation, only on custom roles). A system role or one with assigned users (active or not) re-renders the edit page with 400 and the message; on success, redirects to `/usuarios/roles` with "Rol eliminado." ("Role deleted."). Unknown name → 404 | `user_admin.validate_role_delete`, `db.delete_role` | (redirect) / `role_form.html` | `@permission_required("users.manage")` |
+| GET | `/declaraciones` | `declarations.py` | List of sworn declarations from the public form: **one row per declaration** with the declarant (name and `acting_as`), the number of ownership cards, the **total plates** (sum of `plate_quantity`), a compact summary (`ABC123 · DEF45G +3`, and the reasons counted per card, `PÉRDIDA` first: `1 deterioro` or `2 pérdida · 1 deterioro`, in red if there is any loss), **a single status badge** (the derived *stage*, `declaration_stage`), alerts (union) with the number of the card that caused them, and date. Every declaration from the public form is left `pending_review` (with or without alerts) and creates nothing until the point of sale approves it. Stages (badge and `?stage=` tabs, computed in SQL in `db.list_declarations(stage=...)`): **Por revisar** ("To review") (`to_review`, default tab with counter: `pending_review`), **Falta autenticación** ("Authentication missing") (`awaiting_notarization`: approved, with some `PÉRDIDA` card, `notarized_received_at` NULL and no order), **Lista para pedido** ("Ready for order") (`ready`: approved, no pending notarial step and no order), **Atendidas** ("Attended") (`attended`: already has `production_order_id`) and **Rechazadas** ("Rejected") (`rejected`), plus **Todas** ("All") (`?stage=all`); the old `?status=`/`?attended=` parameters are no longer read. The reason (`PÉRDIDA`/`DETERIORO`) remains a separate badge per card. `?reason=` filter (`all` = Todos by default, `loss` = Pérdida, `deterioration` = Deterioro; **one** card with that reason is enough; also accepts the stored words `PÉRDIDA`/`DETERIORO`; it is combined with the stage and the search and kept across tabs), `?q=` search (declarant or plate/license/owner of **any** card), pending first and a pending counter. The cards are loaded with a single query (`db.list_cards_for_declarations`). On narrow screens each row is shown as a card | `db.list_declarations(stage, query, reason)`, `db.declaration_stage`, `requires_notarization`, `db.list_cards_for_declarations` | `declarations.html` | `@permission_required("declarations.review")` (the `production` role gets 403: it handles identity data) |
+| GET | `/declaraciones/<id>` | `declarations.py` | Detail: the same single stage badge next to the title, declarant block, their single signature and the notarized PDF, and **one section per ownership card** ("Tarjeta de propiedad N de M" ("Ownership card N of M")) with its data, reason, number of plates, its owner (and DUEÑO/POSEEDOR relationship) and, once approved, the customer and card created or linked (link to `/customers/<id>` for admin only, because that screen is admin-only). Each card's reason is a badge (`PÉRDIDA` in red, `DETERIORO` in blue). If pending, a summary "Retenida por X de M tarjetas" ("Held by X of M cards") (only when some card has alerts; a declaration **without alerts** is also reviewed: the "Aprobar" ("Approve") block says "Esta declaración no tiene alertas" ("This declaration has no alerts") and explains that approving creates or links the customer, the gestor if applicable and each ownership card) with links to the cards that hold it and, inside **each** card, the explanation of **its** alerts with the real context (date of the last manufacture and since when it can be repeated, existing cards and their owners, type/document of the existing customer, same name repeated in the declaration). The gestor's alerts (type/document) are copied to all cards and labeled "Gestor ...". Authenticated staff only; alerts are never shown on public pages. If the declaration is **approved and not attended**, the highlighted button **"Crear pedido"** ("Create order") appears at the top (link to `/ingest?declaration_id=<id>`), visible to admin and `point_of_sale` (the point of sale is who reviews: approving, rejecting and reassigning also belong to both roles); if pending, the notice "el punto de venta revisa todas las declaraciones; el pedido se podrá crear cuando el punto de venta apruebe la declaración" ("the point of sale reviews all declarations; the order can be created once the point of sale approves the declaration") is shown, and if rejected nothing appears. If it is approved and has **at least one `PÉRDIDA` card**, the **"Autenticación notarial"** ("Notarial authentication") block appears: while `notarized_received_at` is NULL it says "Pendiente" ("Pending") (download the PDF, hand it to the customer and mark when it returns authenticated), with the "Descargar PDF para autenticación" ("Download PDF for authentication") button and the "Marcar autenticación recibida" ("Mark authentication received") button (`POST .../notarized`), and **instead of "Crear pedido"** the note "Falta la autenticación notarial…" ("Notarial authentication missing…") is shown; once received it shows the date and who recorded it, with "Deshacer" ("Undo") (`POST .../notarized/undo`, hidden if there is already an order) and the "Crear pedido" button comes back. `DETERIORO`-only declarations are never blocked and, if approved, show an optional "Descargar PDF" ("Download PDF") button (`#optional-pdf`). If it already has `production_order_id` the badge is **"Atendida"** with the link to the order (`/records/<id>`, with its order number) instead of the button. The «Declaración» block shows «Tratamiento de datos: Autorizado el <fecha>» ("Data processing: Authorized on <date>") and «Información comercial: Sí / No» ("Commercial information: Yes / No") (or «No registrada» ("Not recorded") on declarations prior to migration 0013). Unknown id redirects to the list | `db.get_declaration`, `db.order_detail`, `db.list_declaration_cards`, `db.last_fabrication_date`, `db.find_orders_for_plate`, `db.get_ownership_card*`, `db.get_customer*` | `declaration_detail.html` | `@permission_required("declarations.review")` |
+| GET | `/declaraciones/<id>/file/<kind>` | `declarations.py` | Authenticated download (`kind` = `signature` (the declarant's single signature, which covers all cards), `notarized_pdf`, `id_front` or `id_back` (photos of the declarant's ID card; the type comes from the stored extension); each card's photos are served at `GET /declaraciones/<id>/cards/<card_id>/photo/<front|back|used_plates>` (`used_plates` = the photo of the card's used plate(s)), with the same headers and 404 if the card does not belong to that declaration). `GET /declaraciones/<id>/photos.zip` (`@permission_required("declarations.review")`) downloads all the declaration's photos in a ZIP (`cedula-frente/atras`, `tarjeta-N-PLACA-frente/atras`, `tarjeta-N-PLACA-placas-usadas`; skips those no longer on disk; 404 if none remain), `attachment`, `no-store`; the detail shows the «Descargar todas las fotos (ZIP)» ("Download all photos (ZIP)") button when there are photos, via `resolve_upload_path`; `inline`, `nosniff`, `no-store`; 404 if the type, the path or the file do not exist. A file name in the URL is never accepted | `db.get_declaration` | (file) | `@permission_required("declarations.review")` |
+| POST | `/declaraciones/<id>/approve` | `declarations.py` | Approves the **whole** declaration (all or nothing; the "Aprobar declaración" ("Approve declaration") button always appears on pending ones, with or without alerts). Fields: `note` (optional) and a checkbox `reassign_<declaration card id>` for each card with the `card_other_owner` alert (the checkbox only appears on those cards and is sent with the `form="approve-form"` attribute), which are passed as `reassign_card_ids`. A `ValueError` (which names the card: "tarjeta 2 (placa DEF456)" ("card 2 (plate DEF456)")) re-renders the detail with the message (400), keeps the ticked checkboxes and changes nothing | `declarations.approve_declaration` | (redirect) | `@permission_required("declarations.review")` (seeded for admin and `point_of_sale`; `reviewed_by` = the session user; `production` gets 403) |
+| POST | `/declaraciones/<id>/reject` | `declarations.py` | Rejects the whole declaration without creating anything; the note (`note`) is mandatory | `declarations.reject_declaration` | (redirect) | `@permission_required("declarations.review")` |
+| GET | `/declaraciones/<id>/pdf` | `declarations.py` | PDF of the declaration to hand to the customer (printed). With any `PÉRDIDA` card it is the one the customer has authenticated at a notary; for `DETERIORO` it is an additional **optional download** (the detail shows a "Descargar PDF" button and does not require authentication). Available for any **approved** declaration; pending or rejected → 404 with a Spanish message. Reads the declarant's signature with `resolve_upload_path` (no signature or missing file → `signature_png=None`) and calls `declaration_pdf.build_declaration_pdf(declaration, cards, signature_png, issued_at)`. Response `attachment` `declaracion-<id>.pdf`, `application/pdf`, `nosniff`, `no-store` | `declaration_pdf.build_declaration_pdf`, `db.list_declaration_cards` | (file) | `@permission_required("declarations.review")` |
+| POST | `/declaraciones/<id>/notarized` | `declarations.py` | Marks that the customer returned the declaration authenticated (`db.set_declaration_notarized_received` with the session's `user_id`). Idempotent (marking twice keeps the first mark). Unknown id → list; declaration not approved or without a `PÉRDIDA` card → detail with error (400), no changes | `db.set_declaration_notarized_received` | (redirect) | `@permission_required("declarations.review")` |
+| POST | `/declaraciones/<id>/notarized/undo` | `declarations.py` | Undoes the previous mark (back to NULL). Rejected (400) if the declaration was already attended by an order | `db.set_declaration_notarized_received` | (redirect) | `@permission_required("declarations.review")` |
+| GET | `/cuadre` | `cash_summary.py` | Cash reconciliation (cuadre de caja): totals by date/payment method in `[desde, hasta]` (default today, Phase 5b) | `cash_summary.build_cash_summary` | `cash_summary.html` | `@permission_required("cash_summary.view")` |
+| GET | `/cuadre/pdf` | `cash_summary.py` | Same report, exported to PDF | `cash_summary.build_cash_summary`, `render_cash_summary_pdf` | (PDF download) | `@permission_required("cash_summary.view")` |
+| GET | `/records` | `records.py` | Records: recent ones, or search by plate/order | `db.recent_orders`, `search_plates_by_number`, `search_orders_by_number` | `records.html` | `@permission_required("records.view")` |
+| GET | `/records/<id>` | `records.py` | Order detail (view or edit depending on role); preserves `?q=` for the back link | `db.order_detail` | `record_detail.html` | `@permission_required("records.view")` |
+| POST | `/records/<id>/save` | `records.py` | Saves header + plates edit (insert/update/delete) in one transaction; re-resolves `customer_id` from `requested_by` (never rewrites attributes of an existing customer, B5) | `db.update_order`, `delete_plate`, `normalize.normalize_row`, `db.resolve_or_create_customer`, `update_plate_full`, `insert_plate`, `recalc_inventory` | `record_detail.html` / redirect | `@permission_required("orders.capture")` |
+| POST | `/records/search-pdf` | `records.py` | Uploads an order (PDF or `.xlsx`) and checks its plates against the DB (**read-only**) | `pedido_upload.parse_uploaded_pedido`, `normalize.is_real_plate`, `db.find_orders_for_plate` | `records.html` | `@permission_required("records.view")` |
+| POST | `/records/delete` | `records.py` | Deletes a whole order and its plates | `db.delete_order`, `recalc_inventory` | (redirect) | `@permission_required("records.delete")` |
 
-`/ingest/pdf` (POST), `GET /ingest?declaration_id=N` y `/records/search-pdf`
-**nunca escriben en la BD** — documentado explícitamente como solo-lectura/preview
-en sus docstrings.
+`/ingest/pdf` (POST), `GET /ingest?declaration_id=N` and `/records/search-pdf`
+**never write to the DB** — explicitly documented as read-only/preview
+in their docstrings.
 
-Una placa repuesta desde una declaración sí queda con `is_possible_duplicate`
-(la exención solo levanta el bloqueo previo al guardado; `process_rows` marca
-igual toda placa que ya existía), así que aparece en `/review` y en el resumen
-("Posibles duplicados") para que el personal la confirme.
+A plate replaced from a declaration does end up with `is_possible_duplicate`
+(the exemption only lifts the pre-save block; `process_rows` still flags
+every plate that already existed), so it appears in `/review` and in the summary
+("Posibles duplicados" ("Possible duplicates")) for staff to confirm it.
 
-## Roles y permisos (`auth.py`)
+## Roles and permissions (`auth.py`)
 
-- **Catálogo de permisos**: `app/core/permissions.py::PERMISSIONS` — cada
-  acción que se le puede conceder a un rol, con código en inglés
-  (`orders.capture`, `records.view`, ...) y etiqueta en español. Los
-  permisos de cada rol viven en la tabla `role_permissions` (ver
+- **Permission catalog**: `app/core/permissions.py::PERMISSIONS` — every
+  action that can be granted to a role, with an English code
+  (`orders.capture`, `records.view`, ...) and a Spanish label. The
+  permissions of each role live in the `role_permissions` table (see
   [`DATABASE.md`](DATABASE.md)).
-- **Varios roles por usuario**: los roles de cada usuario viven en la tabla
-  `user_roles` (migración `0018`), y un usuario puede tener varios. Sus
-  permisos son la **unión** de los permisos de todos sus roles; si
-  cualquiera de ellos es `admin`, tiene todos los permisos. Todos los roles
-  del usuario cuentan en cada sesión.
-- **Roles sembrados**: `admin`, `point_of_sale` (PTO.V), `production` —
-  valores en inglés a propósito: el nombre del rol nunca se muestra al usuario,
-  solo se compara para permisos, así que no es dato de negocio en español
-  (ver `CLAUDE.md`). Hasta `app/migrations/0004_translate_role_values_to_english.sql`
-  los valores reales eran `produccion`/`punto_venta`. La siembra de
-  `role_permissions` reproduce el acceso de antes (los permisos de
-  `point_of_sale` y `production` se pueden cambiar después en
-  `/usuarios/roles`; los de abajo son los sembrados):
-  - `admin` **siempre tiene todos los permisos**, guarde lo que guarde
-    `role_permissions` para él (`effective_permissions`), así que ningún
-    admin puede quedar bloqueado.
+- **Several roles per user**: each user's roles live in the `user_roles`
+  table (migration `0018`), and a user can have several. Their
+  permissions are the **union** of the permissions of all their roles; if
+  any of them is `admin`, they have all permissions. All of the user's
+  roles count in every session.
+- **Seeded roles**: `admin`, `point_of_sale` (PTO.V), `production` —
+  values in English on purpose: the role name is never shown to the user,
+  it is only compared for permissions, so it is not Spanish business data
+  (see `CLAUDE.md`). Up to `app/migrations/0004_translate_role_values_to_english.sql`
+  the real values were `produccion`/`punto_venta`. The seeding of
+  `role_permissions` reproduces the previous access (the permissions of
+  `point_of_sale` and `production` can be changed later in
+  `/usuarios/roles`; the ones below are the seeded ones):
+  - `admin` **always has all permissions**, whatever
+    `role_permissions` stores for it (`effective_permissions`), so no
+    admin can end up locked out.
   - `point_of_sale`: `orders.capture` (`/ingest`, `/ingest/pdf`,
     `/records/<id>/save`), `cash_summary.view` (`/cuadre`),
-    `declarations.review` (`/declaraciones`), `records.view` y los códigos
-    de producción.
-  - `production`: `records.view` (solo consulta) y los códigos de
-    producción.
-- **Chequeo en cada request**: `current_user()` lee el usuario (`users`),
-  sus roles (`user_roles`) y los permisos efectivos de todos ellos
-  (`role_permissions`, con `db.get_user_permissions`) en una sola
-  conexión, la primera vez que se pide en el request, y los guarda en
-  `flask.g` (las llamadas siguientes del mismo request no consultan otra
-  vez).
-  - `@permission_required("<código>")` protege cada ruta: sesión
-    incompleta, usuario inexistente o **desactivado** → limpia la sesión y
-    redirige a `/login`; si ninguno de sus roles tiene el código → 403. Cada ruta
-    pide un solo código, y **ninguna ruta que escribe acepta
+    `declarations.review` (`/declaraciones`), `records.view` and the
+    production codes.
+  - `production`: `records.view` (read-only) and the production
+    codes.
+- **Check on every request**: `current_user()` reads the user (`users`),
+  their roles (`user_roles`) and the effective permissions of all of them
+  (`role_permissions`, with `db.get_user_permissions`) in a single
+  connection, the first time it is requested in the request, and stores them in
+  `flask.g` (later calls in the same request do not query again).
+  - `@permission_required("<code>")` protects each route: incomplete
+    session, nonexistent or **deactivated** user → clears the session and
+    redirects to `/login`; if none of their roles has the code → 403. Each route
+    asks for a single code, and **no route that writes accepts
     `records.view`**.
-  - `@authenticated` hace los mismos chequeos sin pedir permiso; solo lo
-    usa `/`.
-  - `has_permission(código)` responde `True` solo si hay un usuario activo
-    con algún rol que tiene el código; sin sesión responde `False` (nunca falla).
-    Los templates lo usan como `can('...')`.
-  - Por eso **desactivar un usuario lo saca en su próximo request**, y
-    **asignarle o quitarle un rol aplica en el próximo request**: los roles
-    se leen de la base de datos, nunca de la sesión.
-- **Login vía tabla `users` (Fase 2)** — `app/web/auth.py::authenticate`
-  consulta `users` (vía `app/core/db/users.py`) en cada login, ya no lee
-  `AUTH_USERS`/`AUTH_ROLES`. Esas dos variables de entorno y las funciones
-  `load_users()`/`load_roles()` que las parsean **se mantienen**, pero
-  solo como el código que hizo el backfill histórico (`app.schema_migrate`)
-  — no los toca el login en vivo. La sesión guarda solo `user` y, desde la
-  Fase 2, `user_id` (`users.id`) → `production_orders.created_by`; **no
-  guarda el rol**. Una sesión de antes de la Fase 2 (sin `user_id`) se trata
-  como stale y fuerza un login nuevo, no un error. Una cookie emitida antes
-  de la migración `0018`, que todavía trae `role`, sigue siendo válida: ese
-  valor se ignora y el acceso sale de los roles en la base de datos.
-- **Administración de usuarios**: los administradores (permiso
-  `users.manage`) crean usuarios, les asignan roles, los activan o
-  desactivan y les cambian la contraseña en `/usuarios`. Las reglas viven en
-  `app/core/user_admin.py`: nadie puede desactivar su propio usuario ni
-  quitarse el rol de administrador, siempre debe quedar al menos un
-  administrador activo, el nombre de usuario no se cambia después de
-  creado, y un usuario nunca se borra: se desactiva. Cada creación, cambio
-  y cambio de contraseña deja una línea en el log (quién, a quién, roles),
-  nunca la contraseña ni su hash.
-- **Roles y permisos (crear un rol)**: en Usuarios → Roles y permisos →
-  Nuevo rol, un administrador escribe el nombre del rol (no puede repetir
-  el de otro rol aunque cambien mayúsculas o tildes) y marca al menos un
-  permiso; después lo asigna en el form de cada usuario (`/usuarios/<id>`),
-  donde el rol aparece de una vez. El nombre interno del rol
-  (`custom_` + 8 hexadecimales) lo genera la app y nunca se muestra.
-  Administrador no se puede editar (siempre tiene todos los permisos); los
-  nombres de los roles del sistema (Administrador, Punto de venta,
-  Producción) no cambian, pero los permisos de Punto de venta y Producción
-  sí. Solo se pueden eliminar los roles propios que no tienen usuarios
-  (activos o no). Las reglas viven en `app/core/user_admin.py`
-  (`validate_role`, `validate_role_delete`), cada cambio aplica en el
-  siguiente request de los usuarios con el rol, y crear, editar o eliminar
-  un rol deja una línea en el log (quién y el nombre interno del rol).
-- **Navegación**: `app/web/navigation.py::NAV_ITEMS` es la lista ordenada de
-  pestañas (endpoint, etiqueta, permiso, endpoints activos). El context
-  processor de `app.py` expone `nav_items` (solo las que el usuario puede
-  abrir) y `can`; `_nav.html` las recorre. Las tareas siguientes agregan
-  sus pestañas a esa lista.
-- `landing_url()` (a dónde cae un login sin `?next=`, y `/`): la primera
-  entrada de `NAV_ITEMS` que el usuario puede abrir. Si no tiene ninguna,
-  `/` responde **403** con `no_permissions.html` ("Tu usuario no tiene
-  permisos asignados. Pide a un administrador que te asigne un rol.", con
-  el botón Salir), sin bucle de redirecciones.
-- Sesión firmada con `SECRET_KEY` (obligatoria, sin default), cookie
-  `HTTPONLY` + `SAMESITE=Lax` + `SECURE` condicionada a `COOKIE_SECURE`,
-  12 horas de duración.
-- Protección CSRF en toda la app (Flask-WTF `CSRFProtect`): todo POST lleva
-  el token de la sesión; sin él responde 400 con `csrf_error.html`. Ver
-  "Protección CSRF".
-- Guard anti open-redirect en `?next=` del login: solo rutas relativas del
-  mismo origen.
+  - `@authenticated` does the same checks without asking for a permission; only
+    `/` uses it.
+  - `has_permission(code)` returns `True` only if there is an active user
+    with some role that has the code; without a session it returns `False` (never fails).
+    Templates use it as `can('...')`.
+  - That is why **deactivating a user kicks them out on their next request**, and
+    **assigning or removing a role applies on the next request**: roles
+    are read from the database, never from the session.
+- **Login via the `users` table (Phase 2)** — `app/web/auth.py::authenticate`
+  queries `users` (via `app/core/db/users.py`) on every login, and no longer reads
+  `AUTH_USERS`/`AUTH_ROLES`. Those two environment variables and the
+  `load_users()`/`load_roles()` functions that parse them **are kept**, but
+  only as the code that did the historical backfill (`app.schema_migrate`)
+  — live login does not touch them. The session stores only `user` and, since
+  Phase 2, `user_id` (`users.id`) → `production_orders.created_by`; it **does not
+  store the role**. A pre-Phase 2 session (without `user_id`) is treated
+  as stale and forces a new login, not an error. A cookie issued before
+  migration `0018`, which still carries `role`, remains valid: that
+  value is ignored and access comes from the roles in the database.
+- **User administration**: administrators (permission
+  `users.manage`) create users, assign them roles, activate or
+  deactivate them and change their password in `/usuarios`. The rules live in
+  `app/core/user_admin.py`: nobody can deactivate their own user or remove
+  their own administrator role, at least one active administrator must always
+  remain, the username cannot be changed after
+  creation, and a user is never deleted: it is deactivated. Every creation, change
+  and password change leaves a line in the log (who, to whom, roles),
+  never the password or its hash.
+- **Roles and permissions (creating a role)**: in Usuarios → Roles y permisos →
+  Nuevo rol (Users → Roles and permissions → New role), an administrator types the role name (it cannot repeat
+  another role's name even if case or accents differ) and ticks at least one
+  permission; then assigns it in each user's form (`/usuarios/<id>`),
+  where the role shows up right away. The internal role name
+  (`custom_` + 8 hexadecimal characters) is generated by the app and never shown.
+  Administrador cannot be edited (it always has all permissions); the
+  names of the system roles (Administrador, Punto de venta,
+  Producción) do not change, but the permissions of Punto de venta and Producción
+  do. Only custom roles that have no users
+  (active or not) can be deleted. The rules live in `app/core/user_admin.py`
+  (`validate_role`, `validate_role_delete`), each change applies on the
+  next request of the users with the role, and creating, editing or deleting
+  a role leaves a line in the log (who and the internal role name).
+- **Navigation**: `app/web/navigation.py::NAV_ITEMS` is the ordered list of
+  tabs (endpoint, label, permission, active endpoints). The `app.py` context
+  processor exposes `nav_items` (only those the user can
+  open) and `can`; `_nav.html` iterates over them. Later tasks add
+  their tabs to that list.
+- `landing_url()` (where a login without `?next=` lands, and `/`): the first
+  entry of `NAV_ITEMS` the user can open. If they have none,
+  `/` responds **403** with `no_permissions.html` ("Tu usuario no tiene
+  permisos asignados. Pide a un administrador que te asigne un rol." ("Your user has no permissions assigned. Ask an administrator to assign you a role."), with
+  the Salir ("Log out") button), with no redirect loop.
+- Session signed with `SECRET_KEY` (mandatory, no default), cookie
+  `HTTPONLY` + `SAMESITE=Lax` + `SECURE` conditioned on `COOKIE_SECURE`,
+  12 hours long.
+- CSRF protection across the whole app (Flask-WTF `CSRFProtect`): every POST carries
+  the session token; without it the response is 400 with `csrf_error.html`. See
+  "CSRF protection".
+- Anti open-redirect guard on the login's `?next=`: only relative paths of the
+  same origin.
 
-## Protección CSRF
+## CSRF protection
 
-`app/web/csrf.py` crea el `CSRFProtect` de Flask-WTF y `app.py` lo activa
-con `csrf.init_app(app)` para **toda la app**: cualquier POST, PUT, PATCH o
-DELETE sin un token válido se rechaza con **400** antes de que corra la
-ruta, así que no cambia nada.
+`app/web/csrf.py` creates Flask-WTF's `CSRFProtect` and `app.py` activates it
+with `csrf.init_app(app)` for the **whole app**: any POST, PUT, PATCH or
+DELETE without a valid token is rejected with **400** before the
+route runs, so nothing changes.
 
-- Todo form nuevo con `method="post"` empieza con:
+- Every new form with `method="post"` starts with:
 
   ```html
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   ```
 
-- Toda petición JS que cambia datos envía el token en el encabezado
-  `X-CSRFToken` (como el XHR de `ingest_pdf.html`, que lo lee del input
-  oculto del form).
-- Un token faltante o inválido muestra `csrf_error.html` con status 400:
-  "La sesión expiró, recarga la página e intenta de nuevo." y un enlace a
-  `/declaracion` (si el envío venía de ahí) o a `/`. Es una página suelta,
-  sin `_nav.html` ni consultas a la base, con `Cache-Control: no-store`.
-- `/declaracion` está exenta del chequeo automático y llama a
-  `csrf.protect()` a mano, justo después de subir su límite de cuerpo a
-  40 MB: el chequeo automático lee el form antes de la ruta, con el límite
-  global de 12 MB, y rechazaría declaraciones válidas de entre 12 y 40 MB.
-  Su `form_token`, Turnstile, límite por IP y el 413 amigable siguen igual.
-- `WTF_CSRF_TIME_LIMIT=None`: el token no tiene un vencimiento propio, dura
-  lo que dura la sesión (12 horas para el personal, la sesión del navegador
-  para los visitantes anónimos).
-- `/logout` es solo POST: ninguna ruta cambia datos con un GET.
-- Pruebas: el fixture `client` de `tests/web/conftest.py` (y `_fresh_client`
-  de `tests/web/test_users.py`) apaga CSRF (`WTF_CSRF_ENABLED=False`) solo
-  para esas pruebas y restaura el valor al terminar;
-  `tests/web/test_csrf.py` lo prueba encendido, incluido un recorrido de
-  `app/web/templates/*.html` que exige `csrf_token()` en cada form POST.
+- Every JS request that changes data sends the token in the
+  `X-CSRFToken` header (like the XHR in `ingest_pdf.html`, which reads it from the
+  form's hidden input).
+- A missing or invalid token shows `csrf_error.html` with status 400:
+  "La sesión expiró, recarga la página e intenta de nuevo." ("The session expired, reload the page and try again.") and a link to
+  `/declaracion` (if the submission came from there) or to `/`. It is a standalone page,
+  with no `_nav.html` and no database queries, with `Cache-Control: no-store`.
+- `/declaracion` is exempt from the automatic check and calls
+  `csrf.protect()` by hand, right after raising its body limit to
+  40 MB: the automatic check reads the form before the route, with the
+  global 12 MB limit, and would reject valid declarations between 12 and 40 MB.
+  Its `form_token`, Turnstile, per-IP limit and the friendly 413 stay the same.
+- `WTF_CSRF_TIME_LIMIT=None`: the token has no expiry of its own, it lasts
+  as long as the session (12 hours for staff, the browser session
+  for anonymous visitors).
+- `/logout` is POST only: no route changes data with a GET.
+- Tests: the `client` fixture in `tests/web/conftest.py` (and `_fresh_client`
+  in `tests/web/test_users.py`) turns CSRF off (`WTF_CSRF_ENABLED=False`) only
+  for those tests and restores the value at the end;
+  `tests/web/test_csrf.py` tests it turned on, including a walk through
+  `app/web/templates/*.html` that requires `csrf_token()` in every POST form.
 
-## Rutas públicas
+## Public routes
 
-Solo estas rutas responden sin sesión: `/login`, `/logout`, `/healthz` y
-`/declaracion` (más `/static`). `tests/web/test_public_routes.py` recorre
-`app.url_map` y falla si cualquier otra ruta contesta 200 a una petición
-anónima; agregar una ruta pública exige editar su lista a propósito.
+Only these routes respond without a session: `/login`, `/logout`, `/healthz` and
+`/declaracion` (plus `/static`). `tests/web/test_public_routes.py` walks
+`app.url_map` and fails if any other route answers 200 to an
+anonymous request; adding a public route requires editing its list on purpose.
 
-`/declaracion` se apaga sola: sin llaves de Turnstile (ni `TURNSTILE_BYPASS`)
-responde 503, así que producción no expone nada hasta que el dueño configure
-Cloudflare. `app.py` fija `MAX_CONTENT_LENGTH` en 12 MB para toda la app (lo
-necesitan los PDFs de `/ingest/pdf`; el formulario público ya no sube PDF, solo
-la firma PNG en base64, unos 270 KB); un cuerpo más grande recibe un 413
-amigable en esa ruta.
+`/declaracion` switches itself off: without Turnstile keys (nor `TURNSTILE_BYPASS`)
+it responds 503, so production exposes nothing until the owner configures
+Cloudflare. `app.py` sets `MAX_CONTENT_LENGTH` to 12 MB for the whole app (the
+PDFs of `/ingest/pdf` need it; the public form no longer uploads a PDF, only
+the PNG signature in base64, about 270 KB); a larger body gets a friendly
+413 on that route.
 
-### Formulario público de declaración
+### Public declaration form
 
-Este formulario es **solo para personas que declaran por sí mismas** (trámite
-"1 a 1"): no es para gestores. Para los gestores se planea un endpoint público
-aparte; el núcleo (`declarations.py`), la base de datos y la pantalla de
-revisión `/declaraciones` ya soportan `acting_as = GESTOR`, pero este
-formulario no lo ofrece.
+This form is **only for people who declare for themselves** ("1 to 1"
+procedure): it is not for gestores. A separate public endpoint is planned for
+gestores; the core (`declarations.py`), the database and the `/declaraciones`
+review screen already support `acting_as = GESTOR`, but this
+form does not offer it.
 
-Una declaración tiene **un solo declarante** (la persona que llena el
-formulario, propietaria o poseedora) y **de 1 a `MAX_CARDS` (30) tarjetas de
-propiedad**, todas del declarante. Solo el declarante firma, una vez: la firma
-cubre todas las tarjetas. Secciones: 1 Calidad en la que actúa (PROPIETARIO /
-POSEEDOR), 2 Datos del declarante, 3 Tarjetas de propiedad, texto legal
-(4 a 6), 7 Autorización de tratamiento de datos personales y 8 Firma.
+A declaration has **a single declarant** (the person who fills in the
+form, owner or possessor) and **from 1 to `MAX_CARDS` (30) ownership
+cards**, all belonging to the declarant. Only the declarant signs, once: the signature
+covers all cards. Sections: 1 Calidad en la que actúa (PROPIETARIO /
+POSEEDOR) (Capacity in which they act), 2 Datos del declarante (Declarant data), 3 Tarjetas de propiedad (Ownership cards), legal text
+(4 to 6), 7 Autorización de tratamiento de datos personales (Authorization for personal data processing) and 8 Firma (Signature).
 
-La sección 7 muestra el texto de la autorización de la Ley 1581 de 2012
-(título y dos párrafos, tal como lo redactó INGSE; no se modifican palabras), con
-el correo `ovelez@ingse.co` y la política
-(`https://placasvehiculares.ingse.co/#placas`, se abre en otra pestaña) como
-enlaces. Pide dos cosas, ambas obligatorias y **sin marcar** al cargar: la casilla
-`accept_data_policy` y la elección `marketing_consent` (`SI` / `NO`; cualquiera
-de las dos deja enviar, pero hay que elegir una). El servidor repite la
-validación: `marketing_consent` con cualquier otro valor cuenta como sin
-responder. Ambas se conservan al volver con errores. El texto vive en
-constantes de `app/core/declarations.py` (`DATA_POLICY_*`, `MARKETING_*`), que
-leen tanto el formulario como el PDF. No se repite el bloque
-Nombre / C.C. / Empresa / Firma / Fecha del documento original: el formulario
-ya pide nombre, cédula y firma, y la fecha queda en `accepted_data_policy_at`.
+Section 7 shows the authorization text of Law 1581 of 2012
+(title and two paragraphs, as worded by INGSE; no words are modified), with
+the email `ovelez@ingse.co` and the policy
+(`https://placasvehiculares.ingse.co/#placas`, opens in another tab) as
+links. It asks for two things, both mandatory and **unticked** on load: the checkbox
+`accept_data_policy` and the choice `marketing_consent` (`SI` / `NO`; either
+one lets the form be submitted, but one must be chosen). The server repeats the
+validation: `marketing_consent` with any other value counts as not
+answered. Both are kept when returning with errors. The text lives in
+constants of `app/core/declarations.py` (`DATA_POLICY_*`, `MARKETING_*`), which
+both the form and the PDF read. The original document's
+Nombre / C.C. / Empresa / Firma / Fecha block (Name / ID no. / Company / Signature / Date) is not repeated: the form
+already asks for name, ID number and signature, and the date is kept in `accepted_data_policy_at`.
 
-Cada bloque "Tarjeta de propiedad N" lleva los datos de la tarjeta (placa,
-licencia de tránsito, motor, chasis, tipo de vehículo, matriculado en, marca),
-el **motivo** (DETERIORO / PÉRDIDA) por tarjeta y la **cantidad de placas**
-(1 o 2). El tipo de placa limita la cantidad con
-`normalize.max_plates_per_card`: los carros (particular y público) permiten 1
-o 2 (por defecto 2) y los demás tipos solo 1. El mapa tipo a máximo viaja a la
-página como JSON en `data-max-by-type`. El **total de placas** se muestra
-sumado y de solo lectura; nunca se digita ni se envía.
+Each "Tarjeta de propiedad N" ("Ownership card N") block carries the card's data (plate,
+transit license, engine, chassis, vehicle type, registered in, brand),
+the **reason** (DETERIORO / PÉRDIDA) per card and the **number of plates**
+(1 or 2). The plate type limits the quantity with
+`normalize.max_plates_per_card`: cars (private and public) allow 1
+or 2 (default 2) and the other types only 1. The type-to-maximum map travels to the
+page as JSON in `data-max-by-type`. The **total of plates** is shown
+summed and read-only; it is never typed or sent.
 
-Las tarjetas no llevan datos de otro dueño: el declarante es el dueño o
-poseedor de todas. Si alguien envía `acting_as = GESTOR` a mano, el servidor
-lo rechaza como un error de validación normal (400, antes de guardar
-archivos): vuelve a dibujar el formulario con "Este formulario es solo para
-personas que declaran por sí mismas…" y nunca llama a `submit_declaration`. Los
-campos `card_<i>_owner_*` que lleguen se ignoran. **El formulario no tiene
-ningún campo de archivo**: junto al motivo de cada tarjeta hay una nota ("Si
+Cards carry no data from another owner: the declarant is the owner or
+possessor of all of them. If someone sends `acting_as = GESTOR` by hand, the server
+rejects it as a normal validation error (400, before saving
+files): it redraws the form with "Este formulario es solo para
+personas que declaran por sí mismas…" ("This form is only for people who declare for themselves…") and never calls `submit_declaration`. Any
+`card_<i>_owner_*` fields that arrive are ignored. **The form has no
+file field**: next to each card's reason there is a note ("Si
 declaras pérdida, INGSE te entregará este documento en el mostrador para que lo
-autentiques en una notaría.") que es visible sin JavaScript y que el script
-oculta mientras el motivo de esa tarjeta no sea PÉRDIDA. La página de éxito
-repite el aviso en forma genérica, sin revelar estado.
+autentiques en una notaría." ("If you declare a loss, INGSE will hand you this document at the counter for you to have it authenticated at a notary.")) that is visible without JavaScript and that the script
+hides while that card's reason is not PÉRDIDA. The success page
+repeats the notice generically, without revealing status.
 
-**Qué pasa al enviar:** todas las declaraciones llegan «Por revisar»
-(`pending_review`), tengan o no alertas. Enviar no crea clientes ni tarjetas de
-propiedad: el punto de venta revisa la declaración en `/declaraciones` y, al
-aprobarla, se crean el cliente y las tarjetas. Quien envía siempre ve la misma
-página («Recibimos tu declaración»), sin estado ni alertas.
+**What happens on submit:** all declarations arrive «Por revisar»
+(`pending_review`), whether or not they have alerts. Submitting does not create customers or ownership
+cards: the point of sale reviews the declaration in `/declaraciones` and, when
+approving it, the customer and the cards are created. The sender always sees the same
+page («Recibimos tu declaración», "We received your declaration"), with no status or alerts.
 
-Límite por IP: `MAX_SUBMISSIONS_PER_IP_PER_HOUR` = 20 (constante única en
+Per-IP limit: `MAX_SUBMISSIONS_PER_IP_PER_HOUR` = 20 (single constant in
 `public_declaration.py`).
 
-Campos del POST (`application/x-www-form-urlencoded`): `form_token`, `website` (honeypot),
-`cf-turnstile-response`, `acting_as`, `declarant_<campo>`, `signature` (data
-URL PNG), `accept_terms`, `accept_data_policy`, `marketing_consent` y, por cada tarjeta con índice `i`:
+POST fields (`application/x-www-form-urlencoded`): `form_token`, `website` (honeypot),
+`cf-turnstile-response`, `acting_as`, `declarant_<field>`, `signature` (PNG data
+URL), `accept_terms`, `accept_data_policy`, `marketing_consent` and, for each card with index `i`:
 `card_<i>_plate_number`, `_transit_license`, `_engine_number`,
 `_chassis_number`, `_vehicle_type`, `_registered_in`, `_vehicle_brand`,
-`_reason` y `_plate_quantity`. Los campos de persona son `name`, `document_type`,
+`_reason` and `_plate_quantity`. The person fields are `name`, `document_type`,
 `document_number`, `address`, `neighborhood`, `municipality`, `phone`, `email`.
 
-Los índices los pone el navegador y pueden quedar **dispersos** (0, 2, 5) al
-quitar tarjetas; el servidor lee los que lleguen, en orden numérico. Se
-rechaza (400, antes de construir nada ni guardar archivos) un envío con más de
-`MAX_CARDS` índices distintos, y también uno sin ninguna tarjeta. Una cantidad
-no numérica se convierte en 0 para que la validación la rechace. Tras un error
-de validación se vuelven a dibujar todos los bloques con lo que la persona
-digitó (la firma no se devuelve: hay que volver a firmar). Sin
-JavaScript la página sigue mostrando la primera tarjeta, pero agregar o quitar
-tarjetas y los límites por tipo requieren JavaScript.
+The indices are set by the browser and can end up **sparse** (0, 2, 5) when
+cards are removed; the server reads those that arrive, in numeric order. A
+submission with more than `MAX_CARDS` distinct indices is rejected (400, before building anything or saving files),
+and so is one without any card. A non-numeric quantity
+is converted to 0 so that validation rejects it. After a validation
+error all the blocks are redrawn with what the person
+typed (the signature is not returned: it must be signed again). Without
+JavaScript the page still shows the first card, but adding or removing
+cards and the per-type limits require JavaScript.
 
 ## Templates
 
-No hay `base.html` compartido — cada página es un documento HTML
-independiente que incluye `_nav.html` y duplica su propio `<style>`.
+There is no shared `base.html` — each page is an independent HTML
+document that includes `_nav.html` and duplicates its own `<style>`.
 
-| Template | Qué renderiza |
+| Template | What it renders |
 |---|---|
-| `_nav.html` | Nav compartido: recorre `nav_items` (las entradas de `NAV_ITEMS` que el usuario puede abrir, ver `app/web/navigation.py`) y termina con el botón Salir. |
-| `no_permissions.html` | Página 403 de `/` cuando el rol del usuario no tiene ningún permiso: incluye `_nav.html` (solo queda Salir) y el texto "Tu usuario no tiene permisos asignados. Pide a un administrador que te asigne un rol." |
-| `declarations.html` | Lista de declaraciones: pestañas por etapa (Por revisar con contador / Falta autenticación / Lista para pedido / Atendidas / Rechazadas / Todas), búsqueda, filtro de motivo (Todos / Pérdida / Deterioro), una fila por declaración (declarante, tarjetas, total de placas, resumen), UNA insignia de etapa (`Por revisar`, `Falta autenticación`, `Lista para pedido`, `Atendida`, `Rechazada`) y las insignias de alertas (`Placa reciente`, `Tarjeta de otro dueño`, `Datos no cuadran`, `Tipo de cliente`, `Documento distinto`); en pantallas angostas la tabla se apila en tarjetas. |
-| `declaration_detail.html` | Detalle de una declaración: resumen de la retención, declarante, archivos, una sección por tarjeta de propiedad con sus alertas, el bloque "Crear pedido" / "Atendida" (según el estado y `production_order_id`; reemplazado por la nota "Falta la autenticación notarial" mientras haya tarjetas `PÉRDIDA` sin autenticación recibida), las miniaturas de la cédula y de las fotos de cada tarjeta (las declaraciones anteriores a las fotos no las tienen), el bloque "Autenticación notarial" (PDF, marcar/deshacer), insignias de motivo por tarjeta, y los formularios de aprobar (con las casillas de reasignación) y rechazar. |
-| `customer_detail.html` | Edición de un cliente (`/customers/<id>`); para clientes `CLIENTE` añade la tabla de solo lectura "Tarjetas de propiedad" (licencia, placa, tipo de vehículo, matriculado en, marca; con texto si no tiene ninguna) desde `db.list_ownership_cards_for_customer`. |
-| `users.html` | Lista de usuarios (`/usuarios`): aviso de la última acción, enlace "Roles y permisos" (a `/usuarios/roles`), botón "Nuevo usuario" y tabla Usuario / Roles / Estado / Creado con "Editar" por fila. |
-| `user_form.html` | Crear (`/usuarios/nuevo`: usuario, roles, contraseña repetida) y editar un usuario (`/usuarios/<id>`: roles y casilla Activo, más el form "Cambiar contraseña"); muestra el aviso y el error en su caja. |
-| `roles.html` | Lista de roles (`/usuarios/roles`): aviso de la última acción, botón "Nuevo rol" y tabla Rol / Permisos / Usuarios con "Editar" por fila. |
-| `role_form.html` | Crear (`/usuarios/roles/nuevo`) y editar un rol (`/usuarios/roles/<name>`): "Nombre del rol" (deshabilitado en los roles del sistema) y una casilla por permiso; Administrador se muestra de solo lectura, y los roles propios tienen además el form "Eliminar rol". Muestra el aviso y el error en su caja. |
-| `_orders_table.html` | Tabla de órdenes reusada por la vista "recientes" y por los resultados de búsqueda por orden. |
-| `login.html` | Card de login (sin nav). |
-| `csrf_error.html` | Página 400 de token CSRF faltante o inválido (sin nav, sin login): "La sesión expiró, recarga la página e intenta de nuevo." y un enlace a `/declaracion` o a `/`. Ver "Protección CSRF". |
-| `declaration.html` | Formulario público de declaración, solo para personas que declaran por sí mismas (sin nav, sin login): un declarante, de 1 a 30 tarjetas de propiedad repetibles (bloque clonado desde un `<template>`) y una sola firma. Los nombres de los campos son el contrato con `public_declaration.py` (ver "Formulario público de declaración"). |
-| `declaration_received.html` | Confirmación genérica "Recibimos tu declaración" (idéntica para toda declaración, con o sin alertas). |
-| `declaration_unavailable.html` | Página 503 cuando el formulario público está apagado (faltan las llaves de Turnstile). |
-| `ingest.html` | Form de captura POS completa (Fase 3): fieldset de orden (comprobante/cliente/forma de pago obligatoria/guía#/pedido#/fechas/responsable/observaciones) + tabla de líneas con `reason`/`vehicle_brand`/`unit_price` por placa. `unit_price` se pre-llena por JS desde una tarifa embebida como JSON (`prices`); el fieldset de cliente se auto-completa por JS al matchear un nombre contra la lista de clientes embebida (`customers`). Por tipo de cliente (`toggleCustomerFields`): Propietario/Poseedor solo para `CLIENTE`; Dirección/Barrio/Municipio solo para `GESTOR` o `CLIENTE`; `TRÁNSITO` y `EMPRESA` conservan solo nombre, documento, teléfono y correo (el servidor lo vuelve a forzar en `customer_fields_from_form`). Un dato que el cliente ya tiene guardado queda bloqueado (los selects con un input oculto espejo); el bloqueo solo se agrega, nunca habilita un campo que la regla del tipo deshabilitó. Los 3 posibles avisos pre-guardado (`notices` del PDF o de la declaración —con título propio `notices_title`—, `order_duplicates`, `duplicates` de placa) + panel de resumen post-guardado (que, si la orden atendió una declaración, dice "La declaración #N quedó marcada como atendida"). Cuando viene de una declaración lleva el input oculto `declaration_id` y una nota con enlace a la declaración. Mantiene TODOS los campos tipeados (orden + cliente + por línea) al ida-y-vuelta de un aviso, vía el único dict "sticky" (`_sticky_header_from_form`/`_sticky_lines_from_form` en `ingest.py`). |
-| `ingest_pdf.html` | Upload de PDF vía XHR con barra de progreso; reemplaza el documento con la respuesta (`ingest.html` pre-llenado, incluidos los campos de pie de página desde la Fase 4). |
-| `records.html` | Búsqueda por texto (placa u orden) + búsqueda por PDF (nunca guarda). |
-| `record_detail.html` | Detalle de orden — form editable con `can('orders.capture')` (Fase 3: incluye los mismos campos POS que `ingest.html`), resumen de solo lectura para el resto. Ambos branches preservan `back_query` para el link "Volver a Registros". Si la placa está enlazada a una tarjeta de propiedad (`plates.ownership_card_id`), debajo del número se muestra una nota de solo lectura "Tarjeta: <licencia>". |
-| `review.html` | Cola de placas flagged, cada fila con Guardar/Revisada/Eliminar. |
-| `inventory.html` | Cards de Disponible/Consumido por categoría + form de alistamiento. |
-| `pricing.html` (Fase 5a) | Una fila por tipo de placa (`price_list`) con su tarifa actual ("sin tarifa" si no tiene) + form inline para fijarla. Admin-only. |
-| `cash_summary.html` (Fase 5b) | Form de rango `desde`/`hasta` (default hoy) + tablas por fecha/forma de pago con subtotales y total general, bucket "SIN FORMA DE PAGO" como fila normal, y una sección de aviso listando toda placa con `unit_price` faltante. Botón de exportar a `/cuadre/pdf`. |
+| `_nav.html` | Shared nav: iterates over `nav_items` (the `NAV_ITEMS` entries the user can open, see `app/web/navigation.py`) and ends with the Salir (Log out) button. |
+| `no_permissions.html` | 403 page for `/` when the user's role has no permission at all: includes `_nav.html` (only Salir remains) and the text "Tu usuario no tiene permisos asignados. Pide a un administrador que te asigne un rol." |
+| `declarations.html` | Declaration list: tabs by stage (Por revisar with counter / Falta autenticación / Lista para pedido / Atendidas / Rechazadas / Todas), search, reason filter (Todos / Pérdida / Deterioro), one row per declaration (declarant, cards, total plates, summary), ONE stage badge (`Por revisar`, `Falta autenticación`, `Lista para pedido`, `Atendida`, `Rechazada`) and the alert badges (`Placa reciente`, `Tarjeta de otro dueño`, `Datos no cuadran`, `Tipo de cliente`, `Documento distinto`); on narrow screens the table stacks into cards. |
+| `declaration_detail.html` | Detail of a declaration: summary of the hold, declarant, files, one section per ownership card with its alerts, the "Crear pedido" / "Atendida" block (depending on the status and `production_order_id`; replaced by the note "Falta la autenticación notarial" while there are `PÉRDIDA` cards without authentication received), the thumbnails of the ID card and of each card's photos (declarations prior to the photos do not have them), the "Autenticación notarial" block (PDF, mark/undo), reason badges per card, and the approve (with the reassignment checkboxes) and reject forms. |
+| `customer_detail.html` | Edit a customer (`/customers/<id>`); for `CLIENTE` customers it adds the read-only table "Tarjetas de propiedad" ("Ownership cards") (license, plate, vehicle type, registered in, brand; with text if there are none) from `db.list_ownership_cards_for_customer`. |
+| `users.html` | User list (`/usuarios`): last-action notice, "Roles y permisos" link (to `/usuarios/roles`), "Nuevo usuario" button and a Usuario / Roles / Estado / Creado table (User / Roles / Status / Created) with "Editar" per row. |
+| `user_form.html` | Create (`/usuarios/nuevo`: username, roles, repeated password) and edit a user (`/usuarios/<id>`: roles and Activo checkbox, plus the "Cambiar contraseña" ("Change password") form); shows the notice and the error in its box. |
+| `roles.html` | Role list (`/usuarios/roles`): last-action notice, "Nuevo rol" button and a Rol / Permisos / Usuarios table with "Editar" per row. |
+| `role_form.html` | Create (`/usuarios/roles/nuevo`) and edit a role (`/usuarios/roles/<name>`): "Nombre del rol" (disabled on system roles) and one checkbox per permission; Administrador is shown read-only, and custom roles also have the "Eliminar rol" form. Shows the notice and the error in its box. |
+| `_orders_table.html` | Orders table reused by the "recent" view and by the order search results. |
+| `login.html` | Login card (no nav). |
+| `csrf_error.html` | 400 page for a missing or invalid CSRF token (no nav, no login): "La sesión expiró, recarga la página e intenta de nuevo." and a link to `/declaracion` or to `/`. See "CSRF protection". |
+| `declaration.html` | Public declaration form, only for people who declare for themselves (no nav, no login): one declarant, 1 to 30 repeatable ownership cards (block cloned from a `<template>`) and a single signature. The field names are the contract with `public_declaration.py` (see "Public declaration form"). |
+| `declaration_received.html` | Generic confirmation "Recibimos tu declaración" (identical for every declaration, with or without alerts). |
+| `declaration_unavailable.html` | 503 page when the public form is switched off (Turnstile keys missing). |
+| `ingest.html` | Full POS capture form (Phase 3): order fieldset (receipt/customer/payment method mandatory/guide #/order #/dates/person in charge/observations) + table of lines with `reason`/`vehicle_brand`/`unit_price` per plate. `unit_price` is pre-filled by JS from a rate table embedded as JSON (`prices`); the customer fieldset is auto-completed by JS when a name matches the embedded customer list (`customers`). By customer type (`toggleCustomerFields`): Propietario/Poseedor only for `CLIENTE`; Dirección/Barrio/Municipio only for `GESTOR` or `CLIENTE`; `TRÁNSITO` and `EMPRESA` keep only name, document, phone and email (the server enforces it again in `customer_fields_from_form`). A value the customer already has stored is locked (selects with a mirror hidden input); the lock is only added, it never enables a field that the type's rule disabled. The 3 possible pre-save notices (`notices` from the PDF or from the declaration —with its own title `notices_title`—, `order_duplicates`, plate `duplicates`) + post-save summary panel (which, if the order attended a declaration, says "La declaración #N quedó marcada como atendida" ("Declaration #N was marked as attended")). When it comes from a declaration it carries the hidden input `declaration_id` and a note with a link to the declaration. It keeps ALL typed fields (order + customer + per line) across the round trip of a notice, via the single "sticky" dict (`_sticky_header_from_form`/`_sticky_lines_from_form` in `ingest.py`). |
+| `ingest_pdf.html` | PDF upload via XHR with a progress bar; replaces the document with the response (pre-filled `ingest.html`, including the footer fields since Phase 4). |
+| `records.html` | Text search (plate or order) + PDF search (never saves). |
+| `record_detail.html` | Order detail — editable form with `can('orders.capture')` (Phase 3: includes the same POS fields as `ingest.html`), read-only summary for everyone else. Both branches preserve `back_query` for the "Volver a Registros" ("Back to Records") link. If the plate is linked to an ownership card (`plates.ownership_card_id`), a read-only note "Tarjeta: <licencia>" ("Card: <license>") is shown under the number. |
+| `review.html` | Queue of flagged plates, each row with Guardar/Revisada/Eliminar (Save/Reviewed/Delete). |
+| `inventory.html` | Disponible/Consumido (Available/Consumed) cards by category + preparation form. |
+| `pricing.html` (Phase 5a) | One row per plate type (`price_list`) with its current rate ("sin tarifa" ("no rate") if it has none) + inline form to set it. Admin-only. |
+| `cash_summary.html` (Phase 5b) | `desde`/`hasta` range form (default today) + tables by date/payment method with subtotals and grand total, "SIN FORMA DE PAGO" ("NO PAYMENT METHOD") bucket as a normal row, and a notice section listing every plate with a missing `unit_price`. Export button to `/cuadre/pdf`. |
 
-## Flujo 1 — Subir un pedido (PDF o Excel) y guardarlo como orden nueva
+## Flow 1 — Upload an order (PDF or Excel) and save it as a new order
 
 ```mermaid
 sequenceDiagram
@@ -335,24 +334,24 @@ sequenceDiagram
     participant I2 as ingestion.py
     participant DB as db/ / Postgres
 
-    U->>B: sube el pedido (PDF o Excel)
+    U->>B: uploads the order (PDF or Excel)
     B->>W: POST /ingest/pdf (XHR)
     W->>PE: parse_pedido_pdf(bytes)
-    PE-->>W: ParsedPedido (header + líneas)
+    PE-->>W: ParsedPedido (header + lines)
     W->>DB: find_orders_by_number(order_number)
-    DB-->>W: coincidencias, si hay
-    W-->>B: ingest.html pre-llenado (+ avisos)
-    B-->>U: reemplaza el documento (form ya lleno)
-    U->>B: revisa/corrige y "Guardar orden"
+    DB-->>W: matches, if any
+    W-->>B: pre-filled ingest.html (+ notices)
+    B-->>U: replaces the document (form already filled)
+    U->>B: reviews/corrects and "Guardar orden"
     B->>I: POST /ingest
     I->>I2: process_rows(conn, rows)
     I2->>DB: insert_order + insert_plate (x N)
     I2->>DB: recalc_inventory
     DB-->>I: commit
-    I-->>B: resumen de guardado
+    I-->>B: save summary
 ```
 
-## Flujo 2 — Re-subir el PDF de una orden vieja: detectar y fusionar/reemplazar
+## Flow 2 — Re-upload the PDF of an old order: detect and merge/replace
 
 ```mermaid
 sequenceDiagram
@@ -361,35 +360,34 @@ sequenceDiagram
     participant I2 as ingestion.py
     participant DB as db/ / Postgres
 
-    U->>I: POST /ingest (order_number ya existe)
+    U->>I: POST /ingest (order_number already exists)
     I->>DB: find_orders_by_number(order_number)
-    DB-->>I: 1 o más órdenes existentes
-    I-->>U: aviso "orden ya existe" +<br/>botones: Guardar como nueva / Reemplazar
-    alt Reemplazar (fusionar)
+    DB-->>I: 1 or more existing orders
+    I-->>U: "order already exists" notice +<br/>buttons: Guardar como nueva / Reemplazar
+    alt Reemplazar (merge)
         U->>I: POST /ingest (replace_order=1)
         I->>I2: replace_order(conn, order_number, rows)
-        I2->>DB: delete_order (por cada coincidencia)
-        I2->>DB: insert_order + insert_plate (datos nuevos)
+        I2->>DB: delete_order (for each match)
+        I2->>DB: insert_order + insert_plate (new data)
         I2->>DB: recalc_inventory
         DB-->>I: commit
-    else Guardar como nueva de todas formas
+    else Save as new anyway
         U->>I: POST /ingest (confirm_order_duplicate=1)
         I->>I2: process_rows(conn, rows)
-        I2->>DB: insert_order (2da fila, mismo order_number)
+        I2->>DB: insert_order (2nd row, same order_number)
     end
 ```
 
-Este segundo flujo existe por el caso real documentado en
-[`CORE.md`](CORE.md#ingestionpy-antes-processpy-renombrado-en-la-fase-1d) (WCY449/pedido 1030): una reposición vieja
-sin número de placa no puede detectarse por el chequeo normal de
-duplicados, así que el chequeo de **orden** corre primero y de forma
-independiente.
+This second flow exists because of the real case documented in
+[`CORE.md`](CORE.md#ingestionpy-formerly-processpy-renamed-in-phase-1d) (WCY449/order 1030): an old replacement
+without a plate number cannot be detected by the normal duplicate
+check, so the **order** check runs first and independently.
 
-**Nota (Fase 2, no dibujada arriba para no saturar los diagramas)**: antes
-de cada `process_rows`/`replace_order`, la ruta llama
-`db.resolve_or_create_customer(conn, requested_by, **atributos_del_form)`
-en la misma transacción — así un cliente nuevo queda con sus atributos
-completos (`ingestion.py` internamente vuelve a llamar la misma función
-solo con el nombre, que ya no hace nada porque el cliente acaba de
-crearse). `process_rows`/`replace_order` también reciben
+**Note (Phase 2, not drawn above to avoid cluttering the diagrams)**: before
+each `process_rows`/`replace_order`, the route calls
+`db.resolve_or_create_customer(conn, requested_by, **form_attributes)`
+in the same transaction — so a new customer ends up with its complete
+attributes (`ingestion.py` internally calls the same function again
+with only the name, which no longer does anything because the customer was just
+created). `process_rows`/`replace_order` also receive
 `created_by=session.get("user_id")`.

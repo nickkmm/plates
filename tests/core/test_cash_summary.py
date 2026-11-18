@@ -1,6 +1,6 @@
 """Unit/integration tests for app.core.cash_summary (Fase 5b, /cuadre).
 
-The contract under test -- see PLAN_ARQUITECTURA_Y_POS.md's "Cuadre de caja"
+The contract under test -- see ARCHITECTURE_AND_POS_PLAN.md's "Cuadre de caja"
 section for the full reasoning behind each rule:
 - Always grouped by order_date, never payment_date.
 - COALESCE(payment_method, 'SIN FORMA DE PAGO') is mandatory -- every

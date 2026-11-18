@@ -11,17 +11,18 @@ applies to, without exception:
   (`resolve_or_create_customer`, `PAYMENT_METHODS`).
 - Git branch names, commit messages, and **PR/issue titles and
   descriptions** — these are commit-adjacent developer content, same side
-  of the line as a table/column name, not "docs prose". (A PR/commit body
+  of the line as a table/column name. (A PR/commit body
   may still quote an actual Spanish UI string verbatim when describing a
   UI change — that's not a language violation, it's citing real user-facing
   copy.)
+- All documentation: `README.md`, `docs/*.md` and every other Markdown
+  doc, prose included. A doc may still quote a real Spanish UI string or
+  stored value verbatim.
 
 **Everything that is content/business-domain data shown to the (Spanish-
 speaking) user stays in Spanish.** This applies to:
 
 - All UI text: templates, labels, buttons, error/notice messages.
-- Documentation prose (`docs/*.md` body text — filenames are English, the
-  writing inside is Spanish).
 - Business vocabulary **stored as data values** in Spanish-vocabulary
   columns — e.g. a `payment_method` column (English name) legitimately
   stores the Spanish values `EFECTIVO`/`TRANSFERENCIA`/`CREDITO`/`OTROS`,
@@ -81,7 +82,7 @@ plates is the internal plate-production and point-of-sale app for INGSE
   Jinja templates.
 - CSRF: every `method="post"` form and every JS request that changes data
   must carry the CSRF token (`csrf_token()` field or `X-CSRFToken` header);
-  see `docs/WEB.md`, "Protección CSRF".
+  see `docs/WEB.md`, "CSRF protection".
 - `app/core/`: business logic (pure, strictly typed) and `app/core/db/` (one
   module per table).
 - Schema: `init.sql` plus ordered migrations in `app/migrations/*.sql`, applied

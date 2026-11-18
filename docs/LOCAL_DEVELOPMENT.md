@@ -1,125 +1,125 @@
-# Desarrollo local
+# Local development
 
-[← volver al índice](README.md)
+[← back to the index](README.md)
 
-Para el quickstart básico (`docker compose up -d`, generar hashes de auth)
-ver el [`README.md`](../README.md) raíz — acá solo los gotchas que ese
-README no cubre.
+For the basic quickstart (`docker compose up -d`, generating auth hashes)
+see the root [`README.md`](../README.md) — here are only the gotchas that
+README does not cover.
 
-## Gotchas de infra
+## Infra gotchas
 
-- **Nombres y puertos de contenedor fijos**: `plates-db-1` (host `5433`) y
-  `plates-web` (host `8000`). Solo puede correr **una** instancia de cada
-  uno a la vez en una misma máquina — si necesitás levantar el proyecto
-  desde dos worktrees/ramas distintas en paralelo (ej. dos agentes
-  trabajando a la vez), tienen que coordinarse para no pisarse el mismo
-  contenedor/puerto.
-- **`DB_HOST` debe ser `plates-db-1`, nunca `db`** — ver el incidente real
-  de colisión de nombre con la stack "informes" en
-  [`ARCHITECTURE.md`](ARCHITECTURE.md#despliegue-docker-compose).
-- Si `docker compose up -d --build web` falla con `Conflict: container
-  name "/plates-web" is already in use`, es casi siempre un contenedor
-  parado que quedó de una corrida anterior: `docker rm -f plates-web` y
-  reintentar.
-- La red `edge` (`informes_informes_net`) es `external: true` — hay que
-  crearla una vez a mano en un entorno nuevo (`docker network create
-  informes_informes_net`) si no existe ya por la stack vecina.
+- **Fixed container names and ports**: `plates-db-1` (host `5433`) and
+  `plates-web` (host `8000`). Only **one** instance of each can run at a
+  time on a given machine — if you need to bring the project up from two
+  different worktrees/branches in parallel (e.g. two agents working at the
+  same time), they have to coordinate so they do not step on the same
+  container/port.
+- **`DB_HOST` must be `plates-db-1`, never `db`** — see the real
+  name-collision incident with the "informes" stack in
+  [`ARCHITECTURE.md`](ARCHITECTURE.md#deployment-docker-compose).
+- If `docker compose up -d --build web` fails with `Conflict: container
+  name "/plates-web" is already in use`, it is almost always a stopped
+  container left over from a previous run: `docker rm -f plates-web` and
+  retry.
+- The `edge` network (`informes_informes_net`) is `external: true` — it
+  has to be created once by hand in a new environment (`docker network create
+  informes_informes_net`) if the neighboring stack has not already created it.
 
-## Dozzle (visor de logs web)
+## Dozzle (web log viewer)
 
-Servicio `dozzle` en `docker-compose.yml` — muestra en vivo, desde el
-navegador, los mismos logs que `docker logs <contenedor>` daría por SSH.
-Necesita un archivo de usuarios que **nunca se commitea** (gitignored,
-`dozzle_users.yml`, uno por entorno):
+`dozzle` service in `docker-compose.yml` — shows live, from the
+browser, the same logs that `docker logs <container>` would give over SSH.
+It needs a users file that is **never committed** (gitignored,
+`dozzle_users.yml`, one per environment):
 
 ```sh
 docker run --rm amir20/dozzle:v11.1.1 generate admin > dozzle_users.yml
-# pide la contraseña de forma interactiva (nunca queda en el historial de bash)
+# asks for the password interactively (it never ends up in the bash history)
 docker compose up -d dozzle
 ```
 
-En producción se accede en `https://placas.ingse.co/dozzle/` (proxied por
-el nginx compartido de la stack "informes" — el bloque `location /dozzle/`
-vive en `/opt/informes/nginx.conf`, **fuera** de este repo, agregado a
-mano igual que el bloque de `cargador.ingse.co`). En local, directo en
+In production it is reached at `https://placas.ingse.co/dozzle/` (proxied by
+the shared nginx of the "informes" stack — the `location /dozzle/` block
+lives in `/opt/informes/nginx.conf`, **outside** this repo, added by
+hand just like the `cargador.ingse.co` block). Locally, directly at
 `http://127.0.0.1:8081/dozzle/`.
 
 ## Testing (`tests/conftest.py`)
 
-- **La base de test es una base separada, `plates_test`**, en el mismo
-  Postgres que ya expone Compose en `127.0.0.1:5433` — nunca la base
-  `plates` real. `DB_HOST`/`DB_PORT`/`POSTGRES_DB` se **fuerzan** (no
-  `setdefault`) a `127.0.0.1`/`5433`/`plates_test` sin importar lo que
-  diga el entorno, justamente para que un test nunca pueda apuntar por
-  accidente a datos de producción.
-- **`TEST_POSTGRES_DB`** cambia el nombre de esa base para checkouts que
-  corren en paralelo (los worktrees de la fábrica usan
-  `plates_test_<n>`), así las migraciones de una rama no se cuelan en la
-  corrida de otra. Tiene que empezar por `plates_test`; cualquier otro
-  nombre hace fallar `conftest.py` al importarse. Con `pytest -n auto`
-  (pytest-xdist) cada worker usa su propia base, `<base>_gwN` (por ejemplo
-  `plates_test_12_gw0`, `plates_test_12_gw1`, ...): se crea y se migra la
-  primera vez que se usa y se reutiliza en las corridas siguientes. Sin
-  `-n`, pytest corre en serie contra `<base>` como siempre.
-- **`TEST_REQUIRE_DB=1`** convierte "Postgres no disponible" en fallo en
-  vez de skip. El gate de la fábrica lo pone para no aprobar una rama con
-  las pruebas de base de datos saltadas.
-- `SECRET_KEY`/`AUTH_USERS` también se fuerzan al importar `conftest.py`,
-  antes de cualquier `from app...` — si no, una corrida local heredaría
-  las credenciales reales del `.env` y los logins de test fallarían en
-  silencio.
-- Tres identidades de test ya definidas: `testuser`/`testpass123`
+- **The test database is a separate database, `plates_test`**, in the same
+  Postgres that Compose already exposes on `127.0.0.1:5433` — never the real
+  `plates` database. `DB_HOST`/`DB_PORT`/`POSTGRES_DB` are **forced** (not
+  `setdefault`) to `127.0.0.1`/`5433`/`plates_test` regardless of what the
+  environment says, precisely so that a test can never point at production
+  data by accident.
+- **`TEST_POSTGRES_DB`** changes the name of that database for checkouts that
+  run in parallel (the factory worktrees use
+  `plates_test_<n>`), so one branch's migrations do not leak into
+  another branch's run. It must start with `plates_test`; any other
+  name makes `conftest.py` fail on import. With `pytest -n auto`
+  (pytest-xdist) each worker uses its own database, `<base>_gwN` (for example
+  `plates_test_12_gw0`, `plates_test_12_gw1`, ...): it is created and migrated
+  the first time it is used and reused in later runs. Without
+  `-n`, pytest runs serially against `<base>` as usual.
+- **`TEST_REQUIRE_DB=1`** turns "Postgres not available" into a failure
+  instead of a skip. The factory gate sets it so a branch is not approved with
+  the database tests skipped.
+- `SECRET_KEY`/`AUTH_USERS` are also forced when `conftest.py` is imported,
+  before any `from app...` — otherwise a local run would inherit
+  the real credentials from `.env` and the test logins would fail
+  silently.
+- Three test identities are already defined: `testuser`/`testpass123`
   (admin), `produccionuser`/`produccionpass123` (`production`),
-  `puntoventauser`/`puntoventapass123` (`point_of_sale`, Fase 2) — las
-  tres son filas reales en la tabla `users` de la base de test desde que
-  el login pasó a ser DB-backed, no solo entradas de `AUTH_USERS`/
+  `puntoventauser`/`puntoventapass123` (`point_of_sale`, Phase 2) — all
+  three are real rows in the `users` table of the test database since
+  login became DB-backed, not just entries in `AUTH_USERS`/
   `AUTH_ROLES`.
-- El fixture `clean_db` (Fase 1d, paso 10) hace un **rollback transaccional
-  por test**, no `TRUNCATE`: hace `TRUNCATE ... RESTART IDENTITY CASCADE` +
-  siembra de las 3 identidades de test una sola vez al principio, dentro de
-  un `SAVEPOINT` que nunca se libera de verdad hasta el final del test — ahí
-  se hace `ROLLBACK` real, así que ningún test deja rastro en el `plates_test`
-  físico sin importar si pasó o falló. `app.core.db.get_conn` queda
-  parcheado (vía `monkeypatch`) para devolver siempre esa MISMA conexión en
-  vez de sacar una nueva del pool — así cualquier request HTTP que el test
-  dispare (`authenticated_client`, etc.) opera sobre la misma sesión/
-  transacción, sin necesitar commits reales para ver sus propios cambios.
-  `conn.commit()`/`conn.rollback()` (llamados tanto por el código real de
-  `records.py`/`review.py`/`pricing.py`/`inventory.py` como por ~100 sitios
-  de test) se reasignan para hacer `RELEASE SAVEPOINT` + `SAVEPOINT` /
-  `ROLLBACK TO SAVEPOINT` sobre ESE savepoint en vez de tocar la base real —
-  ver el docstring de `clean_db` en `tests/conftest.py` para el detalle
-  completo (por qué no se usó `conn.transaction()` de psycopg, cómo se
-  recupera una transacción abortada por un error esperado, etc.).
-  Por sí solo esto no permite que dos workers compartan la misma base (se
-  serializarían por los locks de Postgres igual que con `TRUNCATE`); correr
-  en paralelo con `pytest -n auto` funciona porque cada worker tiene su
-  propia base `<base>_gwN` (ver `TEST_POSTGRES_DB` arriba). El beneficio de
-  este fixture es velocidad (sin trabajo de disco/WAL por test) y que un
-  test que falla a medias nunca deja datos corruptos para el siguiente.
-- **Gotcha silencioso**: si Postgres no está corriendo o no es alcanzable
-  en `127.0.0.1:5433`, los tests dependientes de BD se **saltan**
-  (`pytest.skip`), no fallan. Una corrida "en verde" con muchos `skipped`
-  puede estar ocultando que la BD nunca estuvo disponible — vale la pena
-  revisar el conteo de skips, no solo que no haya rojos.
-- En CI (`test.yml`) el servicio de Postgres se publica explícitamente en
-  el puerto `5433` para que este mismo hardcode de `conftest.py` funcione
-  igual ahí.
+- The `clean_db` fixture (Phase 1d, step 10) does a **transactional rollback
+  per test**, not `TRUNCATE`: it does `TRUNCATE ... RESTART IDENTITY CASCADE` +
+  seeds the 3 test identities once at the start, inside a
+  `SAVEPOINT` that is never really released until the end of the test — there
+  a real `ROLLBACK` happens, so no test leaves a trace in the physical
+  `plates_test` regardless of whether it passed or failed. `app.core.db.get_conn` is
+  patched (via `monkeypatch`) to always return that SAME connection
+  instead of taking a new one from the pool — so any HTTP request the test
+  fires (`authenticated_client`, etc.) operates on the same session/
+  transaction, without needing real commits to see its own changes.
+  `conn.commit()`/`conn.rollback()` (called both by the real code in
+  `records.py`/`review.py`/`pricing.py`/`inventory.py` and by ~100 test
+  sites) are reassigned to do `RELEASE SAVEPOINT` + `SAVEPOINT` /
+  `ROLLBACK TO SAVEPOINT` on THAT savepoint instead of touching the real database —
+  see the `clean_db` docstring in `tests/conftest.py` for the full detail
+  (why psycopg's `conn.transaction()` was not used, how a transaction
+  aborted by an expected error is recovered, etc.).
+  By itself this does not let two workers share the same database (they would
+  serialize on Postgres locks just like with `TRUNCATE`); running
+  in parallel with `pytest -n auto` works because each worker has its
+  own `<base>_gwN` database (see `TEST_POSTGRES_DB` above). The benefit of
+  this fixture is speed (no disk/WAL work per test) and that a
+  test that fails halfway never leaves corrupt data for the next one.
+- **Silent gotcha**: if Postgres is not running or is not reachable
+  at `127.0.0.1:5433`, the DB-dependent tests are **skipped**
+  (`pytest.skip`), not failed. A "green" run with many `skipped`
+  may be hiding that the DB was never available — it is worth
+  checking the skip count, not just that there are no reds.
+- In CI (`test.yml`) the Postgres service is explicitly published on
+  port `5433` so that this same hardcode in `conftest.py` works
+  the same way there.
 
-## Variables de entorno
+## Environment variables
 
-| Variable | Dónde se usa | Nota |
+| Variable | Where it is used | Note |
 |---|---|---|
-| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Compose (`db`), `app/core/db/` | Sin default para la password — nunca hardcodeada en ningún lado. |
-| `DB_HOST` | `app/core/db/` | Default de código `"db"` — en Compose se **sobreescribe** a `plates-db-1`. Nunca usar el default en un entorno con la red `edge`. |
-| `DB_PORT` | `app/core/db/` | `5432` dentro del contenedor; `5433` es solo el mapeo de host. |
-| `DB_POOL_MIN_SIZE` / `DB_POOL_MAX_SIZE` | `app/core/db/__init__.py` | Tamaño del `psycopg_pool.ConnectionPool` por worker de gunicorn. Default `1`/`5` — con 2 workers, máx. 10 conexiones desde la app. |
-| `SECRET_KEY` | `app/web/app.py` | Obligatoria — `RuntimeError` al arrancar si falta. |
-| `AUTH_USERS` | `app/schema_migrate.py` (backfill único) | `usuario:hash` separados por coma. **Ya no alimenta el login en vivo** (Fase 2) — solo se lee una vez, la primera vez que corre `schema_migrate` contra una base nueva, para crear las filas de `users`. El hash trae `$` → hay que escaparlo como `$$` en `.env` o Compose lo corrompe al interpolar variables (ya documentado en el README raíz). |
-| `AUTH_ROLES` | `app/schema_migrate.py` (backfill único) | `usuario:rol` separados por coma, mismo backfill único que `AUTH_USERS`. **No está en `.env.example` hoy** — cualquier usuario sin entrada acá queda `admin` por defecto. |
-| `COOKIE_SECURE` | `app/web/app.py` | `1` en producción (HTTPS) para marcar la cookie `Secure`; apagada en dev local sobre HTTP plano. |
-| `SENTRY_DSN` | `app/web/app.py` | Opcional — si no está seteada, Sentry ni se inicializa (dev local y tests nunca mandan nada). |
-| `UPLOADS_DIR` | `app/web/uploads.py` | Carpeta donde se guardan los PDF autenticados, las firmas y las fotos de cédula y tarjeta de propiedad del formulario público. Default `/srv/uploads`; en Compose es el volumen `plates_uploads`. **El volumen NO queda cubierto por los respaldos con `pg_dump`**: hay que respaldarlo aparte. Los tests usan una carpeta temporal. |
-| `TURNSTILE_SITE_KEY` | formulario público | Llave pública de Cloudflare Turnstile (se muestra en el widget). En desarrollo local sirven las llaves de prueba que publica Cloudflare. |
-| `TURNSTILE_SECRET_KEY` | `app/web/antispam.py` | Llave secreta para verificar el token en el servidor. Si falta (y no hay bypass), la verificación **falla cerrada**: el envío se rechaza. En producción debe agregarse al secret `ENV_FILE_B64`. |
-| `TURNSTILE_BYPASS` | `app/web/antispam.py` | `1`/`true` omite la verificación de Turnstile sin llamar a la red. Solo para desarrollo y tests; dejar vacía en producción. Sin bypass y sin las dos llaves (`TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`), `/declaracion` responde 503 "El formulario no está disponible por ahora": para probar el formulario en local exporta `TURNSTILE_BYPASS=1`. |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Compose (`db`), `app/core/db/` | No default for the password — never hardcoded anywhere. |
+| `DB_HOST` | `app/core/db/` | Code default `"db"` — in Compose it is **overridden** to `plates-db-1`. Never use the default in an environment with the `edge` network. |
+| `DB_PORT` | `app/core/db/` | `5432` inside the container; `5433` is only the host mapping. |
+| `DB_POOL_MIN_SIZE` / `DB_POOL_MAX_SIZE` | `app/core/db/__init__.py` | Size of the `psycopg_pool.ConnectionPool` per gunicorn worker. Default `1`/`5` — with 2 workers, at most 10 connections from the app. |
+| `SECRET_KEY` | `app/web/app.py` | Required — `RuntimeError` at startup if missing. |
+| `AUTH_USERS` | `app/schema_migrate.py` (one-time backfill) | `user:hash` separated by commas. **No longer feeds the live login** (Phase 2) — it is only read once, the first time `schema_migrate` runs against a new database, to create the `users` rows. The hash contains `$` → it must be escaped as `$$` in `.env` or Compose corrupts it when interpolating variables (already documented in the root README). |
+| `AUTH_ROLES` | `app/schema_migrate.py` (one-time backfill) | `user:role` separated by commas, same one-time backfill as `AUTH_USERS`. **It is not in `.env.example` today** — any user without an entry here ends up as `admin` by default. |
+| `COOKIE_SECURE` | `app/web/app.py` | `1` in production (HTTPS) to mark the cookie `Secure`; off in local dev over plain HTTP. |
+| `SENTRY_DSN` | `app/web/app.py` | Optional — if not set, Sentry is not even initialized (local dev and tests never send anything). |
+| `UPLOADS_DIR` | `app/web/uploads.py` | Folder where the authenticated PDFs, the signatures and the ID card and vehicle registration photos from the public form are stored. Default `/srv/uploads`; in Compose it is the `plates_uploads` volume. **The volume is NOT covered by `pg_dump` backups**: it must be backed up separately. Tests use a temporary folder. |
+| `TURNSTILE_SITE_KEY` | public form | Public Cloudflare Turnstile key (shown in the widget). In local development the test keys that Cloudflare publishes work. |
+| `TURNSTILE_SECRET_KEY` | `app/web/antispam.py` | Secret key to verify the token on the server. If missing (and there is no bypass), verification **fails closed**: the submission is rejected. In production it must be added to the `ENV_FILE_B64` secret. |
+| `TURNSTILE_BYPASS` | `app/web/antispam.py` | `1`/`true` skips the Turnstile verification without calling the network. Only for development and tests; leave empty in production. Without bypass and without both keys (`TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`), `/declaracion` responds 503 "El formulario no está disponible por ahora" (the form is not available right now): to try the form locally export `TURNSTILE_BYPASS=1`. |

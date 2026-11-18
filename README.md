@@ -159,7 +159,7 @@ reviews and merges every PR; the factory never merges on its own. See
 
 ## Documentation
 
-Technical reference, in Spanish, starting at [`docs/README.md`](docs/README.md):
+Technical reference, starting at [`docs/README.md`](docs/README.md):
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): components, deployment and
   the CI/CD pipeline

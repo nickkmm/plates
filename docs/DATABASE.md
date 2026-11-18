@@ -1,60 +1,59 @@
-# Base de datos
+# Database
 
-[← volver al índice](README.md)
+[← back to the index](README.md)
 
-> Este esquema (`init.sql`, aplicado solo la primera vez que se inicializa
-> el volumen de Postgres — editarlo no hace nada sobre una base ya
-> existente) recibió su cambio grande en la **Fase 1** de la feature POS
-> (captura de orden de venta completa + cuadre de caja): las tablas
-> `customers`/`users`/`plate_type_prices`/`schema_migrations` y las
-> columnas nuevas de `production_orders`/`plates` de más abajo. **La
-> feature completa ya está en producción** (Fases 1-5b, ver
-> `PLAN_ARQUITECTURA_Y_POS.md` en la raíz del repo para el historial
-> completo): `/ingest` captura todos los campos POS, `/precios` administra
-> `plate_type_prices`, `/cuadre` agrega los totales, y `app/web/auth.py`
-> consulta `users` en cada login. Este documento refleja ese estado final.
+> This schema (`init.sql`, applied only the first time the Postgres volume is
+> initialized — editing it does nothing to an existing database) received its
+> big change in **Phase 1** of the POS feature (full sales-order capture +
+> cash reconciliation): the tables
+> `customers`/`users`/`plate_type_prices`/`schema_migrations` and the new
+> columns of `production_orders`/`plates` below. **The complete feature is
+> already in production** (Phases 1-5b, see
+> `ARCHITECTURE_AND_POS_PLAN.md` at the repo root for the full history):
+> `/ingest` captures all the POS fields, `/precios` manages
+> `plate_type_prices`, `/cuadre` aggregates the totals, and `app/web/auth.py`
+> queries `users` on every login. This document reflects that final state.
 >
-> **Nota histórica (Fase 1c)**: la Fase 1 original nombró `clientes`/
-> `usuarios` (tabla + columnas como `nombre`/`tipo`/`rol`/`activo`) **y**
-> todas las columnas nuevas de POS en `production_orders`/`plates`
+> **Historical note (Phase 1c)**: the original Phase 1 named `clientes`/
+> `usuarios` (table + columns such as `nombre`/`tipo`/`rol`/`activo`) **and**
+> all the new POS columns in `production_orders`/`plates`
 > (`comprobante_tipo`, `cliente_id`, `forma_pago`, `creado_por`, `motivo`,
-> `marca_vehiculo`, etc.) en español, antes de fijar la convención de
-> `CLAUDE.md` (identificadores en inglés, contenido/valores en español). La
-> **Fase 1c** (`app/migrations/0003_rename_to_english.sql`) renombró TODO
-> eso a sus nombres en inglés finales — tabla y columnas de `clientes`/
-> `usuarios`, y cada columna Spanish-named de `production_orders`/`plates`
-> (mapeo completo más abajo, sección de `production_orders`/`plates`) —
-> tanto en producción como en `init.sql` para instalaciones nuevas. Los
-> *valores* guardados (nombres de clientes, `CLIENTE`/`CÉDULA`/
-> `DUEÑO`, `EFECTIVO`, etc.) no cambiaron — son datos de negocio en
-> español, no identificadores. **Excepción posterior**: los nombres de rol
-> (entonces en la columna `users.role`, hoy en `user_roles.role`) sí
-> tuvieron sus valores traducidos a inglés después (`app/migrations/
-> 0004_translate_role_values_to_english.sql`) — no son dato de negocio en
-> español, son identificadores internos que nunca se muestran al usuario
-> (ver la nota en la sección de `user_roles` más abajo y `CLAUDE.md`).
+> `marca_vehiculo`, etc.) in Spanish, before the `CLAUDE.md` convention was
+> set (identifiers in English, content/values in Spanish). **Phase 1c**
+> (`app/migrations/0003_rename_to_english.sql`) renamed ALL of that to its
+> final English names — the table and columns of `clientes`/`usuarios`, and
+> every Spanish-named column of `production_orders`/`plates` (full mapping
+> below, in the `production_orders`/`plates` section) — both in production and
+> in `init.sql` for new installations. The stored *values* (customer names,
+> `CLIENTE`/`CÉDULA`/`DUEÑO`, `EFECTIVO`, etc.) did not change — they are
+> Spanish business data, not identifiers. **Later exception**: the role names
+> (then in the `users.role` column, today in `user_roles.role`) did have their
+> values translated to English afterwards
+> (`app/migrations/0004_translate_role_values_to_english.sql`) — they are not
+> Spanish business data, they are internal identifiers that are never shown to
+> the user (see the note in the `user_roles` section below and `CLAUDE.md`).
 >
-> **Aplicar un cambio de esquema a una base ya existente** (con datos
-> reales, no un volumen nuevo) es trabajo del runner `app/schema_migrate.py`
-> (`python -m app.schema_migrate`), NO de editar `init.sql` — aplica
-> `app/migrations/*.sql` en orden (idempotente, seguro de correr dos veces).
-> `deploy.yml` ya lo invoca automáticamente después de cada
+> **Applying a schema change to an existing database** (with real data, not a
+> fresh volume) is the job of the `app/schema_migrate.py` runner
+> (`python -m app.schema_migrate`), NOT of editing `init.sql` — it applies
+> `app/migrations/*.sql` in order (idempotent, safe to run twice).
+> `deploy.yml` already invokes it automatically after every
 > `docker compose up -d --build`.
 >
-> **`init.sql` registra las migraciones que ya contiene.** Una base nueva
-> creada con `init.sql` ya tiene el esquema de todas las migraciones, así que
-> `init.sql` inserta en `schema_migrations` el nombre de cada archivo de
-> `app/migrations/*.sql` y el runner no las vuelve a correr (`0004` y `0015`
-> fallarían: leen `users.role`, que ya no existe). Toda migración nueva
-> agrega su renglón a ese `INSERT`. Los backfills de Python
-> (`0002_backfill_clientes`, `0003_backfill_usuarios`) no se registran ahí:
-> siguen corriendo en una base nueva.
+> **`init.sql` records the migrations it already contains.** A new database
+> created with `init.sql` already has the schema of all the migrations, so
+> `init.sql` inserts into `schema_migrations` the name of each
+> `app/migrations/*.sql` file and the runner does not run them again (`0004`
+> and `0015` would fail: they read `users.role`, which no longer exists). Every
+> new migration adds its row to that `INSERT`. The Python backfills
+> (`0002_backfill_clientes`, `0003_backfill_usuarios`) are not registered
+> there: they keep running on a new database.
 
-## Diagrama
+## Diagram
 
 ```mermaid
 erDiagram
-    production_orders ||--o{ plates : "tiene"
+    production_orders ||--o{ plates : "has"
     customers ||--o{ production_orders : "customer_id (nullable)"
     users ||--o{ production_orders : "created_by (nullable)"
     users ||--o{ user_roles : "user_id (ON DELETE CASCADE)"
@@ -69,13 +68,13 @@ erDiagram
 
     production_orders {
         int id PK
-        text order_number "sin UNIQUE — ver rarezas"
+        text order_number "no UNIQUE — see quirks"
         date order_date
-        text requested_by "copia desnormalizada de customers.name — ver rarezas"
+        text requested_by "denormalized copy of customers.name — see quirks"
         text receipt_type "nullable"
         text receipt_number "nullable"
         int customer_id FK "nullable"
-        text payment_method "nullable — hoy siempre NULL, ver rarezas"
+        text payment_method "nullable — always NULL today, see quirks"
         text tracking_number "nullable"
         text client_order_number "nullable"
         date delivery_date "nullable"
@@ -100,33 +99,33 @@ erDiagram
         int order_id FK
         text plate_type FK
         text plate_number "nullable"
-        text plate_to "nullable, fin de rango"
+        text plate_to "nullable, end of range"
         boolean is_batch_replacement
         boolean is_voided
         boolean is_plate_annulled
         boolean is_possible_duplicate
         int quantity
-        text material "casi nunca se usa"
+        text material "almost never used"
         text prepared_by
-        text city "por placa, no por orden"
-        numeric unit_price "nullable — snapshot al guardar/editar, ver rarezas"
+        text city "per plate, not per order"
+        numeric unit_price "nullable — snapshot on save/edit, see quirks"
         text reason "nullable — DETERIORO/PÉRDIDA/OTROS"
         text vehicle_brand "nullable"
-        int ownership_card_id FK "nullable — tarjeta de propiedad (0008)"
+        int ownership_card_id FK "nullable — ownership card (0008)"
         timestamp created_at
     }
     customers {
         int id PK
-        text name "NOT NULL UNIQUE — canónico, ver rarezas"
+        text name "NOT NULL UNIQUE — canonical, see quirks"
         text type "nullable — TRÁNSITO/EMPRESA/GESTOR/CLIENTE"
         text document_type "nullable"
         text document_number "nullable"
-        text document_relation "nullable — solo si type=CLIENTE"
+        text document_relation "nullable — only if type=CLIENTE"
         text phone "nullable"
         text email "nullable"
-        text address "nullable — solo si type=GESTOR o CLIENTE"
-        text neighborhood "nullable — solo si type=GESTOR o CLIENTE"
-        text municipality "nullable — solo si type=GESTOR o CLIENTE"
+        text address "nullable — only if type=GESTOR or CLIENTE"
+        text neighborhood "nullable — only if type=GESTOR or CLIENTE"
+        text municipality "nullable — only if type=GESTOR or CLIENTE"
         timestamp created_at
     }
     users {
@@ -143,22 +142,22 @@ erDiagram
         int assigned_by FK "nullable"
     }
     roles {
-        text name PK "identificador en inglés, nunca se muestra"
-        text label "UNIQUE NOT NULL — nombre en español"
+        text name PK "English identifier, never shown"
+        text label "UNIQUE NOT NULL — Spanish name"
         boolean is_system
         timestamp created_at
     }
     permissions {
-        text code PK "código de app/core/permissions.py"
-        text label "UNIQUE NOT NULL — etiqueta en español"
-        int sort_order "orden de PERMISSIONS"
+        text code PK "code from app/core/permissions.py"
+        text label "UNIQUE NOT NULL — Spanish label"
+        int sort_order "order in PERMISSIONS"
     }
     role_permissions {
         text role PK, FK
-        text permission PK, FK "código de permissions"
+        text permission PK, FK "code from permissions"
     }
     plate_type_prices {
-        text plate_type PK, FK "uno de normalize.PLATE_TYPES"
+        text plate_type PK, FK "one of normalize.PLATE_TYPES"
         numeric unit_price
         timestamp updated_at
         text updated_by "nullable"
@@ -177,626 +176,616 @@ erDiagram
     }
     inventory_categories {
         text category PK
-        int initial_stock "columna muerta — ver rarezas"
+        int initial_stock "dead column — see quirks"
         int prepared
         int consumed
     }
     plate_types {
-        text plate_type PK "las 7 normalize.PLATE_TYPES — Fase 1b"
+        text plate_type PK "the 7 normalize.PLATE_TYPES — Phase 1b"
     }
 ```
 
-`schema_migrations` es la única tabla del esquema sin ninguna FK hacia el
-resto — es puro bookkeeping de `app/schema_migrate.py`, sin relación con el
-resto del dominio.
+`schema_migrations` is the only table in the schema with no FK to the rest —
+it is pure bookkeeping for `app/schema_migrate.py`, unrelated to the rest of
+the domain.
 
-Desde la **Fase 1b**, las otras tres relaciones que antes existían solo "por
-convención de texto" (mismo valor, sin FK real) ya son FK reales:
-- `plates.plate_type` y `plate_type_prices.plate_type` → `plate_types
-  (plate_type)`. `plate_types` es una tabla nueva, sembrada con los 7
-  valores de `normalize.PLATE_TYPES` — la validación en Python contra esa
-  misma constante **se mantiene** (mensaje de error más claro antes de
-  llegar a la BD); la FK es una red de seguridad adicional a nivel de datos,
-  no un reemplazo.
+Since **Phase 1b**, the other three relationships that previously existed only
+"by text convention" (same value, no real FK) are now real FKs:
+- `plates.plate_type` and `plate_type_prices.plate_type` → `plate_types
+  (plate_type)`. `plate_types` is a new table, seeded with the 7 values of
+  `normalize.PLATE_TYPES` — the validation in Python against that same
+  constant **is kept** (a clearer error message before reaching the DB); the
+  FK is an additional safety net at the data level, not a replacement.
 - `blank_preparations.category` → `inventory_categories(category)`.
-  `inventory_categories` ya existía (Fase 1) y ahora hace de tabla de
-  referencia natural para las 3 categorías — no hizo falta una tabla nueva
-  para esta. **Por eso `inventory_categories` está sembrada con sus 3 filas
-  desde `init.sql`/la migración**, en vez de nacer vacía como antes de la
-  Fase 1b: si no tuviera ya las 3 filas, la primerísima fila de
-  ALISTAMIENTO en un volumen recién creado fallaría contra esta FK, porque
-  `recalc_inventory()` (en `app/core/db/`) solo crea esas filas *después*
-  de insertar en `blank_preparations`, no antes.
-- `recalc_inventory()` sigue agregando `prepared`/`consumed` por texto de
-  `category`/`plate_type` sobre `blank_preparations`/`plates` — eso no
-  cambió; lo nuevo es que esos valores de texto ahora están garantizados
-  por FK a ser uno de los válidos, en vez de solo por convención.
+  `inventory_categories` already existed (Phase 1) and now serves as the
+  natural reference table for the 3 categories — no new table was needed for
+  this one. **That is why `inventory_categories` is seeded with its 3 rows
+  from `init.sql`/the migration**, instead of starting empty as before
+  Phase 1b: if it did not already have the 3 rows, the very first
+  ALISTAMIENTO (blank preparation) row on a freshly created volume would fail
+  against this FK, because `recalc_inventory()` (in `app/core/db/`) only
+  creates those rows *after* inserting into `blank_preparations`, not before.
+- `recalc_inventory()` still aggregates `prepared`/`consumed` by the text of
+  `category`/`plate_type` over `blank_preparations`/`plates` — that did not
+  change; what is new is that those text values are now guaranteed by FK to be
+  one of the valid ones, instead of only by convention.
 
-`customer_id`/`created_by` en `production_orders` sí son FK reales (a
-`customers(id)`/`users(id)`), ambas nullable y sin `ON DELETE` — igual que
-la FK preexistente `plates.order_id`.
+`customer_id`/`created_by` in `production_orders` are real FKs (to
+`customers(id)`/`users(id)`), both nullable and without `ON DELETE` — just
+like the pre-existing FK `plates.order_id`.
 
-No existe ningún `VIEW` ni `CHECK constraint` en todo el esquema.
-`customers.name UNIQUE` (Fase 1) es la primera y única restricción de
-unicidad del esquema aparte de las PK, y `plates_order_id_idx` (Fase 1) es
-el primer índice fuera de una PK/UNIQUE — ver rarezas para ambos.
+There is no `VIEW` or `CHECK constraint` anywhere in the schema.
+`customers.name UNIQUE` (Phase 1) is the first and only uniqueness constraint
+in the schema apart from the PKs, and `plates_order_id_idx` (Phase 1) is the
+first index outside a PK/UNIQUE — see quirks for both.
 
-## Columnas por tabla
+## Columns per table
 
 ### `production_orders`
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
 | `id` | SERIAL | PK | |
-| `order_number` | TEXT | NOT NULL | `TEXT`, no `INTEGER`, a propósito — hay números reales no numéricos (ej. `"NT 895"`). Sin `UNIQUE`. |
-| `order_date` | DATE | NOT NULL | Fecha real del negocio, distinta de `created_at`. |
-| `requested_by` | TEXT | NOT NULL | "Solicitado por" — normalizado en `app/core/normalize.py`. Desde la Fase 1, copia desnormalizada de `customers.name` — ver rarezas. |
-| `receipt_type` | TEXT | nullable | Valor esperado: `normalize.RECEIPT_TYPES` (`FACTURA`/`RECIBO`/`OTROS`); campo de captura manual en `/ingest`, sin equivalente impreso en el PDF de pedido. Antes de la Fase 1c, esta columna se llamaba `comprobante_tipo`. |
-| `receipt_number` | TEXT | nullable | Ídem — sin normalización de vocabulario, es un número/código libre. Antes de la Fase 1c, `comprobante_numero`. |
-| `customer_id` | INTEGER | FK → `customers(id)`, nullable | Nullable porque no todo valor histórico de `requested_by` resuelve a un cliente limpio — ver el backfill en `app/schema_migrate.py` y rarezas. Antes de la Fase 1c, `cliente_id`. |
-| `payment_method` | TEXT | nullable | Valor esperado: `normalize.PAYMENT_METHODS` (`EFECTIVO`/`TRANSFERENCIA`/`CRÉDITO`/`OTROS`). **Obligatorio en `/ingest`** desde la Fase 3 (es la clave que agrupa `/cuadre`) — sigue `NULL` en toda orden anterior a esa fase, de ahí el bucket "SIN FORMA DE PAGO" del cuadre (ver rarezas). Antes de la Fase 1c, `forma_pago`. |
-| `tracking_number` | TEXT | nullable | Antes de la Fase 1c, `guia_numero`. |
-| `client_order_number` | TEXT | nullable | El número de `PEDIDO #:` impreso — **no** es lo mismo que `order_number` (`ORDEN DE PRODUCCIÓN`), no confundirlos. Antes de la Fase 1c, `pedido_numero`. |
-| `delivery_date` | DATE | nullable | A diferencia de `order_date`, una fecha futura acá es válida y esperada. Antes de la Fase 1c, `fecha_entrega`. |
-| `payment_date` | DATE | nullable | Antes de la Fase 1c, `fecha_transferencia_pago`. |
-| `dispatched_by` | TEXT | nullable | Antes de la Fase 1c, `responsable_despacho`. |
-| `received_by` | TEXT | nullable | Quien recibió físicamente el pedido — distinto de `customer_id`/`requested_by`. Antes de la Fase 1c, `nombre_recibe`. |
-| `notes` | TEXT | nullable | Antes de la Fase 1c, `observaciones`. |
-| `created_by` | INTEGER | FK → `users(id)`, nullable | El usuario logueado que guardó la orden — distinto de `dispatched_by`/`received_by` (datos de la entrega física, no de quién la cargó al sistema). Antes de la Fase 1c, `creado_por`. |
-| `production_status` | TEXT | NOT NULL DEFAULT `'pending'` | *Agregada en la migración `0016`.* Estado de producción de la orden: `pending` → `in_progress` → `ready` → `delivered` (por realizar, en realización, lista para entregar, entregada). Los valores son identificadores en inglés, igual que `user_roles.role`; las etiquetas en español las pone la capa web. Toda orden nueva nace `pending` por el default, sin que `insert_order` lo escriba. Las órdenes que ya existían cuando corrió `0016` quedaron `delivered` (ver rarezas). Con índice (`production_orders_production_status_idx`). Cada cambio queda en `production_order_events`; las reglas viven en `app/core/production.py` (ver [`CORE.md`](CORE.md)). Sin `CHECK`, como el resto del esquema. |
-| `created_at` | TIMESTAMP | DEFAULT now() | Nunca se usa para ordenar por "reciente" (ver `recent_orders` en [`CORE.md`](CORE.md)). |
+| `order_number` | TEXT | NOT NULL | `TEXT`, not `INTEGER`, on purpose — there are real non-numeric numbers (e.g. `"NT 895"`). No `UNIQUE`. |
+| `order_date` | DATE | NOT NULL | Actual business date, distinct from `created_at`. |
+| `requested_by` | TEXT | NOT NULL | "Solicitado por" (requested by) — normalized in `app/core/normalize.py`. Since Phase 1, a denormalized copy of `customers.name` — see quirks. |
+| `receipt_type` | TEXT | nullable | Expected value: `normalize.RECEIPT_TYPES` (`FACTURA`/`RECIBO`/`OTROS`); manual-entry field in `/ingest`, with no printed equivalent on the order PDF. Before Phase 1c, this column was called `comprobante_tipo`. |
+| `receipt_number` | TEXT | nullable | Same — no vocabulary normalization, it is a free number/code. Before Phase 1c, `comprobante_numero`. |
+| `customer_id` | INTEGER | FK → `customers(id)`, nullable | Nullable because not every historical `requested_by` value resolves to a clean customer — see the backfill in `app/schema_migrate.py` and quirks. Before Phase 1c, `cliente_id`. |
+| `payment_method` | TEXT | nullable | Expected value: `normalize.PAYMENT_METHODS` (`EFECTIVO`/`TRANSFERENCIA`/`CRÉDITO`/`OTROS`). **Required in `/ingest`** since Phase 3 (it is the key that `/cuadre` groups by) — it stays `NULL` on every order from before that phase, hence the "SIN FORMA DE PAGO" (no payment method) bucket in the cash summary (see quirks). Before Phase 1c, `forma_pago`. |
+| `tracking_number` | TEXT | nullable | Before Phase 1c, `guia_numero`. |
+| `client_order_number` | TEXT | nullable | The printed `PEDIDO #:` number — it is **not** the same as `order_number` (`ORDEN DE PRODUCCIÓN`), do not confuse them. Before Phase 1c, `pedido_numero`. |
+| `delivery_date` | DATE | nullable | Unlike `order_date`, a future date here is valid and expected. Before Phase 1c, `fecha_entrega`. |
+| `payment_date` | DATE | nullable | Before Phase 1c, `fecha_transferencia_pago`. |
+| `dispatched_by` | TEXT | nullable | Before Phase 1c, `responsable_despacho`. |
+| `received_by` | TEXT | nullable | Who physically received the order — distinct from `customer_id`/`requested_by`. Before Phase 1c, `nombre_recibe`. |
+| `notes` | TEXT | nullable | Before Phase 1c, `observaciones`. |
+| `created_by` | INTEGER | FK → `users(id)`, nullable | The logged-in user who saved the order — distinct from `dispatched_by`/`received_by` (physical delivery data, not who entered it into the system). Before Phase 1c, `creado_por`. |
+| `production_status` | TEXT | NOT NULL DEFAULT `'pending'` | *Added in migration `0016`.* Production status of the order: `pending` → `in_progress` → `ready` → `delivered` (to do, in progress, ready for delivery, delivered). The values are English identifiers, like `user_roles.role`; the Spanish labels are supplied by the web layer. Every new order is born `pending` through the default, without `insert_order` writing it. Orders that already existed when `0016` ran were left as `delivered` (see quirks). Indexed (`production_orders_production_status_idx`). Every change is recorded in `production_order_events`; the rules live in `app/core/production.py` (see [`CORE.md`](CORE.md)). No `CHECK`, like the rest of the schema. |
+| `created_at` | TIMESTAMP | DEFAULT now() | Never used to sort by "recent" (see `recent_orders` in [`CORE.md`](CORE.md)). |
 
 ### `plates`
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
 | `id` | SERIAL | PK | |
-| `order_id` | INTEGER | FK → `production_orders(id)` | Nullable en el esquema, sin `ON DELETE`; el borrado en cascada lo hace la app (`delete_order` borra placas antes que la orden). Indexado (`plates_order_id_idx`, Fase 1) — ver rarezas. |
-| `plate_type` | TEXT | NOT NULL, FK → `plate_types(plate_type)` (Fase 1b) | `CARRO PARTICULAR`, `MOTO PARTICULAR`, `CARRO PÚBLICO`, `MOTO CARRO PÚBLICO`, `REMOLQUE`, `ORNAMENTAL`, etc. |
-| `plate_number` | TEXT | nullable | Placa única, o inicio de rango. `NULL` es válido (reposiciones sin placa asignada aún). |
-| `plate_to` | TEXT | nullable | Fin de rango; `NULL` en placas únicas/reposiciones. |
+| `order_id` | INTEGER | FK → `production_orders(id)` | Nullable in the schema, without `ON DELETE`; the cascading delete is done by the app (`delete_order` deletes plates before the order). Indexed (`plates_order_id_idx`, Phase 1) — see quirks. |
+| `plate_type` | TEXT | NOT NULL, FK → `plate_types(plate_type)` (Phase 1b) | `CARRO PARTICULAR`, `MOTO PARTICULAR`, `CARRO PÚBLICO`, `MOTO CARRO PÚBLICO`, `REMOLQUE`, `ORNAMENTAL`, etc. |
+| `plate_number` | TEXT | nullable | A single plate, or the start of a range. `NULL` is valid (replacements with no plate assigned yet). |
+| `plate_to` | TEXT | nullable | End of range; `NULL` on single plates/replacements. |
 | `quantity` | INTEGER | NOT NULL DEFAULT 1 | |
-| `material` | TEXT | nullable | Rara vez se llena directo — el material real se deriva de `plate_type`. |
-| `prepared_by` | TEXT | nullable | Rara vez se llena. |
-| `city` | TEXT | nullable | **Por placa, no por orden** — una orden puede despachar a varias ciudades. |
-| `unit_price` | NUMERIC(12,2) | nullable | Snapshot del precio al momento de guardar/editar la placa, tomado de `plate_type_prices` pero editable — no una referencia viva a la tarifa (la regla exacta de re-snapshot, incluidos los 3 casos de edición, vive en `app/core/db/plates.py::_resnapshot_unit_price`, ver [`CORE.md`](CORE.md)). `NULL` significa "sin tarifa capturada" — `/cuadre` lo excluye del total y lo lista como aviso, nunca lo trata como `0`. |
-| `reason` | TEXT | nullable | Dato del vehículo/placa, no de la orden. Valor esperado: `normalize.REASONS` (`DETERIORO`/`PÉRDIDA`/`OTROS`). Antes de la Fase 1c, esta columna se llamaba `motivo`. |
-| `vehicle_brand` | TEXT | nullable | Dato del vehículo, siempre de captura manual (no viene impreso en el PDF de pedido). Antes de la Fase 1c, `marca_vehiculo`. |
-| `ownership_card_id` | INTEGER | FK → `ownership_cards(id)`, nullable | *Agregada en la migración `0008`.* Enlace formal de la placa fabricada con su **tarjeta de propiedad**. Con índice (`plates_ownership_card_id_idx`). Es **automático y silencioso**: la app lo calcula en cada inserción y edición (`app/core/db/plates.py`, regla en `ownership_cards.resolve_card_id_for_plate`) comparando `plates.plate_number` con `ownership_cards.plate_number`. Queda `NULL` si no hay tarjeta con esa placa, si la orden es de un cliente `EMPRESA` o `TRÁNSITO` (no tienen tarjeta de propiedad; ni siquiera se intenta), si la placa es un rango (`plate_to`), una reposición, está anulada (`is_voided` / `is_plate_annulled`) o no tiene un número de placa real (`normalize.is_real_plate`). Si el tipo del cliente es `NULL` sí se intenta (solo enlaza si existe una tarjeta con esa placa exacta). Un `GESTOR` enlaza placas de las tarjetas de sus clientes: se busca la tarjeta por placa sin importar a nombre de quién esté. Se recalcula también al cambiar el cliente de una orden o el tipo de un cliente. La migración `0008` hace un *backfill* único e idempotente de las placas ya fabricadas con las mismas reglas (en producción no había tarjetas, así que no enlaza nada). Una tarjeta creada después **no** enlaza hacia atrás las placas ya guardadas; se enlazan al editarlas. |
+| `material` | TEXT | nullable | Rarely filled in directly — the actual material is derived from `plate_type`. |
+| `prepared_by` | TEXT | nullable | Rarely filled in. |
+| `city` | TEXT | nullable | **Per plate, not per order** — one order may ship to several cities. |
+| `unit_price` | NUMERIC(12,2) | nullable | Snapshot of the price at the moment the plate is saved/edited, taken from `plate_type_prices` but editable — not a live reference to the rate (the exact re-snapshot rule, including the 3 editing cases, lives in `app/core/db/plates.py::_resnapshot_unit_price`, see [`CORE.md`](CORE.md)). `NULL` means "no rate captured" — `/cuadre` excludes it from the total and lists it as a warning, never treats it as `0`. |
+| `reason` | TEXT | nullable | A vehicle/plate datum, not an order one. Expected value: `normalize.REASONS` (`DETERIORO`/`PÉRDIDA`/`OTROS`). Before Phase 1c, this column was called `motivo`. |
+| `vehicle_brand` | TEXT | nullable | A vehicle datum, always entered manually (it is not printed on the order PDF). Before Phase 1c, `marca_vehiculo`. |
+| `ownership_card_id` | INTEGER | FK → `ownership_cards(id)`, nullable | *Added in migration `0008`.* Formal link between the manufactured plate and its **ownership card** (tarjeta de propiedad). It is **automatic and silent**: the app computes it on every insert and edit (`app/core/db/plates.py`, rule in `ownership_cards.resolve_card_id_for_plate`) by comparing `plates.plate_number` with `ownership_cards.plate_number`. It stays `NULL` if there is no card with that plate, if the order belongs to an `EMPRESA` or `TRÁNSITO` customer (they have no ownership card; it is not even attempted), if the plate is a range (`plate_to`), a replacement, is voided (`is_voided` / `is_plate_annulled`) or has no real plate number (`normalize.is_real_plate`). If the customer type is `NULL` it is attempted (it only links if a card with that exact plate exists). A `GESTOR` links plates of its customers' cards: the card is looked up by plate regardless of whose name it is in. It is also recomputed when the customer of an order or the type of a customer changes. Migration `0008` does a one-time, idempotent *backfill* of the already manufactured plates with the same rules (in production there were no cards, so it links nothing). A card created later does **not** link already saved plates backwards; they are linked when edited. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
 ### `customers`
 
-*Agregada en la Fase 1 (como `clientes`; renombrada a `customers` en la
-**Fase 1c** — ver el aviso al principio de este documento).* Es el mismo
-concepto que ya existía como texto en `requested_by` (PTO.V, MUVA, etc.),
-ahora con atributos propios.
+*Added in Phase 1 (as `clientes`; renamed to `customers` in
+**Phase 1c** — see the notice at the beginning of this document).* It is the
+same concept that already existed as text in `requested_by` (PTO.V, MUVA,
+etc.), now with attributes of its own.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
 | `id` | SERIAL | PK | |
-| `name` | TEXT | NOT NULL UNIQUE | Forma **canónica**: `normalize.normalize_requested_by(valor)`. Ver rarezas — es la primera `UNIQUE` del esquema aparte de las PK. Antes de la Fase 1c, esta columna se llamaba `nombre`. |
-| `type` | TEXT | nullable | Valor esperado: `normalize.CUSTOMER_TYPES` (`TRÁNSITO`/`EMPRESA`/`GESTOR`/`CLIENTE`). `CLIENTE` es el antiguo `PERSONA NATURAL` (renombrado por la migración `0005`); `OTROS` ya no existe (esas filas pasaron a `NULL`). No confundir con los *valores* de `plates.reason` ni con `document_type`. |
-| `document_type` | TEXT | nullable | Valor esperado: `normalize.DOCUMENT_TYPES` (`NIT`/`CÉDULA`/`CÉDULA DE EXTRANJERÍA`/`OTROS`). |
-| `document_number` | TEXT | nullable | `TEXT` siempre, aunque a veces sea numérico — un NIT trae dígito de verificación/guiones. |
-| `document_relation` | TEXT | nullable | Propietario/Poseedor (`DUEÑO`/`POSEEDOR`/`OTROS`). Solo tiene sentido si `type = 'CLIENTE'`; debe quedar `NULL` en cualquier otro caso (se refuerza en servidor, no solo en el HTML). |
+| `name` | TEXT | NOT NULL UNIQUE | **Canonical** form: `normalize.normalize_requested_by(value)`. See quirks — it is the first `UNIQUE` in the schema apart from the PKs. Before Phase 1c, this column was called `nombre`. |
+| `type` | TEXT | nullable | Expected value: `normalize.CUSTOMER_TYPES` (`TRÁNSITO`/`EMPRESA`/`GESTOR`/`CLIENTE`). `CLIENTE` is the former `PERSONA NATURAL` (renamed by migration `0005`); `OTROS` no longer exists (those rows became `NULL`). Do not confuse with the *values* of `plates.reason` or with `document_type`. |
+| `document_type` | TEXT | nullable | Expected value: `normalize.DOCUMENT_TYPES` (`NIT`/`CÉDULA`/`CÉDULA DE EXTRANJERÍA`/`OTROS`). |
+| `document_number` | TEXT | nullable | Always `TEXT`, even if it is sometimes numeric — a NIT carries a check digit/hyphens. |
+| `document_relation` | TEXT | nullable | Owner/Holder (`DUEÑO`/`POSEEDOR`/`OTROS`). Only meaningful if `type = 'CLIENTE'`; it must stay `NULL` in any other case (enforced on the server, not only in the HTML). |
 | `phone` | TEXT | nullable | |
 | `email` | TEXT | nullable | |
-| `address` | TEXT | nullable | Dirección. Solo tiene sentido si `type` es `GESTOR` o `CLIENTE`; `NULL` para `TRÁNSITO`/`EMPRESA`, mismo refuerzo en servidor (`customer_fields_from_form`). Agregada por la migración `0005`. |
-| `neighborhood` | TEXT | nullable | Barrio. Misma regla que `address`. |
-| `municipality` | TEXT | nullable | Municipio. Misma regla que `address`. |
+| `address` | TEXT | nullable | Address. Only meaningful if `type` is `GESTOR` or `CLIENTE`; `NULL` for `TRÁNSITO`/`EMPRESA`, same server-side enforcement (`customer_fields_from_form`). Added by migration `0005`. |
+| `neighborhood` | TEXT | nullable | Neighborhood. Same rule as `address`. |
+| `municipality` | TEXT | nullable | Municipality. Same rule as `address`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
-**Migración `0005` (`app/migrations/0005_customer_types_and_person_fields.sql`)**:
-agrega `address`/`neighborhood`/`municipality`, renombra `PERSONA NATURAL` →
-`CLIENTE` (10 filas en producción), pasa `OTROS` → `NULL` y elimina la columna
-`transit_license` (en producción 0 de 205 clientes tenían valor, no se pierde
-nada: el número de licencia pasa a identificar la tarjeta de propiedad del
-vehículo, no al cliente). Idempotente (`ADD COLUMN IF NOT EXISTS`, `UPDATE ...
+**Migration `0005` (`app/migrations/0005_customer_types_and_person_fields.sql`)**:
+adds `address`/`neighborhood`/`municipality`, renames `PERSONA NATURAL` →
+`CLIENTE` (10 rows in production), turns `OTROS` into `NULL` and drops the
+`transit_license` column (in production 0 of 205 customers had a value, so
+nothing is lost: the license number now identifies the vehicle's ownership
+card, not the customer). Idempotent (`ADD COLUMN IF NOT EXISTS`, `UPDATE ...
 WHERE`, `DROP COLUMN IF EXISTS`).
 
-**Qué campos aplican según `type`**: `TRÁNSITO` y `EMPRESA` guardan solo nombre,
-documento (tipo/número), teléfono y correo. `GESTOR` agrega dirección, barrio y
-municipio. `CLIENTE` agrega además Propietario/Poseedor (`document_relation`).
-El HTML deshabilita los campos que no aplican y el servidor los fuerza a `NULL`
-de nuevo aunque un POST crudo los traiga.
+**Which fields apply depending on `type`**: `TRÁNSITO` and `EMPRESA` store only
+name, document (type/number), phone and email. `GESTOR` adds address,
+neighborhood and municipality. `CLIENTE` additionally adds Owner/Holder
+(`document_relation`). The HTML disables the fields that do not apply and the
+server forces them back to `NULL` even if a raw POST carries them.
 
-Todos los clientes backfillados desde `production_orders` histórico
-quedaron con todos estos atributos en `NULL` salvo `name` — son
-desconocidos para datos anteriores a este feature (ver
-`app/schema_migrate.py::backfill_customers`, renombrada de
-`backfill_clientes` en la Fase 1d; el *string* de versión que quedó
-grabado en `schema_migrations` sigue siendo `"0002_backfill_clientes"`, sin
-tocar — ver la nota de `schema_migrations` más abajo).
+All customers backfilled from historical `production_orders` were left with all
+these attributes as `NULL` except `name` — they are unknown for data prior to
+this feature (see `app/schema_migrate.py::backfill_customers`, renamed from
+`backfill_clientes` in Phase 1d; the version *string* recorded in
+`schema_migrations` is still `"0002_backfill_clientes"`, untouched — see the
+`schema_migrations` note below).
 
-Desde la **Fase 3**, `/ingest` resuelve/crea un `customers` por cada orden
-guardada (`db.resolve_or_create_customer`, vía
-`normalize.normalize_requested_by`) — si el nombre tipeado matchea uno
-existente, el JS del form auto-llena el resto de sus atributos desde la
-lista completa de clientes embebida en `ingest.html`; si no matchea, se
-crea un cliente nuevo con los atributos tipeados. Para un cliente que YA
-existe, cada atributo se llena con `COALESCE(existente, nuevo)` — nunca
-sobrescribe un valor que el cliente ya tiene (evita que una orden con un
-dato mal tipeado dañe uno correcto), pero sí completa cualquier atributo
-que siga en NULL la primera vez que alguien lo tipea (ver
-`app/core/db/customers.py::resolve_or_create_customer`, actualizado
-2026-09-21 justamente para que los 191 clientes del backfill histórico
-—todos con atributos NULL, la planilla vieja nunca los capturó— se vayan
-completando solos con el uso normal, en vez de quedar en blanco para
-siempre). Editar una orden ya guardada (`record_save`) puede volver a
-apuntar `customer_id` hacia otro cliente si se cambia el nombre, pero
-nunca envía atributos (ese form no los pide) — reescribir a mano el dato
-de un cliente ya completo sigue quedando para una futura pantalla de
-administración de clientes.
-
+Since **Phase 3**, `/ingest` resolves/creates a `customers` row for each saved
+order (`db.resolve_or_create_customer`, via
+`normalize.normalize_requested_by`) — if the typed name matches an existing
+one, the form's JS auto-fills the rest of its attributes from the full list of
+customers embedded in `ingest.html`; if it does not match, a new customer is
+created with the typed attributes. For a customer that ALREADY exists, each
+attribute is filled with `COALESCE(existing, new)` — it never overwrites a
+value the customer already has (this prevents an order with a mistyped datum
+from corrupting a correct one), but it does fill in any attribute that is
+still NULL the first time someone types it (see
+`app/core/db/customers.py::resolve_or_create_customer`, updated 2026-09-21
+precisely so that the 191 customers from the historical backfill —all with
+NULL attributes, since the old spreadsheet never captured them— fill
+themselves in through normal use, instead of staying blank forever). Editing
+an already saved order (`record_save`) can re-point `customer_id` to another
+customer if the name is changed, but it never sends attributes (that form does
+not ask for them) — manually rewriting the data of an already complete
+customer is left for a future customer administration screen.
 ### `users`
 
-*Agregada en la Fase 1 (como `usuarios`; renombrada a `users` en la
-**Fase 1c**), poblada por backfill desde `AUTH_USERS`/`AUTH_ROLES`.* Desde
-la **Fase 2**, `app/web/auth.py::authenticate` consulta esta tabla en cada
-login (vía `app/core/db/users.py`) — los mismos hashes que ya traía el
-backfill, nadie tuvo que resetear contraseña. `load_users()`/`load_roles()`
-en `auth.py` se mantienen, pero **solo** como el código histórico que hizo
-el backfill original; el login en vivo no los llama más.
+*Added in Phase 1 (as `usuarios`; renamed to `users` in **Phase 1c**),
+populated by backfill from `AUTH_USERS`/`AUTH_ROLES`.* Since **Phase 2**,
+`app/web/auth.py::authenticate` queries this table on every login (via
+`app/core/db/users.py`) — the same hashes the backfill already brought over,
+nobody had to reset a password. `load_users()`/`load_roles()` in `auth.py`
+are kept, but **only** as the historical code that did the original backfill;
+the live login no longer calls them.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
-| `id` | SERIAL | PK | Desde la Fase 2, se guarda en `session["user_id"]` al loguearse — es lo que permite `production_orders.created_by` sin volver a consultar por username. |
+| `id` | SERIAL | PK | Since Phase 2, it is stored in `session["user_id"]` on login — it is what makes `production_orders.created_by` possible without querying again by username. |
 | `username` | TEXT | UNIQUE NOT NULL | |
-| `password_hash` | TEXT | NOT NULL | Mismo formato werkzeug (pbkdf2) que `AUTH_USERS` traía — el backfill copió el hash tal cual, nunca reseteó contraseñas. |
-| `active` | BOOLEAN | DEFAULT true | Antes de la Fase 1c, esta columna se llamaba `activo`. |
+| `password_hash` | TEXT | NOT NULL | Same werkzeug (pbkdf2) format that `AUTH_USERS` carried — the backfill copied the hash as is, it never reset passwords. |
+| `active` | BOOLEAN | DEFAULT true | Before Phase 1c, this column was called `activo`. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
-Los roles de un usuario ya no viven en esta tabla sino en `user_roles` (la
-columna `role` se eliminó en la migración `0018`). Antes de la Fase 1c, esa
-columna se llamaba `rol`.
+A user's roles no longer live in this table but in `user_roles` (the `role`
+column was dropped in migration `0018`). Before Phase 1c, that column was
+called `rol`.
 
 ### `user_roles`
 
-*Agregada en la migración `0018` (`app/migrations/0018_user_roles.sql`).* Un
-renglón por cada rol que tiene un usuario: un usuario puede tener varios
-roles, y sus permisos son la **unión** de los permisos (`role_permissions`) de
-todos ellos. Si alguno de sus roles es `admin`, tiene todos los permisos
-(`app/core/permissions.py::effective_permissions`). Es el único lugar donde
-viven las asignaciones de roles.
+*Added in migration `0018` (`app/migrations/0018_user_roles.sql`).* One row
+for each role a user has: a user can have several roles, and their permissions
+are the **union** of the permissions (`role_permissions`) of all of them. If
+any of their roles is `admin`, they have all the permissions
+(`app/core/permissions.py::effective_permissions`). It is the only place where
+role assignments live.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
-| `user_id` | INTEGER | NOT NULL, PK, FK → `users(id)` `ON DELETE CASCADE` | Borrar un usuario borra sus asignaciones. |
-| `role` | TEXT | NOT NULL, PK, FK → `roles(name)` `ON UPDATE CASCADE` (`user_roles_role_fkey`) | `admin`/`production`/`point_of_sale`/... — **valores en inglés a propósito**: el nombre del rol nunca se muestra al usuario (solo se compara para permisos), así que no cuenta como dato de negocio en español — ver `CLAUDE.md`. El nombre en español que vería el personal vive en `roles.label`. Hasta `app/migrations/0004_translate_role_values_to_english.sql` los valores reales eran `produccion`/`punto_venta`. **Sin `ON DELETE`**, la misma regla que tenía la antigua `users_role_fkey`: no se puede borrar un rol que algún usuario todavía tenga (`delete_role` recibe un `ForeignKeyViolation`). Con índice (`user_roles_role_idx`) para buscar quién tiene un rol. |
-| `assigned_at` | TIMESTAMP | NOT NULL DEFAULT now() | Cuándo se asignó. `set_user_roles` conserva el `assigned_at` de los roles que el usuario ya tenía. |
-| `assigned_by` | INTEGER | FK → `users(id)` `ON DELETE SET NULL`, nullable | Quién lo asignó; `NULL` para los renglones del backfill y si ese usuario se borra. |
+| `user_id` | INTEGER | NOT NULL, PK, FK → `users(id)` `ON DELETE CASCADE` | Deleting a user deletes their assignments. |
+| `role` | TEXT | NOT NULL, PK, FK → `roles(name)` `ON UPDATE CASCADE` (`user_roles_role_fkey`) | `admin`/`production`/`point_of_sale`/... — **values in English on purpose**: the role name is never shown to the user (it is only compared for permissions), so it does not count as Spanish business data — see `CLAUDE.md`. The Spanish name that staff would see lives in `roles.label`. Up to `app/migrations/0004_translate_role_values_to_english.sql` the actual values were `produccion`/`punto_venta`. **No `ON DELETE`**, the same rule the old `users_role_fkey` had: a role that any user still has cannot be deleted (`delete_role` receives a `ForeignKeyViolation`). Indexed (`user_roles_role_idx`) to look up who has a role. |
+| `assigned_at` | TIMESTAMP | NOT NULL DEFAULT now() | When it was assigned. `set_user_roles` keeps the `assigned_at` of the roles the user already had. |
+| `assigned_by` | INTEGER | FK → `users(id)` `ON DELETE SET NULL`, nullable | Who assigned it; `NULL` for the backfill rows and if that user is deleted. |
 
-**Backfill desde `users.role`**: la migración `0018` crea un renglón por
-usuario con el valor que tenía en `users.role` (`assigned_by` en `NULL`) y
-luego elimina esa columna (y con ella `users_role_fkey`), así que cada
-usuario conserva exactamente el acceso que tenía. Solo corre mientras
-`users.role` exista, así que es segura de correr dos veces.
+**Backfill from `users.role`**: migration `0018` creates one row per user with
+the value it had in `users.role` (`assigned_by` as `NULL`) and then drops that
+column (and with it `users_role_fkey`), so each user keeps exactly the access
+they had. It only runs while `users.role` exists, so it is safe to run twice.
 
-> **Modelo NIST core RBAC.** El esquema sigue el modelo RBAC básico de NIST:
-> usuarios (`users`), roles (`roles`), permisos (`permissions`), asignación
-> usuario-rol (`user_roles`) y asignación permiso-rol (`role_permissions`).
-> Todos los roles de un usuario están activos en cada sesión; no hay
-> jerarquía de roles ni separación de funciones.
+> **NIST core RBAC model.** The schema follows the NIST core RBAC model:
+> users (`users`), roles (`roles`), permissions (`permissions`), user-role
+> assignment (`user_roles`) and permission-role assignment
+> (`role_permissions`). All of a user's roles are active in every session;
+> there is no role hierarchy or separation of duties.
 
 ### `roles`
 
-*Agregada en la migración `0015` (`app/migrations/0015_roles_and_permissions.sql`).*
-Los roles a los que puede pertenecer un usuario. Creada en `init.sql` antes
-de `users` y `user_roles`, para que `user_roles.role` la referencie
-directamente. `app/web/auth.py` decide el acceso en cada request con los
-permisos de los roles del usuario; esta tabla es también la base para una
-pantalla de gestión de roles.
+*Added in migration `0015` (`app/migrations/0015_roles_and_permissions.sql`).*
+The roles a user can belong to. Created in `init.sql` before `users` and
+`user_roles`, so that `user_roles.role` references it directly.
+`app/web/auth.py` decides access on every request with the permissions of the
+user's roles; this table is also the basis for a role management screen.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
-| `name` | TEXT | PK | Identificador interno en inglés (`admin`, `point_of_sale`, `production`, ...): es lo que guarda `user_roles.role` y nunca se muestra. |
-| `label` | TEXT | NOT NULL UNIQUE | Nombre en español que verá el personal (`Administrador`, `Punto de venta`, `Producción`). |
-| `is_system` | BOOLEAN | NOT NULL DEFAULT false | `true` en los 3 roles sembrados. Una futura pantalla de gestión lo usará para proteger esos roles; la capa de datos no lo impide. |
+| `name` | TEXT | PK | Internal English identifier (`admin`, `point_of_sale`, `production`, ...): it is what `user_roles.role` stores and it is never shown. |
+| `label` | TEXT | NOT NULL UNIQUE | Spanish name that staff will see (`Administrador`, `Punto de venta`, `Producción`). |
+| `is_system` | BOOLEAN | NOT NULL DEFAULT false | `true` for the 3 seeded roles. A future management screen will use it to protect those roles; the data layer does not prevent it. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
-Sembrada desde `init.sql`/la migración `0015` con los 3 roles del sistema
-(`ON CONFLICT DO NOTHING`). **Backfill de roles desconocidos**: antes de
-agregar `users_role_fkey` (la FK de la antigua columna `users.role`, que la
-migración `0018` reemplazó por `user_roles_role_fkey`), la migración `0015`
-inserta cada valor de `users.role` que no exista en `roles` como rol
-no-sistema con `label = name` y sin permisos, para que la FK nunca falle por
-datos inesperados de producción.
+Seeded from `init.sql`/migration `0015` with the 3 system roles
+(`ON CONFLICT DO NOTHING`). **Backfill of unknown roles**: before adding
+`users_role_fkey` (the FK of the old `users.role` column, which migration
+`0018` replaced with `user_roles_role_fkey`), migration `0015` inserts each
+`users.role` value that does not exist in `roles` as a non-system role with
+`label = name` and no permissions, so that the FK never fails because of
+unexpected production data.
 
 ### `permissions`
 
-*Agregada en la migración `0017` (`app/migrations/0017_permissions.sql`).*
-El catálogo de permisos que se le pueden conceder a un rol: un espejo en la
-base de datos de `app/core/permissions.py::PERMISSIONS`. Creada en
-`init.sql` antes de `role_permissions`, para que `role_permissions.permission`
-la referencie directamente. Las rutas siguen revisando los códigos de Python;
-esta tabla es la base para la futura pantalla de gestión de roles
-(`db.list_permissions`).
+*Added in migration `0017` (`app/migrations/0017_permissions.sql`).*
+The catalog of permissions that can be granted to a role: a database mirror of
+`app/core/permissions.py::PERMISSIONS`. Created in `init.sql` before
+`role_permissions`, so that `role_permissions.permission` references it
+directly. The routes still check the Python codes; this table is the basis for
+the future role management screen (`db.list_permissions`).
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
-| `code` | TEXT | PK | Identificador interno en inglés (`orders.capture`, `records.view`, ...): es lo que guarda `role_permissions.permission`. |
-| `label` | TEXT | NOT NULL UNIQUE | Texto en español que verá el personal (`Registrar y editar órdenes`, ...). |
-| `sort_order` | INTEGER | NOT NULL | Posición del código en la tupla `PERMISSIONS` (1 a 13). |
+| `code` | TEXT | PK | Internal English identifier (`orders.capture`, `records.view`, ...): it is what `role_permissions.permission` stores. |
+| `label` | TEXT | NOT NULL UNIQUE | Spanish text that staff will see (`Registrar y editar órdenes`, ...). |
+| `sort_order` | INTEGER | NOT NULL | Position of the code in the `PERMISSIONS` tuple (1 to 13). |
 
-Sembrada desde `init.sql`/la migración `0017` con los 13 códigos de
-`PERMISSIONS`, con la misma etiqueta y en el mismo orden (`ON CONFLICT DO
-NOTHING`). `sort_order` existe para que la futura pantalla de roles muestre
-los permisos en un orden estable, el mismo de la tupla, sin depender del
-orden alfabético de los códigos. Un test
-(`tests/test_schema_migrate.py::TestPermissions`) exige que la tabla y la
-tupla sean idénticas: agregar un código requiere una migración nueva **y**
-una entrada en `PERMISSIONS`.
+Seeded from `init.sql`/migration `0017` with the 13 codes of `PERMISSIONS`,
+with the same label and in the same order (`ON CONFLICT DO NOTHING`).
+`sort_order` exists so that the future roles screen shows the permissions in a
+stable order, the same as the tuple, without depending on the alphabetical
+order of the codes. A test (`tests/test_schema_migrate.py::TestPermissions`)
+requires the table and the tuple to be identical: adding a code requires a new
+migration **and** an entry in `PERMISSIONS`.
 
 ### `role_permissions`
 
-*Agregada en la migración `0015`.* Un renglón por permiso concedido a un rol.
+*Added in migration `0015`.* One row per permission granted to a role.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
-| `role` | TEXT | NOT NULL, PK, FK → `roles(name)` `ON DELETE CASCADE ON UPDATE CASCADE` | Borrar un rol borra sus permisos. |
-| `permission` | TEXT | NOT NULL, PK, FK → `permissions(code)` `ON DELETE CASCADE ON UPDATE CASCADE` (`role_permissions_permission_fkey`, migración `0017`) | Un código del catálogo `app/core/permissions.py::PERMISSIONS` (`orders.capture`, `records.view`, ...). Se sigue validando en Python (`app/core/db/roles.py`) antes de escribir, lo que da un `ValueError` claro; desde la migración `0017` la FK además hace que Postgres rechace cualquier código desconocido. Antes de agregar la FK, `0017` borra los renglones con códigos que no están en el catálogo (hoy no conceden nada: `effective_permissions` los descarta, así que nadie cambia de acceso). |
+| `role` | TEXT | NOT NULL, PK, FK → `roles(name)` `ON DELETE CASCADE ON UPDATE CASCADE` | Deleting a role deletes its permissions. |
+| `permission` | TEXT | NOT NULL, PK, FK → `permissions(code)` `ON DELETE CASCADE ON UPDATE CASCADE` (`role_permissions_permission_fkey`, migration `0017`) | A code from the catalog `app/core/permissions.py::PERMISSIONS` (`orders.capture`, `records.view`, ...). It is still validated in Python (`app/core/db/roles.py`) before writing, which gives a clear `ValueError`; since migration `0017` the FK additionally makes Postgres reject any unknown code. Before adding the FK, `0017` deletes the rows with codes that are not in the catalog (today they grant nothing: `effective_permissions` discards them, so nobody's access changes). |
 
-La siembra reproduce el acceso de hoy, más los códigos de producción:
-`admin` tiene los 13 códigos (informativo: `effective_permissions` siempre
-le da todos); `point_of_sale` tiene `orders.capture`, `cash_summary.view`,
-`declarations.review`, `records.view`, `production.view` y
-`production.deliver`; `production` tiene `records.view`, `production.view`,
-`production.manage` y `production.deliver`.
+The seed reproduces today's access, plus the production codes:
+`admin` has all 13 codes (informational: `effective_permissions` always gives
+it all of them); `point_of_sale` has `orders.capture`, `cash_summary.view`,
+`declarations.review`, `records.view`, `production.view` and
+`production.deliver`; `production` has `records.view`, `production.view`,
+`production.manage` and `production.deliver`.
 
 ### `plate_types`
 
-*Agregada en la **Fase 1b**.* Tabla de referencia pura (sin más columnas que
-la PK) para los 7 valores de `normalize.PLATE_TYPES` — antes de la Fase 1b
-esto era solo una convención de texto compartida entre `plates.plate_type` y
-`plate_type_prices.plate_type`, sin nada en la BD que la hiciera cumplir. Ver
-rarezas para el detalle de por qué `plates`/`plate_type_prices` ahora
-referencian esta tabla con FK real.
+*Added in **Phase 1b**.* A pure reference table (no columns other than the PK)
+for the 7 values of `normalize.PLATE_TYPES` — before Phase 1b this was only a
+text convention shared between `plates.plate_type` and
+`plate_type_prices.plate_type`, with nothing in the DB enforcing it. See
+quirks for the detail on why `plates`/`plate_type_prices` now reference this
+table with a real FK.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
-| `plate_type` | TEXT | PK | Sembrada una vez, desde `init.sql`/`app/migrations/0002_reference_integrity.sql`, con los 7 valores exactos de `normalize.PLATE_TYPES`. No se escribe en ningún otro lugar de la app. |
+| `plate_type` | TEXT | PK | Seeded once, from `init.sql`/`app/migrations/0002_reference_integrity.sql`, with the 7 exact values of `normalize.PLATE_TYPES`. It is not written anywhere else in the app. |
 
 ### `plate_type_prices`
 
-*Agregada en la Fase 1, arranca **vacía** — sin seed data.* Administrada
-desde `/precios` (Fase 5a, admin-only) — ver [`WEB.md`](WEB.md).
+*Added in Phase 1, starts **empty** — no seed data.* Managed from `/precios`
+(Phase 5a, admin-only) — see [`WEB.md`](WEB.md).
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
-| `plate_type` | TEXT | PK, FK → `plate_types(plate_type)` (Fase 1b) | Uno de los 7 valores de `normalize.PLATE_TYPES` — **nunca** uno de los 3 `inventory_categories.category`. Ver rarezas, es fácil confundir estos dos espacios de nombres. |
-| `unit_price` | NUMERIC(12,2) | NOT NULL | Tarifa **sugerida/default**, no bloqueada — el precio real puede variar por cliente/negociación y queda editable al capturar cada placa (`plates.unit_price`). |
+| `plate_type` | TEXT | PK, FK → `plate_types(plate_type)` (Phase 1b) | One of the 7 values of `normalize.PLATE_TYPES` — **never** one of the 3 `inventory_categories.category`. See quirks, it is easy to confuse these two namespaces. |
+| `unit_price` | NUMERIC(12,2) | NOT NULL | **Suggested/default** rate, not locked — the actual price may vary by customer/negotiation and stays editable when capturing each plate (`plates.unit_price`). |
 | `updated_at` | TIMESTAMP | DEFAULT now() | |
 | `updated_by` | TEXT | nullable | |
 
-Un `plate_type` sin fila acá significa "sin tarifa configurada", no `0` —
-las lecturas nunca deben usar `COALESCE(unit_price, 0)`.
+A `plate_type` with no row here means "no rate configured", not `0` —
+reads must never use `COALESCE(unit_price, 0)`.
 
 ### `production_order_events`
 
-*Agregada en la migración `0016`.* Historial de estados de producción: un
-renglón por cada cambio de `production_orders.production_status` (avanzar o
-deshacer un paso), escrito por `app/core/db/production.py::set_production_status`
-solo cuando el cambio realmente ocurrió.
+*Added in migration `0016`.* Production status history: one row for each
+change of `production_orders.production_status` (advancing or undoing a step),
+written by `app/core/db/production.py::set_production_status` only when the
+change actually happened.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
 | `id` | SERIAL | PK | |
-| `order_id` | INTEGER | NOT NULL, FK → `production_orders(id)` `ON DELETE CASCADE` | Borrar una orden borra su historial, así que `delete_order` no cambió. Con índice (`production_order_events_order_id_idx`). |
-| `from_status` | TEXT | NOT NULL | Estado anterior (uno de los valores de `production_status`). |
-| `to_status` | TEXT | NOT NULL | Estado nuevo. |
-| `user_id` | INTEGER | FK → `users(id)`, nullable | Quién hizo el cambio; `NULL` si no se sabe. |
-| `created_at` | TIMESTAMP | NOT NULL DEFAULT now() | Cuándo. El último `created_at` de una orden es su "cambió de estado el...". |
+| `order_id` | INTEGER | NOT NULL, FK → `production_orders(id)` `ON DELETE CASCADE` | Deleting an order deletes its history, so `delete_order` did not change. Indexed (`production_order_events_order_id_idx`). |
+| `from_status` | TEXT | NOT NULL | Previous status (one of the `production_status` values). |
+| `to_status` | TEXT | NOT NULL | New status. |
+| `user_id` | INTEGER | FK → `users(id)`, nullable | Who made the change; `NULL` if unknown. |
+| `created_at` | TIMESTAMP | NOT NULL DEFAULT now() | When. The latest `created_at` of an order is its "changed status on...". |
 
-`replace_order` borra la orden vieja (y con ella su historial, por la
-cascada) e inserta una nueva: la orden reemplazada vuelve a `pending` y sin
-historial.
+`replace_order` deletes the old order (and with it its history, through the
+cascade) and inserts a new one: the replaced order goes back to `pending` with
+no history.
 
 ### `schema_migrations`
 
-*Agregada en la Fase 1.* Bookkeeping puro para `app/schema_migrate.py`
-(`python -m app.schema_migrate`) — no la toca ninguna otra parte de la app.
+*Added in Phase 1.* Pure bookkeeping for `app/schema_migrate.py`
+(`python -m app.schema_migrate`) — no other part of the app touches it.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
-| `version` | TEXT | PK | Nombre del archivo aplicado (ej. `0001_pos_fields.sql`) o, para los pasos de backfill en Python (no son archivos `.sql`), un nombre sintético (`0002_backfill_clientes`, `0003_backfill_usuarios`). **Estos dos strings son literales fijos para siempre** — la Fase 1d renombró las funciones/constantes de Python que los escriben (`backfill_clientes`→`backfill_customers`, `BACKFILL_CLIENTES_VERSION`→`BACKFILL_CUSTOMERS_VERSION`, etc.), pero nunca los *valores* ya grabados en producción: cambiarlos haría que el runner crea que el backfill nunca corrió y lo repita contra datos reales. |
+| `version` | TEXT | PK | Name of the applied file (e.g. `0001_pos_fields.sql`) or, for the Python backfill steps (they are not `.sql` files), a synthetic name (`0002_backfill_clientes`, `0003_backfill_usuarios`). **These two strings are fixed literals forever** — Phase 1d renamed the Python functions/constants that write them (`backfill_clientes`→`backfill_customers`, `BACKFILL_CLIENTES_VERSION`→`BACKFILL_CUSTOMERS_VERSION`, etc.), but never the *values* already recorded in production: changing them would make the runner believe the backfill never ran and repeat it against real data. |
 | `applied_at` | TIMESTAMP | DEFAULT now() | |
 
 ### `ownership_cards`
 
-*Agregada en la Fase 2 del plan de declaraciones (migración
-`app/migrations/0006_ownership_cards.sql`).* Es la **tarjeta de propiedad**
-colombiana; su identificador es la **licencia de tránsito**. Un cliente puede
-tener varias tarjetas; cada tarjeta pertenece a exactamente un cliente.
+*Added in Phase 2 of the declarations plan (migration
+`app/migrations/0006_ownership_cards.sql`).* It is the Colombian **ownership
+card** (tarjeta de propiedad); its identifier is the **transit license**
+(licencia de tránsito). A customer can have several cards; each card belongs
+to exactly one customer.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
 | `id` | SERIAL | PK | |
-| `customer_id` | INTEGER | NOT NULL, FK → `customers(id)` | El dueño de la tarjeta. Sin `ON DELETE`. Con índice (`ownership_cards_customer_id_idx`). |
-| `transit_license` | TEXT | NOT NULL UNIQUE | Identificador de la tarjeta. La capa de datos la guarda con `strip` + mayúsculas. |
-| `plate_number` | TEXT | NOT NULL UNIQUE | Guardada con `normalize.clean_plate` (mayúsculas, sin espacios). |
-| `engine_number` | TEXT | nullable | Número de motor. |
-| `chassis_number` | TEXT | nullable | Número de chasis. |
-| `vehicle_type` | TEXT | nullable | Valor esperado: `normalize.PLATE_TYPES`; validado por quien llama, **sin** `CHECK` ni FK en la BD. |
-| `registered_in` | TEXT | nullable | "Matriculado en". |
-| `vehicle_brand` | TEXT | nullable | Marca del vehículo. |
+| `customer_id` | INTEGER | NOT NULL, FK → `customers(id)` | The card's owner. No `ON DELETE`. Indexed (`ownership_cards_customer_id_idx`). |
+| `transit_license` | TEXT | NOT NULL UNIQUE | Card identifier. The data layer stores it with `strip` + uppercase. |
+| `plate_number` | TEXT | NOT NULL UNIQUE | Stored with `normalize.clean_plate` (uppercase, no spaces). |
+| `engine_number` | TEXT | nullable | Engine number. |
+| `chassis_number` | TEXT | nullable | Chassis number. |
+| `vehicle_type` | TEXT | nullable | Expected value: `normalize.PLATE_TYPES`; validated by the caller, **without** a `CHECK` or FK in the DB. |
+| `registered_in` | TEXT | nullable | "Matriculado en" (registered in). |
+| `vehicle_brand` | TEXT | nullable | Vehicle brand. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
-Son **tres restricciones independientes**, sin clave compuesta: la FK a
-`customers`, `UNIQUE(transit_license)` y `UNIQUE(plate_number)`. Violarlas
-levanta `psycopg.errors.UniqueViolation` / `ForeignKeyViolation`; la capa de
-datos no pre-chequea (la restricción de la BD es la fuente de verdad).
+There are **three independent constraints**, with no composite key: the FK to
+`customers`, `UNIQUE(transit_license)` and `UNIQUE(plate_number)`. Violating
+them raises `psycopg.errors.UniqueViolation` / `ForeignKeyViolation`; the data
+layer does not pre-check (the DB constraint is the source of truth).
 
-Para saber de antemano qué choca con una declaración,
+To know beforehand what collides with a declaration,
 `db.find_card_conflicts(conn, customer_id=..., transit_license=..., plate_number=...)`
-(solo lectura) clasifica la terna (cliente, licencia, placa) en uno de estos
-estados, con esta precedencia:
+(read-only) classifies the triple (customer, license, plate) into one of these
+states, with this precedence:
 
-| Estado | Cuándo |
+| State | When |
 |---|---|
-| `new` | No existe ninguna tarjeta con esa licencia ni con esa placa. |
-| `data_mismatch` | La licencia y la placa apuntan a tarjetas **distintas**, o solo una de las dos existe (la licencia existe con otra placa, o la placa con otra licencia). Gana sobre `other_owner`. |
-| `other_owner` | Licencia y placa son la **misma** tarjeta, pero su dueño no es `customer_id` (o `customer_id` es `None`). |
-| `same_card` | Misma tarjeta y el dueño es `customer_id`. |
+| `new` | No card exists with that license or with that plate. |
+| `data_mismatch` | The license and the plate point to **different** cards, or only one of the two exists (the license exists with another plate, or the plate with another license). Wins over `other_owner`. |
+| `other_owner` | License and plate are the **same** card, but its owner is not `customer_id` (or `customer_id` is `None`). |
+| `same_card` | Same card and the owner is `customer_id`. |
 
-`db.reassign_ownership_card(conn, card_id, new_customer_id)` es el cambio de
-dueño deliberado (acción de administración del flujo de revisión de
-declaraciones): un `UPDATE` simple.
+`db.reassign_ownership_card(conn, card_id, new_customer_id)` is the deliberate
+change of owner (an administration action of the declaration review flow): a
+simple `UPDATE`.
 
 ### `declarations`
 
-*Agregada en la Fase 3 del plan de declaraciones (migración
-`app/migrations/0007_declarations.sql`) y reestructurada por
-`app/migrations/0009_declaration_cards.sql`.* Una fila por **declaración
-juramentada** enviada por el formulario público. Una declaración tiene **un
-solo declarante** (quien la firma, una sola vez, para todo lo declarado) y
-**una o más tarjetas de propiedad** (tabla `declaration_cards`, abajo; máximo
-`MAX_CARDS` = 30). **Todas las declaraciones se guardan en `pending_review`**
-(con o sin alertas): el punto de venta las revisa y, al aprobarlas
-(`approve_declaration`), se crean el cliente y las tarjetas de propiedad.
-Mientras está en `pending_review` no se crea ni se modifica
-nada en `customers` ni en `ownership_cards`: `submitted_data` es el **único**
-lugar donde vive la declaración completa (y la evidencia legal).
+*Added in Phase 3 of the declarations plan (migration
+`app/migrations/0007_declarations.sql`) and restructured by
+`app/migrations/0009_declaration_cards.sql`.* One row per **sworn
+declaration** (declaración juramentada) submitted through the public form. A
+declaration has **a single declarant** (the person who signs it, once, for
+everything declared) and **one or more ownership cards** (table
+`declaration_cards`, below; maximum `MAX_CARDS` = 30). **All declarations are
+saved as `pending_review`** (with or without alerts): the point of sale
+reviews them and, on approving them (`approve_declaration`), the customer and
+the ownership cards are created. While it is in `pending_review`, nothing is
+created or modified in `customers` or `ownership_cards`: `submitted_data` is
+the **only** place where the complete declaration (and the legal evidence)
+lives.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
 | `id` | SERIAL | PK | |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 | `acting_as` | TEXT | NOT NULL | `normalize.ACTING_AS`: `PROPIETARIO` / `POSEEDOR` / `GESTOR`. |
-| `gestor_id` | INTEGER | FK → `customers(id)` | El declarante cuando `acting_as` es `GESTOR` (cliente tipo `GESTOR`). `NULL` en los otros casos o mientras está pendiente. |
-| `status` | TEXT | NOT NULL | `pending_review` / `approved` / `rejected` (sin `CHECK`; constantes en `app/core/db/declarations.py`). |
-| `review_flags` | TEXT[] | NOT NULL DEFAULT `'{}'` | **Unión** (sin repetidos) de las alertas de todas sus tarjetas. Se conservan al aprobar. |
-| `reviewed_by` | INTEGER | FK → `users(id)` | Quién aprobó/rechazó. |
+| `gestor_id` | INTEGER | FK → `customers(id)` | The declarant when `acting_as` is `GESTOR` (customer of type `GESTOR`). `NULL` in the other cases or while pending. |
+| `status` | TEXT | NOT NULL | `pending_review` / `approved` / `rejected` (no `CHECK`; constants in `app/core/db/declarations.py`). |
+| `review_flags` | TEXT[] | NOT NULL DEFAULT `'{}'` | **Union** (without duplicates) of the alerts of all its cards. They are kept on approval. |
+| `reviewed_by` | INTEGER | FK → `users(id)` | Who approved/rejected. |
 | `reviewed_at` | TIMESTAMP | nullable | |
-| `review_note` | TEXT | nullable | Obligatoria al rechazar. |
-| `submitted_data` | JSONB | NOT NULL | Copia exacta de lo declarado, con la forma canónica `{"acting_as", "declarant": {...}, "cards": [{...}], "raw": {...}}` (ver abajo). |
-| `declarant_signature_path` | TEXT | nullable | Firma única del declarante; cubre todas las tarjetas. Nombre de archivo en el volumen de subidas. |
-| `declarant_id_front_path` / `declarant_id_back_path` | TEXT | nullable | Fotos de la cédula del declarante (frente / atrás), nombres en el volumen de subidas. NULL en las declaraciones anteriores a la migración 0012. |
-| `production_order_id` | INTEGER | FK `production_orders(id)` ON DELETE SET NULL, nullable | Pedido que atendió la declaración ("Crear pedido" desde una declaración aprobada, migración 0010). NULL = por atender; al borrar o reemplazar el pedido vuelve a quedar por atender. Índice `declarations_production_order_id_idx`. |
-| `notarized_pdf_path` | TEXT | nullable | **Sin uso en el flujo público**: el formulario ya no recibe ningún PDF (para una pérdida, el personal entrega la declaración como PDF y el cliente la trae autenticada; ver `notarized_received_*` de la migración 0011). La columna se conserva (nullable, sin migración que la elimine) por compatibilidad con filas existentes; `submit_declaration` ya no la escribe. |
-| `submitter_ip` / `user_agent` | TEXT | nullable | Para el límite por IP y la trazabilidad. |
+| `review_note` | TEXT | nullable | Required when rejecting. |
+| `submitted_data` | JSONB | NOT NULL | Exact copy of what was declared, with the canonical shape `{"acting_as", "declarant": {...}, "cards": [{...}], "raw": {...}}` (see below). |
+| `declarant_signature_path` | TEXT | nullable | The declarant's single signature; it covers all the cards. File name in the uploads volume. |
+| `declarant_id_front_path` / `declarant_id_back_path` | TEXT | nullable | Photos of the declarant's ID card (front / back), names in the uploads volume. NULL in declarations prior to migration 0012. |
+| `production_order_id` | INTEGER | FK `production_orders(id)` ON DELETE SET NULL, nullable | Order that handled the declaration ("Crear pedido" (create order) from an approved declaration, migration 0010). NULL = pending to be handled; when the order is deleted or replaced it goes back to pending to be handled. Index `declarations_production_order_id_idx`. |
+| `notarized_pdf_path` | TEXT | nullable | **Unused in the public flow**: the form no longer receives any PDF (for a loss, the staff hands over the declaration as a PDF and the customer brings it notarized; see `notarized_received_*` of migration 0011). The column is kept (nullable, with no migration dropping it) for compatibility with existing rows; `submit_declaration` no longer writes it. |
+| `submitter_ip` / `user_agent` | TEXT | nullable | For the per-IP limit and traceability. |
 | `accepted_terms_at` | TIMESTAMP | nullable | |
-| `accepted_data_policy_at` | TIMESTAMP | nullable | Migración 0013. Cuándo el declarante marcó la autorización de tratamiento de datos personales (Ley 1581 de 2012) en el formulario público. NULL en las declaraciones anteriores a la migración 0013: esas personas nunca firmaron esa autorización, y su PDF no la muestra. |
-| `accepts_marketing` | BOOLEAN | nullable | Migración 0013. Respuesta SÍ / NO a «autorizo el envío de información comercial y ofertas»: `TRUE` = SÍ, `FALSE` = NO, NULL = sin respuesta (declaraciones anteriores a la migración 0013). |
-| `notarized_received_at` | TIMESTAMP | nullable | Migración 0011. Cuándo el personal recibió de vuelta el documento autenticado en notaría (solo declaraciones con alguna tarjeta por PÉRDIDA). NULL = aún no; mientras tanto "Crear pedido" está bloqueado (también en el servidor, en `/ingest`). |
-| `notarized_received_by` | INTEGER | FK `users(id)`, nullable | Quién lo marcó como recibido. |
+| `accepted_data_policy_at` | TIMESTAMP | nullable | Migration 0013. When the declarant ticked the authorization for the processing of personal data (Ley 1581 de 2012) on the public form. NULL in declarations prior to migration 0013: those people never signed that authorization, and their PDF does not show it. |
+| `accepts_marketing` | BOOLEAN | nullable | Migration 0013. YES / NO answer to «autorizo el envío de información comercial y ofertas» (I authorize the sending of commercial information and offers): `TRUE` = YES, `FALSE` = NO, NULL = no answer (declarations prior to migration 0013). |
+| `notarized_received_at` | TIMESTAMP | nullable | Migration 0011. When the staff received back the document notarized at a notary's office (only declarations with some card for `PÉRDIDA`). NULL = not yet; in the meantime "Crear pedido" is blocked (also on the server, in `/ingest`). |
+| `notarized_received_by` | INTEGER | FK `users(id)`, nullable | Who marked it as received. |
 
-Índices: `declarations_status_idx (status)` y
-`declarations_submitter_ip_created_at_idx (submitter_ip, created_at)` (el
-límite por IP).
+Indexes: `declarations_status_idx (status)` and
+`declarations_submitter_ip_created_at_idx (submitter_ip, created_at)` (the
+per-IP limit).
 
-**Forma canónica de `submitted_data`**: `declarant` es la persona
+**Canonical shape of `submitted_data`**: `declarant` is the person
 (`name`, `document_type`, `document_number`, `address`, `neighborhood`,
-`municipality`, `phone`, `email`); cada elemento de `cards` trae los campos de
-la tarjeta (`plate_number`, `transit_license`, `engine_number`,
-`chassis_number`, `vehicle_type`, `registered_in`, `vehicle_brand`), su
-`reason`, su `plate_quantity`, su `owner` (la persona dueña; una copia del
-declarante cuando este es propietario o poseedor) y `owner_relation`
-(`DUEÑO` / `POSEEDOR`); `raw` es el formulario crudo, si se envió. La
-migración 0009 reescribe así las declaraciones que existían con la forma
-anterior (una sola tarjeta).
+`municipality`, `phone`, `email`); each element of `cards` carries the card
+fields (`plate_number`, `transit_license`, `engine_number`,
+`chassis_number`, `vehicle_type`, `registered_in`, `vehicle_brand`), its
+`reason`, its `plate_quantity`, its `owner` (the owner person; a copy of the
+declarant when the declarant is the owner or holder) and `owner_relation`
+(`DUEÑO` / `POSEEDOR`); `raw` is the raw form, if it was submitted.
+Migration 0009 rewrites the declarations that existed with the previous shape
+(a single card) into this one.
 
 ### `declaration_cards`
 
-*Agregada por `app/migrations/0009_declaration_cards.sql`.* Una fila por
-**tarjeta de propiedad declarada**; las filas de una declaración se borran con
-ella (`ON DELETE CASCADE`). Si el declarante actúa como `PROPIETARIO` /
-`POSEEDOR`, todas las tarjetas son suyas; si actúa como `GESTOR`, cada tarjeta
-trae su propio dueño (`owner_data`). Las reglas de alerta se evalúan **por
-tarjeta** y solo sirven para avisarle al revisor: toda declaración queda en
-`pending_review` y no se crea nada hasta que el punto de venta la aprueba.
+*Added by `app/migrations/0009_declaration_cards.sql`.* One row per
+**declared ownership card**; the rows of a declaration are deleted along with
+it (`ON DELETE CASCADE`). If the declarant acts as `PROPIETARIO` /
+`POSEEDOR`, all the cards are theirs; if they act as `GESTOR`, each card
+carries its own owner (`owner_data`). The alert rules are evaluated **per
+card** and only serve to warn the reviewer: every declaration stays in
+`pending_review` and nothing is created until the point of sale approves it.
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
 | `id` | SERIAL | PK | |
 | `declaration_id` | INTEGER | NOT NULL, FK → `declarations(id)` ON DELETE CASCADE | |
-| `position` | INTEGER | NOT NULL, `UNIQUE (declaration_id, position)` | Orden dentro de la declaración, desde 0. |
-| `reason` | TEXT | NOT NULL | `normalize.DECLARATION_REASONS`: `DETERIORO` / `PÉRDIDA`, por tarjeta. |
-| `plate_quantity` | INTEGER | NOT NULL | Placas pedidas para esa tarjeta: 1..`normalize.max_plates_per_card(vehicle_type)` (2 para carros, 1 para los demás; validado en código). La cantidad total de la declaración es la suma, nunca se digita. |
-| `plate_number` / `transit_license` | TEXT | NOT NULL | Normalizadas (placa con `clean_plate`, licencia en mayúsculas sin espacios en los extremos). No se repiten dentro de una declaración. |
-| `engine_number` / `chassis_number` / `registered_in` / `vehicle_brand` | TEXT | nullable | Mismos campos que `ownership_cards`. |
-| `card_front_path` / `card_back_path` | TEXT | nullable | Fotos de la tarjeta de propiedad (frente / atrás), nombres en el volumen de subidas. NULL en las declaraciones anteriores a la migración 0012. |
-| `used_plates_photo_path` | TEXT | nullable | Foto de la(s) placa(s) usada(s) que el cliente entrega, nombre en el volumen de subidas. Obligatoria en toda tarjeta, sea el motivo `DETERIORO` o `PÉRDIDA`, salvo que el cliente marque «Perdí mis placas» en esa tarjeta (queda como `plates_lost: true` en la tarjeta de `submitted_data`); NULL en ese caso y en las declaraciones anteriores a la migración 0014. |
-| `vehicle_type` | TEXT | nullable | Un valor de `normalize.PLATE_TYPES`. |
-| `owner_relation` | TEXT | nullable | `DUEÑO` / `POSEEDOR`: del declarante (`PROPIETARIO` → `DUEÑO`, `POSEEDOR` → `POSEEDOR`) o, si es gestor, el que indicó para esa tarjeta. |
-| `owner_data` | JSONB | NOT NULL | La persona dueña de esa tarjeta (una copia del declarante cuando no es gestor). |
-| `customer_id` | INTEGER | FK → `customers(id)` | El dueño (CLIENTE). `NULL` mientras está pendiente (o rechazada). El mismo dueño repetido en varias tarjetas es **un solo** cliente (se identifica por nombre canónico). |
-| `ownership_card_id` | INTEGER | FK → `ownership_cards(id)` | La tarjeta creada o enlazada. `NULL` mientras está pendiente (o rechazada). |
-| `review_flags` | TEXT[] | NOT NULL DEFAULT `'{}'` | Alertas de **esa** tarjeta. Las que atañen al declarante gestor (tipo/documento de un gestor ya existente) se anotan en todas. |
+| `position` | INTEGER | NOT NULL, `UNIQUE (declaration_id, position)` | Order within the declaration, starting at 0. |
+| `reason` | TEXT | NOT NULL | `normalize.DECLARATION_REASONS`: `DETERIORO` / `PÉRDIDA`, per card. |
+| `plate_quantity` | INTEGER | NOT NULL | Plates requested for that card: 1..`normalize.max_plates_per_card(vehicle_type)` (2 for cars, 1 for the rest; validated in code). The declaration's total quantity is the sum, never typed in. |
+| `plate_number` / `transit_license` | TEXT | NOT NULL | Normalized (plate with `clean_plate`, license in uppercase without leading/trailing spaces). They are not repeated within a declaration. |
+| `engine_number` / `chassis_number` / `registered_in` / `vehicle_brand` | TEXT | nullable | Same fields as `ownership_cards`. |
+| `card_front_path` / `card_back_path` | TEXT | nullable | Photos of the ownership card (front / back), names in the uploads volume. NULL in declarations prior to migration 0012. |
+| `used_plates_photo_path` | TEXT | nullable | Photo of the used plate(s) that the customer hands in, name in the uploads volume. Required on every card, whether the reason is `DETERIORO` or `PÉRDIDA`, unless the customer ticks «Perdí mis placas» (I lost my plates) on that card (it is stored as `plates_lost: true` in the card in `submitted_data`); NULL in that case and in declarations prior to migration 0014. |
+| `vehicle_type` | TEXT | nullable | A value of `normalize.PLATE_TYPES`. |
+| `owner_relation` | TEXT | nullable | `DUEÑO` / `POSEEDOR`: the declarant's (`PROPIETARIO` → `DUEÑO`, `POSEEDOR` → `POSEEDOR`) or, if it is a gestor, the one they indicated for that card. |
+| `owner_data` | JSONB | NOT NULL | The person who owns that card (a copy of the declarant when it is not a gestor). |
+| `customer_id` | INTEGER | FK → `customers(id)` | The owner (CLIENTE). `NULL` while pending (or rejected). The same owner repeated across several cards is **a single** customer (identified by canonical name). |
+| `ownership_card_id` | INTEGER | FK → `ownership_cards(id)` | The card created or linked. `NULL` while pending (or rejected). |
+| `review_flags` | TEXT[] | NOT NULL DEFAULT `'{}'` | Alerts for **that** card. Those that concern the gestor declarant (type/document of an already existing gestor) are noted on all of them. |
 
-Índices: el de `UNIQUE (declaration_id, position)` (cubre las búsquedas por
-`declaration_id`), `declaration_cards_ownership_card_id_idx` y
+Indexes: the one from `UNIQUE (declaration_id, position)` (it covers lookups
+by `declaration_id`), `declaration_cards_ownership_card_id_idx` and
 `declaration_cards_customer_id_idx`.
 
-**Alertas (`review_flags`)** — le indican al revisor qué mirar (la declaración
-queda en `pending_review` con o sin alertas; sin alertas, `review_flags` queda
-vacío). Al aprobar se vuelven a verificar:
+**Alerts (`review_flags`)** — they tell the reviewer what to look at (the
+declaration stays in `pending_review` with or without alerts; with no alerts,
+`review_flags` stays empty). They are verified again on approval:
 
-| Alerta | Cuándo |
+| Alert | When |
 |---|---|
-| `plate_made_recently` | La última fabricación de esa placa (`db.last_fabrication_date`, ignora placas `is_voided` y `is_plate_annulled`) + 6 meses calendario es posterior a hoy (fecha de Bogotá). Exactamente 6 meses ya no alerta. |
-| `card_other_owner` | La licencia y la placa son una tarjeta existente de **otro** cliente (o el dueño aún no existe). |
-| `card_data_mismatch` | La licencia existe con otra placa, o la placa con otra licencia. |
-| `customer_type_mismatch` | Un cliente/gestor que ya existe con ese nombre no tiene el tipo esperado (`CLIENTE` para el dueño, `GESTOR` para el gestor); `NULL` cuenta como diferente. También cuando, en la misma declaración, el nombre del gestor aparece como dueño de una tarjeta. |
-| `customer_document_mismatch` | Un cliente/gestor que ya existe con ese nombre ya tiene número de documento y es **distinto** del declarado (un homónimo, no la misma persona). Se compara solo letras y dígitos (`1.234.567-8` = `12345678`); un documento vacío en cualquiera de los dos lados no cuenta. También cuando el mismo nombre de dueño aparece en la misma declaración con dos documentos distintos. |
+| `plate_made_recently` | The last manufacture of that plate (`db.last_fabrication_date`, ignores `is_voided` and `is_plate_annulled` plates) + 6 calendar months is later than today (Bogotá date). Exactly 6 months no longer alerts. |
+| `card_other_owner` | The license and the plate are an existing card of **another** customer (or the owner does not exist yet). |
+| `card_data_mismatch` | The license exists with another plate, or the plate with another license. |
+| `customer_type_mismatch` | A customer/gestor that already exists with that name does not have the expected type (`CLIENTE` for the owner, `GESTOR` for the gestor); `NULL` counts as different. Also when, in the same declaration, the gestor's name appears as the owner of a card. |
+| `customer_document_mismatch` | A customer/gestor that already exists with that name already has a document number and it is **different** from the declared one (a namesake, not the same person). Only letters and digits are compared (`1.234.567-8` = `12345678`); an empty document on either side does not count. Also when the same owner name appears in the same declaration with two different documents. |
 
 ### `blank_preparations`
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
 | `id` | SERIAL | PK | |
-| `prep_date` | DATE | nullable | Sin `NOT NULL` a pesar de representar "cuándo se preparó". |
-| `category` | TEXT | NOT NULL, FK → `inventory_categories(category)` (Fase 1b) | Uno de los 3 valores de `normalize.INVENTORY_CATEGORIES`. |
+| `prep_date` | DATE | nullable | No `NOT NULL` despite representing "when it was prepared". |
+| `category` | TEXT | NOT NULL, FK → `inventory_categories(category)` (Phase 1b) | One of the 3 values of `normalize.INVENTORY_CATEGORIES`. |
 | `quantity` | INTEGER | NOT NULL DEFAULT 0 | |
 | `prepared_by` | TEXT | nullable | |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
-Representa eventos de "ALISTAMIENTO" — blanks cortados/preparados de
-antemano, o ingreso de material nuevo. No son placas; solo alimentan
+Represents "ALISTAMIENTO" (preparation) events — blanks cut/prepared in
+advance, or the intake of new material. They are not plates; they only feed
 `inventory_categories.prepared`.
 
 ### `inventory_categories`
 
-| Columna | Tipo | Constraint/Default | Nota |
+| Column | Type | Constraint/Default | Note |
 |---|---|---|---|
-| `category` | TEXT | PK | Una de las 3 categorías fijas: `CARRO PARTICULAR`, `MOTO PARTICULAR`, `PÚBLICO`. Sembrada con esas 3 filas desde `init.sql`/la migración desde la **Fase 1b** — ver rarezas (antes de eso, esta tabla nacía vacía). |
-| `initial_stock` | INTEGER | DEFAULT 0 | **Columna muerta** — ver rarezas. |
-| `prepared` | INTEGER | DEFAULT 0 | Recalculado por `recalc_inventory()` como suma de `blank_preparations.quantity`. |
-| `consumed` | INTEGER | DEFAULT 0 | Recalculado por `recalc_inventory()` como suma de `plates.quantity` no anuladas, mapeadas a material. |
+| `category` | TEXT | PK | One of the 3 fixed categories: `CARRO PARTICULAR`, `MOTO PARTICULAR`, `PÚBLICO`. Seeded with those 3 rows from `init.sql`/the migration since **Phase 1b** — see quirks (before that, this table started empty). |
+| `initial_stock` | INTEGER | DEFAULT 0 | **Dead column** — see quirks. |
+| `prepared` | INTEGER | DEFAULT 0 | Recomputed by `recalc_inventory()` as the sum of `blank_preparations.quantity`. |
+| `consumed` | INTEGER | DEFAULT 0 | Recomputed by `recalc_inventory()` as the sum of non-voided `plates.quantity`, mapped to material. |
 
-## Rarezas que hay que conocer
+## Quirks to know about
 
-### `requested_by` sigue siendo una copia desnormalizada de `customers.name`
+### `requested_by` is still a denormalized copy of `customers.name`
 
-Desde la Fase 1, `requested_by` (el "solicitante") y el `name` de
-`customers` son **la misma entidad** — pero `production_orders.requested_by`
-**se mantiene**, sigue siendo `NOT NULL`, y se sigue escribiendo siempre. No
-se convirtió en una columna derivada/calculada porque 9 queries de lectura y
-2 templates lo usan directo sin pasar por `customers`
+Since Phase 1, `requested_by` (the "requester") and the `name` of
+`customers` are **the same entity** — but `production_orders.requested_by`
+**is kept**, it is still `NOT NULL`, and it is still always written. It was not
+turned into a derived/computed column because 9 read queries and 2 templates
+use it directly without going through `customers`
 (`recent_orders`, `find_orders_by_number`, `search_orders_by_number`,
 `search_plates_by_number`, `find_orders_for_plate`, `review_rows`,
 `order_detail`, `distinct_requested_by`, `_orders_table.html`,
-`record_detail.html`). Regla que hay que respetar en cualquier código nuevo:
-**toda escritura que fija `customer_id` debe fijar también `requested_by =
-customers.name` en la misma operación** — dejarlos desincronizados es un
-bug, no una variante válida.
+`record_detail.html`). A rule to respect in any new code:
+**every write that sets `customer_id` must also set `requested_by =
+customers.name` in the same operation** — leaving them out of sync is a
+bug, not a valid variant.
 
-### `customers.name UNIQUE` — la primera restricción de unicidad real
+### `customers.name UNIQUE` — the first real uniqueness constraint
 
-Aparte de las PK, es la única `UNIQUE` de todo el esquema — deliberada,
-porque es lo que le da a "buscar cliente por nombre y reusar sus datos" una
-definición clara (y de paso, el índice de búsqueda gratis). **Política de
-colisión, a propósito**: dos clientes reales distintos que tipean el mismo
-nombre canónico se tratan como el MISMO cliente — ya es el comportamiento de
-hoy en `normalize._REQUESTED_BY_MAP_RAW` (variantes como `MUVA GRANADA`/`MUVA
-SERGIO` quedan sin fusionar a propósito); para separarlos se tipea un nombre
-calificado (`PTO.V FABIO M`), igual que siempre. `customers.name` no fuerza
-nada distinto — solo canonicaliza (`normalize.normalize_requested_by`).
+Apart from the PKs, it is the only `UNIQUE` in the whole schema — deliberate,
+because it is what gives "look up a customer by name and reuse its data" a
+clear definition (and, incidentally, the lookup index for free). **Collision
+policy, on purpose**: two distinct real customers who type the same canonical
+name are treated as the SAME customer — this is already today's behavior in
+`normalize._REQUESTED_BY_MAP_RAW` (variants such as `MUVA GRANADA`/`MUVA
+SERGIO` are deliberately left unmerged); to separate them, a qualified name
+is typed (`PTO.V FABIO M`), as always. `customers.name` does not force
+anything different — it only canonicalizes (`normalize.normalize_requested_by`).
 
-### Fase 1c cubrió TODO lo que Fase 1 agregó en español, no solo `clientes`/`usuarios`
+### Phase 1c covered EVERYTHING that Phase 1 added in Spanish, not just `clientes`/`usuarios`
 
-Una versión anterior de este documento (y del plan) decía que las columnas
-de POS en `production_orders`/`plates` (`cliente_id`, `creado_por`,
-`comprobante_tipo`, `motivo`, etc.) habían quedado fuera del rename de la
-Fase 1c porque "pertenecían a una Fase 2 que nunca llegó a pushear" — eso
-era un error, detectado al verificar contra producción real con
-`\d production_orders`/`\d plates`: esas columnas ya existían, agregadas
-por la Fase 1 (PR #14) igual que `clientes`/`usuarios`, así que el rename
-de la Fase 1c las cubre a todas — ver el mapeo completo en la sección de
-`production_orders`/`plates` más arriba y en
-`app/migrations/0003_rename_to_english.sql`. Las 2 FK existentes
-(`production_orders_cliente_id_fkey` → `production_orders_customer_id_fkey`,
-`production_orders_creado_por_fkey` → `production_orders_created_by_fkey`)
-se renombraron también — no por necesidad funcional (Postgres nombra una FK
-por la columna que referencia, no por la tabla referenciada, y la resuelve
-por OID internamente, así que habría seguido funcionando igual sin
-renombrarlas) sino para que el nombre de la constraint en una base ya
-migrada coincida con el que Postgres le pone automáticamente en una
-instalación nueva (mismo razonamiento que las constraints de
-`customers`/`users`, ver arriba). Cuando la Fase 2 retome esta feature,
-sigue construyendo directamente sobre estos nombres en inglés
-(`receipt_type`, `payment_method`, `reason`, etc.), sin nada pendiente de
-renombrar.
+An earlier version of this document (and of the plan) said that the POS
+columns in `production_orders`/`plates` (`cliente_id`, `creado_por`,
+`comprobante_tipo`, `motivo`, etc.) had been left out of the Phase 1c rename
+because they "belonged to a Phase 2 that was never pushed" — that was a
+mistake, detected when checking against real production with
+`d production_orders`/`d plates`: those columns already existed, added by
+Phase 1 (PR #14) just like `clientes`/`usuarios`, so the Phase 1c rename
+covers them all — see the full mapping in the `production_orders`/`plates`
+section above and in `app/migrations/0003_rename_to_english.sql`. The 2
+existing FKs (`production_orders_cliente_id_fkey` →
+`production_orders_customer_id_fkey`, `production_orders_creado_por_fkey` →
+`production_orders_created_by_fkey`) were renamed too — not out of functional
+necessity (Postgres names an FK after the column it is on, not after the
+referenced table, and resolves it by internal OID, so it would have kept
+working the same without renaming them) but so that the constraint name on an
+already migrated database matches the one Postgres automatically gives it on
+a new installation (same reasoning as the `customers`/`users` constraints,
+see above). When Phase 2 picks this feature back up, it builds directly on
+these English names (`receipt_type`, `payment_method`, `reason`, etc.), with
+nothing pending to rename.
 
-### `plates_order_id_idx` — primer índice de este esquema fuera de PK/UNIQUE
+### `plates_order_id_idx` — the first index in this schema outside a PK/UNIQUE
 
-Agregado en la Fase 1, en anticipación al reporte de cuadre de caja
-(`/cuadre`, Fase 5b — `app/core/cash_summary.py`), que efectivamente
-introdujo el primer `JOIN` agregado real sobre toda la tabla `plates`
-(`plates JOIN production_orders`, filtrado por `order_date`). Antes de
-esto, el esquema no tenía ningún índice más allá de los que Postgres crea
-automáticamente para las PK.
+Added in Phase 1, in anticipation of the cash reconciliation report
+(`/cuadre`, Phase 5b — `app/core/cash_summary.py`), which did introduce the
+first real aggregate `JOIN` over the whole `plates` table
+(`plates JOIN production_orders`, filtered by `order_date`). Before this, the
+schema had no index beyond the ones Postgres creates automatically for the
+PKs.
 
-### `plate_type` (7 valores) vs. `inventory_categories.category` (3 materiales)
+### `plate_type` (7 values) vs. `inventory_categories.category` (3 materials)
 
-Dos "espacios de nombres" que se parecen y no hay que confundir — ya existían
-antes de la Fase 1, pero `plate_type_prices` los vuelve más importantes de
-tener claros: `plates.plate_type` tiene 7 valores granulares
-(`normalize.PLATE_TYPES`), mientras que `inventory_categories.category`
-tiene solo 3 materiales (`normalize.INVENTORY_CATEGORIES`, varios
-`plate_type` mapean al mismo material). `plate_type_prices` está indexada
-por `plate_type` (7 valores) — la tarifa se factura por tipo de placa
-vendido, no por material de inventario. Confundirlos dejaría `ORNAMENTAL`
-sin poder tener precio propio y le daría a `REMOLQUE` la tarifa de
-`CARRO PÚBLICO`. Precio (dinero, por tipo) e inventario (cantidades, por
-material) son loops separados en `app/core/db/` y deben seguir separados.
-Desde la Fase 1b cada espacio de nombres tiene su propia tabla de referencia
-real (`plate_types` para los 7 tipos, `inventory_categories` para los 3
-materiales) — dos tablas *distintas*, no una FK compartida; seguir sin
-confundirlas.
+Two "namespaces" that look alike and must not be confused — they already
+existed before Phase 1, but `plate_type_prices` makes it more important to
+keep them clear: `plates.plate_type` has 7 granular values
+(`normalize.PLATE_TYPES`), while `inventory_categories.category` has only 3
+materials (`normalize.INVENTORY_CATEGORIES`, several `plate_type` values map
+to the same material). `plate_type_prices` is keyed by `plate_type` (7
+values) — the rate is billed by type of plate sold, not by inventory
+material. Confusing them would leave `ORNAMENTAL` unable to have its own price
+and would give `REMOLQUE` the rate of `CARRO PÚBLICO`. Price (money, by type)
+and inventory (quantities, by material) are separate loops in `app/core/db/`
+and must stay separate. Since Phase 1b each namespace has its own real
+reference table (`plate_types` for the 7 types, `inventory_categories` for the
+3 materials) — two *distinct* tables, not a shared FK; keep not confusing
+them.
 
-### Las órdenes anteriores a `0016` figuran como `delivered`
+### Orders from before `0016` appear as `delivered`
 
-La migración `0016_production_status.sql` agregó `production_status` con
-`DEFAULT 'delivered'` y recién después cambió el default a `'pending'`: toda
-orden que ya existía cuando corrió quedó `delivered` (eran historia, ya se
-habían entregado), sin ningún evento en `production_order_events`. Por eso
-una orden `delivered` sin historial no significa que alguien la marcó
-entregada: es anterior al tablero de producción.
+Migration `0016_production_status.sql` added `production_status` with
+`DEFAULT 'delivered'` and only afterwards changed the default to `'pending'`:
+every order that already existed when it ran was left as `delivered` (they
+were history, already delivered), with no event in `production_order_events`.
+That is why a `delivered` order with no history does not mean someone marked
+it as delivered: it predates the production board.
 
-### `order_number` sin `UNIQUE`
+### `order_number` without `UNIQUE`
 
-Puede haber legítimamente **2 o más filas** de `production_orders` con el
-mismo `order_number` — nada en el esquema ni en el código antiguo lo
-impedía. `find_orders_by_number()` puede devolver 0, 1, o 2+ filas; la
-función `replace_order()` (ver [`CORE.md`](CORE.md)) existe justamente para
-**fusionar** todas las coincidencias en una sola orden cuando el usuario lo
-pide explícitamente.
+There can legitimately be **2 or more rows** of `production_orders` with the
+same `order_number` — nothing in the schema or in the old code prevented it.
+`find_orders_by_number()` can return 0, 1, or 2+ rows; the function
+`replace_order()` (see [`CORE.md`](CORE.md)) exists precisely to **merge** all
+the matches into a single order when the user explicitly asks for it.
 
-### `city` vive en `plates`, no en `production_orders`
+### `city` lives in `plates`, not in `production_orders`
 
-Es deliberado: una orden puede tener placas para varias ciudades a la vez
-(ej. un pedido mixto carro+moto). `production_orders` no tiene columna
-`city` — cualquier "ciudades de esta orden" se recalcula agregando
-`array_agg(DISTINCT p.city)` sobre sus placas. Solo los tipos
-`CARRO PARTICULAR` y `CARRO PÚBLICO` son realmente específicos de ciudad;
-el resto por defecto queda en `"COLOMBIA"` si se deja en blanco.
+This is deliberate: an order can have plates for several cities at once
+(e.g. a mixed car+motorcycle order). `production_orders` has no `city`
+column — any "cities of this order" is recomputed by aggregating
+`array_agg(DISTINCT p.city)` over its plates. Only the types
+`CARRO PARTICULAR` and `CARRO PÚBLICO` are really city-specific; the rest
+default to `"COLOMBIA"` if left blank.
 
-### Los 4 flags booleanos de `plates` — fácil confundirlos
+### The 4 boolean flags of `plates` — easy to confuse
 
-| Flag | Significa | ¿Cuenta como "consumido" en inventario? | Se limpia... |
+| Flag | Meaning | Does it count as "consumed" in inventory? | Cleared... |
 |---|---|---|---|
-| `is_batch_replacement` | "Reposición": lote sin números de placa individuales identificados | Sí, consume material igual | Manualmente al recuperar la placa real (bug histórico ya corregido: `update_plate_full` ahora sí actualiza este flag) |
-| `is_voided` | Orden/placa anulada — el blank nunca se consumió | **No** — excluida de `consumed` | Es un estado permanente de la fila, no se "limpia" |
-| `is_plate_annulled` | Placa anulada pero el blank físico ya se gastó/perdió | **Sí** — cuenta además como "wasted" | No se limpia automáticamente |
-| `is_possible_duplicate` | Candidata a duplicado, pendiente de revisión en `/review` | No afecta inventario | Con cualquier edición (`update_plate`, `update_plate_full`, `resolve_plate`), o en cascada por `delete_plate` cuando ya no queda otra fila ambigua con ese número |
+| `is_batch_replacement` | "Reposición" (replacement): a batch without individual plate numbers identified | Yes, it consumes material all the same | Manually when the real plate is recovered (historical bug already fixed: `update_plate_full` now does update this flag) |
+| `is_voided` | Voided order/plate — the blank was never consumed | **No** — excluded from `consumed` | It is a permanent state of the row, it is not "cleared" |
+| `is_plate_annulled` | Annulled plate but the physical blank was already spent/lost | **Yes** — additionally counts as "wasted" | Not cleared automatically |
+| `is_possible_duplicate` | Duplicate candidate, pending review in `/review` | Does not affect inventory | With any edit (`update_plate`, `update_plate_full`, `resolve_plate`), or in cascade by `delete_plate` when no other ambiguous row with that number remains |
 
-### `initial_stock` es una columna muerta
+### `initial_stock` is a dead column
 
-El comentario original en `init.sql` sugiere que `available` debería ser
-`initial_stock + prepared - consumed`, pero en el código real
-(`app/core/db/inventory.py::inventory_view()`) es solo `prepared - consumed` — nunca
-se lee ni se escribe `initial_stock` en ningún lugar de la app. La línea
-base histórica se incorporó, en cambio, como filas reconciliadas dentro de
-`blank_preparations` durante la migración de Excel
-(`app/migrate.py::RECONCILED_ALISTAMIENTO`). No asumir que esta columna
-está viva.
+The original comment in `init.sql` suggests that `available` should be
+`initial_stock + prepared - consumed`, but in the real code
+(`app/core/db/inventory.py::inventory_view()`) it is just `prepared - consumed` —
+`initial_stock` is never read or written anywhere in the app. The historical
+baseline was instead incorporated as reconciled rows inside
+`blank_preparations` during the Excel migration
+(`app/migrate.py::RECONCILED_ALISTAMIENTO`). Do not assume this column is
+alive.
 
-### Sin índices en columnas muy consultadas (parcialmente resuelto)
+### No indexes on heavily queried columns (partially resolved)
 
-`plates.order_id` ya tiene índice (`plates_order_id_idx`, Fase 1 — ver
-rarezas arriba). Pero **sigue sin haber índice** en `plates.plate_number` ni
-`plates.city`, a pesar de que ambas se filtran/joinean constantemente
-(`find_orders_for_plate`, las búsquedas `ILIKE` de Registros,
-`distinct_cities`). No es un problema hoy por el volumen de datos, pero es
-lo primero a revisar si una consulta de Registros empieza a sentirse lenta.
+`plates.order_id` now has an index (`plates_order_id_idx`, Phase 1 — see
+quirks above). But there is **still no index** on `plates.plate_number` or
+`plates.city`, even though both are constantly filtered/joined
+(`find_orders_for_plate`, the `ILIKE` searches of Registros (Records),
+`distinct_cities`). It is not a problem today given the data volume, but it is
+the first thing to check if a Records query starts to feel slow.

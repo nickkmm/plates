@@ -39,7 +39,7 @@ that, scoped so it can land as one small pull request.
   PostgreSQL app (`app/web/` blueprints, `app/core/` business logic, SQL
   migrations in `app/migrations/`) deployed to a VPS on every push to `main`.
   The architecture and schema are in `docs/` (start at `docs/README.md`); the
-  POS roadmap is `PLAN_ARQUITECTURA_Y_POS.md`. Code and schema names are
+  POS roadmap is `ARCHITECTURE_AND_POS_PLAN.md`. Code and schema names are
   English, everything a staff member reads is Spanish (see `CLAUDE.md`).
 - **NEEDS-INFO** also when the work needs a business rule only INGSE can
   decide and the code and docs don't settle it: prices or tariffs, cash

@@ -4,7 +4,7 @@ can use `csrf.exempt` / `csrf.protect()` without importing app.web.app.
 app.web.app calls `csrf.init_app(app)`: from then on every POST/PUT/PATCH/
 DELETE needs the session-bound token, sent as the `csrf_token` form field
 (`{{ csrf_token() }}` in templates) or the `X-CSRFToken` header. See
-docs/WEB.md, "Protección CSRF".
+docs/WEB.md, "CSRF protection".
 """
 
 from __future__ import annotations
