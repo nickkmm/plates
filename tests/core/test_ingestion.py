@@ -23,6 +23,7 @@ from app.core.ingestion import find_duplicate_plate_numbers, process_rows, repla
 from app.customers import repository as customers_repository
 from app.inventory import repository as inventory_repository
 from app.pricing import repository as pricing_repository
+from app.production import repository as production_repository
 from app.shared.models import ExtractedRow
 
 
@@ -772,9 +773,9 @@ class TestReplaceOrder:
         new order, so it starts pending with no history."""
         old_id = _insert_order(db_conn, order_number="1074", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
-        db.set_production_status(db_conn, old_id, from_status="pending", to_status="in_progress",
+        production_repository.set_production_status(db_conn, old_id, from_status="pending", to_status="in_progress",
                                  user_id=None)
-        db.set_production_status(db_conn, old_id, from_status="in_progress", to_status="ready",
+        production_repository.set_production_status(db_conn, old_id, from_status="in_progress", to_status="ready",
                                  user_id=None)
         db_conn.commit()
 
@@ -784,8 +785,8 @@ class TestReplaceOrder:
 
         (new_order,) = db.find_orders_by_number(db_conn, "1074")
         assert new_order.id != old_id
-        assert db.get_production_status(db_conn, new_order.id) == "pending"
-        assert db.list_production_events(db_conn, new_order.id) == []
+        assert production_repository.get_production_status(db_conn, new_order.id) == "pending"
+        assert production_repository.list_production_events(db_conn, new_order.id) == []
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM production_order_events WHERE order_id = %s", (old_id,))
             assert cur.fetchone()[0] == 0

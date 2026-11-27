@@ -1,4 +1,4 @@
-"""Unit/integration tests for app.core.cash_summary (Fase 5b, /cuadre).
+"""Unit/integration tests for app.cash_summary.service (Fase 5b, /cuadre).
 
 The contract under test -- see ARCHITECTURE_AND_POS_PLAN.md's "Cuadre de caja"
 section for the full reasoning behind each rule:
@@ -26,7 +26,7 @@ import pdfplumber
 import pytest
 
 from app.core import db
-from app.core.cash_summary import (
+from app.cash_summary.service import (
     MISSING_PAYMENT_METHOD_LABEL,
     build_cash_summary,
     render_cash_summary_pdf,

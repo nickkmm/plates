@@ -5,8 +5,7 @@ stored on `plates`/`production_orders` into the exact buckets the manual
 daily cuadre needs, plus the missing-price warning list. This has real logic
 beyond CRUD (grouping, exclusion rules, the "never silently zero a missing
 price" rule), so per ARCHITECTURE_AND_POS_PLAN.md's "Fase 5b" section it gets
-its own orchestration module instead of living directly in a app/core/db/*.py
-file.
+its own service module instead of living directly in a repository module.
 
 **Transaction contract**: `build_cash_summary` takes an already-open `conn`
 and never calls commit()/rollback() -- same convention as every function in
@@ -105,6 +104,9 @@ def build_cash_summary(conn: psycopg.Connection[DictRow], *, desde: date, hasta:
     if desde > hasta:
         raise ValueError("La fecha 'desde' no puede ser posterior a la fecha 'hasta'.")
 
+    # TODO(phase 4): both queries below read the orders domain's plates and
+    # production_orders tables directly; they should go through the orders
+    # domain once it exists.
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -172,8 +174,8 @@ def _cop(value: Decimal) -> str:
     separated by '.', no decimals (e.g. Decimal('1954000') -> '$1.954.000').
 
     Deliberately duplicated (not imported) from app/web/helpers.format_cop's
-    formula -- app/core/ never imports from app/web/ (core is the layer web
-    depends on, not the other way around; see docs/CORE.md), and this
+    formula -- this service never imports from app.web (a domain's service is
+    the layer its routes depend on, not the other way around), and this
     module's PDF rendering is otherwise pure/framework-free, so a one-line
     local copy is simpler than introducing a shared formatting module for a
     single formula. Both must stay in sync if the format ever changes.

@@ -4,7 +4,7 @@ moves it one step pending -> in_progress -> ready -> delivered (or undoes the
 last step).
 
 The transition rules (and the optimistic-concurrency check on
-`expected_status`) live in app/core/production.py; this module only decides
+`expected_status`) live in app/production/service.py; this module only decides
 WHO may make each step, from permissions:
 - `production.view` opens the board, the detail and the photos;
 - `production.manage` makes every step, forward and back;
@@ -31,13 +31,14 @@ from flask import Blueprint, abort, current_app, redirect, render_template, requ
 from app.auth.decorators import has_permission, permission_required
 from app.core import db
 from app.core.db.declarations import REASON_LOSS
-from app.core.db.production import (
+from app.production import repository
+from app.production.repository import (
     STATUS_DELIVERED,
     STATUS_IN_PROGRESS,
     STATUS_PENDING,
     STATUS_READY,
 )
-from app.core.production import advance_order, revert_order
+from app.production.service import advance_order, revert_order
 from app.shared.normalize import inventory_category
 from app.shared.uploads import send_stored_file
 from app.web.blueprints.declarations import CARD_PHOTO_SIDES, FILE_KINDS
@@ -86,10 +87,10 @@ def _may_undo(status: str) -> bool:
 def _render_detail(order_id: int, *, error: str | None = None):
     with db.get_conn() as conn:
         order, plates = db.order_detail(conn, order_id)
-        status = db.get_production_status(conn, order_id)
+        status = repository.get_production_status(conn, order_id)
         if order is None or status is None:
             abort(404)
-        events = db.list_production_events(conn, order_id)
+        events = repository.list_production_events(conn, order_id)
         declarations: list[dict[str, Any]] = [
             {
                 "d": declaration,
@@ -119,10 +120,10 @@ def production():
         status_filter = STATUS_PENDING
     query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
-        orders = db.list_production_orders(
+        orders = repository.list_production_orders(
             conn, status=status_values[status_filter], query=query or None,
         )
-        counts = db.count_by_production_status(conn)
+        counts = repository.count_by_production_status(conn)
     return render_template(
         "production.html", orders=orders, query=query, status_filter=status_filter,
         status_filters=STATUS_FILTERS, counts=counts, counted_statuses=COUNTED_STATUSES,
@@ -178,7 +179,7 @@ def _move(order_id: int, *, forward: bool):
     with the message (400, nothing committed); success -> commit + redirect."""
     expected_status = request.form.get("expected_status") or ""
     with db.get_conn() as conn:
-        if db.get_production_status(conn, order_id) is None:
+        if repository.get_production_status(conn, order_id) is None:
             abort(404)
     allowed = _may_advance(expected_status) if forward else _may_undo(expected_status)
     if not allowed:

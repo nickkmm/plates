@@ -14,13 +14,12 @@ This package replaces what used to be a single flat db.py, split by table:
     declarations.py -- declarations + declaration_cards (sworn declarations of
                      the public form, one declarant and many ownership cards)
                      reads/writes; the decision rules live in app/core/declarations.py.
-    production.py -- production_orders.production_status and
-                     production_order_events reads/writes; the transition
-                     rules live in app/core/production.py.
 The users and roles tables are read and written by app/auth/repository/.
 The customers, ownership_cards, plate_type_prices, blank_preparations and
 inventory_categories tables live in app/customers/repository/,
-app/pricing/repository.py and app/inventory/repository.py.
+app/pricing/repository.py and app/inventory/repository.py, and the SQL for
+production_orders.production_status and production_order_events lives in
+app/production/repository.py.
 Every public function each submodule exposes is re-exported below,
 explicitly (not `import *`), so existing call sites (`db.insert_order(...)`,
 etc.) keep working completely unchanged.
@@ -69,37 +68,12 @@ from app.core.db.plates import (
     update_plate,
     update_plate_full,
 )
-from app.core.db.production import (
-    ACTIVE_STATUSES,
-    PRODUCTION_STATUSES,
-    STATUS_DELIVERED,
-    STATUS_IN_PROGRESS,
-    STATUS_PENDING,
-    STATUS_READY,
-    ProductionEvent,
-    ProductionOrderSummary,
-    count_by_production_status,
-    get_production_status,
-    list_production_events,
-    list_production_orders,
-    production_statuses_for_orders,
-    set_production_status,
-)
 from app.shared.db import get_conn
 
 __all__ = [
-    "ACTIVE_STATUSES",
     "DeclarationCardRecord",
     "DeclarationRecord",
     "OrderSummary",
-    "PRODUCTION_STATUSES",
-    "ProductionEvent",
-    "ProductionOrderSummary",
-    "STATUS_DELIVERED",
-    "STATUS_IN_PROGRESS",
-    "STATUS_PENDING",
-    "STATUS_READY",
-    "count_by_production_status",
     "count_recent_by_ip",
     "delete_order",
     "delete_plate",
@@ -110,7 +84,6 @@ __all__ = [
     "find_orders_for_plate",
     "get_conn",
     "get_declaration",
-    "get_production_status",
     "insert_declaration",
     "insert_declaration_card",
     "insert_order",
@@ -120,10 +93,7 @@ __all__ = [
     "list_declaration_cards",
     "list_declarations",
     "list_declarations_by_production_order",
-    "list_production_events",
-    "list_production_orders",
     "order_detail",
-    "production_statuses_for_orders",
     "relink_plates",
     "recent_orders",
     "resolve_plate",
@@ -134,7 +104,6 @@ __all__ = [
     "set_declaration_notarized_received",
     "set_declaration_production_order",
     "set_declaration_review",
-    "set_production_status",
     "update_order",
     "update_plate",
     "update_plate_full",

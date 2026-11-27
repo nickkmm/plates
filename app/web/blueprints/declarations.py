@@ -82,6 +82,7 @@ from app.core.db.declarations import (
 )
 from app.core.declaration_pdf import build_declaration_pdf
 from app.customers import repository as customers_repository
+from app.production import repository as production_repository
 from app.shared.normalize import clean_plate, normalize_requested_by
 from app.shared.timezones import utc_now
 from app.shared.uploads import UploadError, resolve_upload_path, send_stored_file
@@ -304,7 +305,7 @@ def _render_detail(
         production_status: str | None = None
         if declaration.production_order_id is not None:
             attended_order, _plates = db.order_detail(conn, declaration.production_order_id)
-            production_status = db.get_production_status(conn, declaration.production_order_id)
+            production_status = production_repository.get_production_status(conn, declaration.production_order_id)
         needs_notary = declaration.status == STATUS_APPROVED and requires_notarization(card_records)
         received_user = (
             repository.get_user_by_id(conn, declaration.notarized_received_by)
@@ -357,7 +358,7 @@ def declarations():
         )
         pending_count = len(db.list_declarations(conn, stage=STAGE_TO_REVIEW))
         cards_by_declaration = db.list_cards_for_declarations(conn, [d.id for d in records])
-        production_statuses = db.production_statuses_for_orders(
+        production_statuses = production_repository.production_statuses_for_orders(
             conn, {d.production_order_id for d in records if d.production_order_id is not None},
         )
     rows = []

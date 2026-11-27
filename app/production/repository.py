@@ -3,7 +3,7 @@
 Every order moves pending -> in_progress -> ready -> delivered (English
 identifiers; the Spanish labels belong to the web layer), and every change
 is recorded as one `production_order_events` row. This module is only the
-data layer; the transition rules live in app/core/production.py.
+data layer; the transition rules live in app/production/service.py.
 
 See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.

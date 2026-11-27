@@ -13,6 +13,7 @@ from app.core.pedido_upload import parse_uploaded_pedido
 from app.customers import repository as customers_repository
 from app.inventory import repository as inventory_repository
 from app.pricing import repository as pricing_repository
+from app.production import repository as production_repository
 from app.shared.models import ExtractedRow
 from app.shared.normalize import (
     PAYMENT_METHODS,
@@ -148,7 +149,7 @@ def record_detail(order_id):
         order, plates = db.order_detail(conn, order_id)
         requesters, cities = _options(conn)
         prices = {pt: str(price) for pt, price in pricing_repository.current_prices(conn).items()}
-        production_status = db.get_production_status(conn, order_id)
+        production_status = production_repository.get_production_status(conn, order_id)
     if not order:
         return redirect(url_for("records.records"))
     return render_template("record_detail.html", order=order, plates=plates,
@@ -166,7 +167,7 @@ def _record_detail_error(order_id: int, error: str):
         order, plates = db.order_detail(conn, order_id)
         requesters, cities = _options(conn)
         prices = {pt: str(price) for pt, price in pricing_repository.current_prices(conn).items()}
-        production_status = db.get_production_status(conn, order_id)
+        production_status = production_repository.get_production_status(conn, order_id)
     return render_template("record_detail.html", order=order, plates=plates,
                            cities=cities, requesters=requesters, categories=FORM_PLATE_TYPES,
                            receipt_types=RECEIPT_TYPES, payment_methods=PAYMENT_METHODS,

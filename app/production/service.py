@@ -1,13 +1,13 @@
 """Production-status business rules: moving an order one step through
 pending -> in_progress -> ready -> delivered, or one step back. No Flask.
 
-The data layer is app/core/db/production.py. Takes an open `conn` and never
+The data layer is app/production/repository.py. Takes an open `conn` and never
 commits/rolls back (same contract as app/shared/db.py).
 
 **Optimistic concurrency**: the caller passes the status the person SAW
 (`expected_status`, e.g. from the board they clicked on). The change only
 happens while the order is still in that status -- checked first, then
-enforced again by db.set_production_status's conditional UPDATE -- so two
+enforced again by repository.set_production_status's conditional UPDATE -- so two
 people clicking at once never move an order two steps: the second gets the
 "cambió mientras tanto" ValueError and nothing changes.
 
@@ -21,8 +21,8 @@ from __future__ import annotations
 import psycopg
 from psycopg.rows import DictRow
 
-from app.core import db
-from app.core.db.production import PRODUCTION_STATUSES, STATUS_DELIVERED, STATUS_PENDING
+from app.production import repository
+from app.production.repository import PRODUCTION_STATUSES, STATUS_DELIVERED, STATUS_PENDING
 
 MSG_ORDER_NOT_FOUND = "La orden no existe."
 MSG_ALREADY_DELIVERED = "La orden ya fue entregada."
@@ -57,7 +57,7 @@ def _move_order(
     `expected_status` has no neighbour in that direction)."""
     if current != expected_status or target is None:
         raise ValueError(MSG_STATUS_CHANGED)
-    if not db.set_production_status(
+    if not repository.set_production_status(
         conn, order_id, from_status=expected_status, to_status=target, user_id=user_id,
     ):
         raise ValueError(MSG_STATUS_CHANGED)
@@ -74,7 +74,7 @@ def advance_order(
     longer in `expected_status` (someone else moved it) -- in every case
     nothing changes.
     """
-    current = db.get_production_status(conn, order_id)
+    current = repository.get_production_status(conn, order_id)
     if current is None:
         raise ValueError(MSG_ORDER_NOT_FOUND)
     if expected_status == STATUS_DELIVERED:
@@ -94,7 +94,7 @@ def revert_order(
     raises "todavía no ha empezado"; reverting delivered -> ready is allowed,
     to undo a delivery marked by mistake.
     """
-    current = db.get_production_status(conn, order_id)
+    current = repository.get_production_status(conn, order_id)
     if current is None:
         raise ValueError(MSG_ORDER_NOT_FOUND)
     if expected_status == STATUS_PENDING:
