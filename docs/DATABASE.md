@@ -228,7 +228,7 @@ first index outside a PK/UNIQUE — see quirks for both.
 | `id` | SERIAL | PK | |
 | `order_number` | TEXT | NOT NULL | `TEXT`, not `INTEGER`, on purpose — there are real non-numeric numbers (e.g. `"NT 895"`). No `UNIQUE`. |
 | `order_date` | DATE | NOT NULL | Actual business date, distinct from `created_at`. |
-| `requested_by` | TEXT | NOT NULL | "Solicitado por" (requested by) — normalized in `app/core/normalize.py`. Since Phase 1, a denormalized copy of `customers.name` — see quirks. |
+| `requested_by` | TEXT | NOT NULL | "Solicitado por" (requested by) — normalized in `app/shared/normalize.py`. Since Phase 1, a denormalized copy of `customers.name` — see quirks. |
 | `receipt_type` | TEXT | nullable | Expected value: `normalize.RECEIPT_TYPES` (`FACTURA`/`RECIBO`/`OTROS`); manual-entry field in `/ingest`, with no printed equivalent on the order PDF. Before Phase 1c, this column was called `comprobante_tipo`. |
 | `receipt_number` | TEXT | nullable | Same — no vocabulary normalization, it is a free number/code. Before Phase 1c, `comprobante_numero`. |
 | `customer_id` | INTEGER | FK → `customers(id)`, nullable | Nullable because not every historical `requested_by` value resolves to a clean customer — see the backfill in `app/schema_migrate.py` and quirks. Before Phase 1c, `cliente_id`. |

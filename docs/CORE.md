@@ -6,12 +6,17 @@ Business logic independent of the web framework — shared between
 `app/web` and the historical Excel migration (`app/migrate.py`). No SQL
 query or business rule should live outside this folder.
 
+This page also covers `app/shared/`: code every domain needs and that
+depends on no domain package — the connection pool (`app/shared/db.py`),
+`models.py`, `normalize.py`, `timezones.py` and `uploads.py`. Those modules
+live there, not in `app/core/`.
+
 ## Full ingestion pipeline
 
 ```mermaid
 flowchart TD
-    A["3 sources: manual form / PDF / Excel migration"] --> B["ExtractedRow<br/>(models.py)"]
-    B --> C["normalize_row<br/>(normalize.py)"]
+    A["3 sources: manual form / PDF / Excel migration"] --> B["ExtractedRow<br/>(app/shared/models.py)"]
+    B --> C["normalize_row<br/>(app/shared/normalize.py)"]
     C --> D{"ALISTAMIENTO row?"}
     D -- yes --> E[insert_blank_preparation]
     D -- no --> F["is_real_plate?<br/>(filters MUESTRA/INGSE/S:.../None)"]
@@ -31,7 +36,7 @@ its own connection separately (a single `POST /ingest` ran in several
 transactions that were not atomic with respect to each other); see the
 "Transaction contract" note below.
 
-## `models.py`
+## `models.py` (`app/shared/models.py`)
 
 Pydantic schema for one ledger/order line, shared as-is by every ingestion
 entry point so that `ingestion.py` only has to handle one data shape.
@@ -60,7 +65,7 @@ The validators only do defensive coercion (floats like `598.0` →
 `"598"`, empty strings → `None`) — the real business normalization lives
 in `normalize.py`.
 
-## `normalize.py`
+## `normalize.py` (`app/shared/normalize.py`)
 
 Pure normalization, no database access — testable in isolation.
 
@@ -286,7 +291,7 @@ of a single 556-line file:
 
 | Module | What it contains |
 |---|---|
-| `db/__init__.py` | `get_conn()` (see pool below) + explicit re-export of every public function of all the submodules — `db.insert_order(...)`, `db.recalc_inventory(...)`, `db.resolve_or_create_customer(...)`, etc. are still called exactly the same from outside the package. |
+| `db/__init__.py` | `get_conn()` re-exported from `app/shared/db.py` (see pool below) + explicit re-export of every public function of all the submodules — `db.insert_order(...)`, `db.recalc_inventory(...)`, `db.resolve_or_create_customer(...)`, etc. are still called exactly the same from outside the package. |
 | `db/orders.py` | CRUD of `production_orders` + `OrderSummary` (typed dataclass, `class_row`) — the row shape shared by `recent_orders`/`find_orders_by_number`/`search_orders_by_number`. |
 | `db/plates.py` | CRUD of `plates`, including `distinct_cities` (grouped here for symmetry with `distinct_requested_by` in `orders.py`, although both read `plates`). |
 | `db/inventory.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
@@ -313,11 +318,14 @@ commit, which is precisely the point that a real bug (several functions of
 `ingestion.py` each opening its own connection, see below) brought
 to light.
 
-**Connection pool (Phase 1d)**: `get_conn()` no longer opens a new socket
+**Connection pool (Phase 1d)**: the pool lives in `app/shared/db.py`
+(`_conninfo_kwargs`, `_get_pool`, `get_conn`) and `app/core/db/__init__.py`
+re-exports `get_conn`, so call sites keep using `db.get_conn()`.
+`get_conn()` no longer opens a new socket
 on every call — it is a `@contextmanager` that wraps a
 `psycopg_pool.ConnectionPool`, built lazily (only on the
 first real call, never on module import, because
-`tests/conftest.py` imports this package even without `POSTGRES_PASSWORD`
+`tests/conftest.py` imports it even without `POSTGRES_PASSWORD`
 set). `with db.get_conn() as conn:` behaves exactly as
 before at the ~21 existing call sites (commit on clean exit, rollback
 on exception) — except that it now reuses a connection from the pool instead of opening
@@ -634,7 +642,7 @@ as `db/*` (receives an open `conn`, never commits).
 Money (`Decimal`) from end to end, never mixed with `float` — see
 [`DATABASE.md`](DATABASE.md) for the `NUMERIC` columns involved.
 
-### `timezones.py` (Colombian time)
+### `timezones.py` (Colombian time, `app/shared/timezones.py`)
 
 The containers and PostgreSQL run in UTC and the columns are `TIMESTAMP` without
 time zone, so **every stored timestamp is UTC**. It is stored in UTC and

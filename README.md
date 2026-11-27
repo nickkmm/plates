@@ -82,7 +82,9 @@ flowchart TD
 The app is a Flask application with one blueprint per domain in
 `app/web/blueprints/` and Jinja templates. Business rules live in `app/core/`
 as pure, strictly typed Python with no Flask dependency, and data access in
-`app/core/db/`, one module per table. Data is stored in PostgreSQL 16; the
+`app/core/db/`, one module per table. Code every domain needs (the connection
+pool, normalization, timezones, input models, uploads) lives in `app/shared/`,
+which depends on no domain package. Data is stored in PostgreSQL 16; the
 schema is `init.sql` plus ordered migrations in `app/migrations/` applied by
 `python -m app.schema_migrate`. It runs under gunicorn in Docker Compose
 (`docker-compose.yml`, `web.Dockerfile`), with uploaded photos, signatures
@@ -104,7 +106,7 @@ and PDFs kept in a dedicated uploads volume.
 
 - **ruff** for linting and import order (`pyproject.toml`).
 - **mypy** over `app` and `tests`, with `disallow_untyped_defs` on
-  `app/core`.
+  `app/core` and `app/shared`.
 - **pytest** against a real PostgreSQL database (no mocks of the database),
   each test in a transaction that is rolled back.
 - **Coverage** reported in CI with `pytest-cov`.

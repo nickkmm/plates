@@ -110,16 +110,16 @@ hand just like the `cargador.ingse.co` block). Locally, directly at
 
 | Variable | Where it is used | Note |
 |---|---|---|
-| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Compose (`db`), `app/core/db/` | No default for the password — never hardcoded anywhere. |
-| `DB_HOST` | `app/core/db/` | Code default `"db"` — in Compose it is **overridden** to `plates-db-1`. Never use the default in an environment with the `edge` network. |
-| `DB_PORT` | `app/core/db/` | `5432` inside the container; `5433` is only the host mapping. |
-| `DB_POOL_MIN_SIZE` / `DB_POOL_MAX_SIZE` | `app/core/db/__init__.py` | Size of the `psycopg_pool.ConnectionPool` per gunicorn worker. Default `1`/`5` — with 2 workers, at most 10 connections from the app. |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Compose (`db`), `app/shared/db.py` | No default for the password — never hardcoded anywhere. |
+| `DB_HOST` | `app/shared/db.py` | Code default `"db"` — in Compose it is **overridden** to `plates-db-1`. Never use the default in an environment with the `edge` network. |
+| `DB_PORT` | `app/shared/db.py` | `5432` inside the container; `5433` is only the host mapping. |
+| `DB_POOL_MIN_SIZE` / `DB_POOL_MAX_SIZE` | `app/shared/db.py` | Size of the `psycopg_pool.ConnectionPool` per gunicorn worker. Default `1`/`5` — with 2 workers, at most 10 connections from the app. |
 | `SECRET_KEY` | `app/web/app.py` | Required — `RuntimeError` at startup if missing. |
 | `AUTH_USERS` | `app/schema_migrate.py` (one-time backfill) | `user:hash` separated by commas. **No longer feeds the live login** (Phase 2) — it is only read once, the first time `schema_migrate` runs against a new database, to create the `users` rows. The hash contains `$` → it must be escaped as `$$` in `.env` or Compose corrupts it when interpolating variables (already documented in the root README). |
 | `AUTH_ROLES` | `app/schema_migrate.py` (one-time backfill) | `user:role` separated by commas, same one-time backfill as `AUTH_USERS`. **It is not in `.env.example` today** — any user without an entry here ends up as `admin` by default. |
 | `COOKIE_SECURE` | `app/web/app.py` | `1` in production (HTTPS) to mark the cookie `Secure`; off in local dev over plain HTTP. |
 | `SENTRY_DSN` | `app/web/app.py` | Optional — if not set, Sentry is not even initialized (local dev and tests never send anything). |
-| `UPLOADS_DIR` | `app/web/uploads.py` | Folder where the authenticated PDFs, the signatures and the ID card and vehicle registration photos from the public form are stored. Default `/srv/uploads`; in Compose it is the `plates_uploads` volume. **The volume is NOT covered by `pg_dump` backups**: it must be backed up separately. Tests use a temporary folder. |
+| `UPLOADS_DIR` | `app/shared/uploads.py` | Folder where the authenticated PDFs, the signatures and the ID card and vehicle registration photos from the public form are stored. Default `/srv/uploads`; in Compose it is the `plates_uploads` volume. **The volume is NOT covered by `pg_dump` backups**: it must be backed up separately. Tests use a temporary folder. |
 | `TURNSTILE_SITE_KEY` | public form | Public Cloudflare Turnstile key (shown in the widget). In local development the test keys that Cloudflare publishes work. |
 | `TURNSTILE_SECRET_KEY` | `app/web/antispam.py` | Secret key to verify the token on the server. If missing (and there is no bypass), verification **fails closed**: the submission is rejected. In production it must be added to the `ENV_FILE_B64` secret. |
 | `TURNSTILE_BYPASS` | `app/web/antispam.py` | `1`/`true` skips the Turnstile verification without calling the network. Only for development and tests; leave empty in production. Without bypass and without both keys (`TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`), `/declaracion` responds 503 "El formulario no está disponible por ahora" (the form is not available right now): to try the form locally export `TURNSTILE_BYPASS=1`. |

@@ -8,7 +8,10 @@ keeps the 2 routes too small to have their own (`/` and
 `/healthz`) — 83 lines in total. The real routes live in
 `app/web/blueprints/`, one module per domain; helpers shared by 2+
 blueprints (`today_iso`, `_options`, `_padded`, `_validate_order_header`,
-`customer_fields_from_form`, etc.) live in `app/web/helpers.py`.
+`customer_fields_from_form`, etc.) live in `app/web/helpers.py`. Storing and
+serving uploaded files (`resolve_upload_path`, `send_stored_file`,
+`save_photo`, `save_signature_png`, `UPLOADS_DIR`) lives in
+`app/shared/uploads.py`.
 
 ## Routes
 
