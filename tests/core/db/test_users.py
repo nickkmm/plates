@@ -1,4 +1,4 @@
-"""Integration tests for app/core/db/users.py -- create_user, the lookups,
+"""Integration tests for app/auth/repository/users.py -- create_user, the lookups,
 list_users and the user_roles functions. Needs a real Postgres connection (see
 tests/conftest.py's `db_conn`/`clean_db`); `users` is never actually
 empty under it (Fase 2's conftest.py pre-seeds its own 3 test
@@ -93,7 +93,7 @@ class TestGetUserByUsername:
         assert repository.get_user_by_username(db_conn, "ghost") is None
 
     def test_returns_inactive_user_too(self, db_conn):
-        """Deactivation is the caller's business rule (app.web.auth), not
+        """Deactivation is the caller's business rule (app.auth.decorators), not
         this lookup's -- it must hand back an inactive row rather than
         hiding it."""
         repository.create_user(db_conn, username="frank", password_hash="hash7", roles=["admin"], active=False)

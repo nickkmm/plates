@@ -1,7 +1,7 @@
-"""Tests for app.web.auth.
+"""Tests for app.auth.decorators.
 
 Fase 2: the live login flow (authenticate/verify_credentials) is now
-DB-backed (queries the `users` table via app/core/db/users.py), so those
+DB-backed (queries the `users` table via app/auth/repository/users.py), so those
 tests need `clean_db`/`db_conn` (see tests/conftest.py). load_users/
 load_roles are UNCHANGED and still pure os.environ parsing -- they're kept
 only for app.schema_migrate.backfill_users (the historical, already-applied

@@ -1,7 +1,7 @@
 """Application-level authentication: DB-backed user store + access decorators.
 
 **Fase 2 change**: the live login flow (authenticate/verify_credentials
-below) now queries the `users` table (via app/core/db/users.py) instead of
+below) now queries the `users` table (via app/auth/repository/users.py) instead of
 reading AUTH_USERS/AUTH_ROLES env vars. Nobody's password changes: the Fase 1
 backfill (app.schema_migrate.backfill_users) already copied every
 AUTH_USERS/AUTH_ROLES entry into `users` with the SAME werkzeug hash.
@@ -15,7 +15,7 @@ in the live request path below calls them anymore.
 Access control (#63): every protected route is decorated with
 @permission_required("<code>") (or @authenticated for / alone). A user holds
 several roles (user_roles); their permissions are the union of those roles'
-role_permissions, through app/core/permissions.effective_permissions, and
+role_permissions, through app/auth/permissions.effective_permissions, and
 admin in any of them grants every permission code. The user, their roles and
 their permissions are read from the database on EVERY request and cached on
 flask.g -- so a deactivated user is logged out, and a role change takes
@@ -23,7 +23,7 @@ effect, on their next request.
 
 Generate a password hash for a new user with:
 
-    python -m app.web.hash_password 'the-password'
+    python -m app.auth.hash_password 'the-password'
 
 Sessions are signed with SECRET_KEY (configured in app.py) and store `user`
 (username) and (Fase 2) `user_id` (users.id) only -- the last one lets
@@ -110,8 +110,8 @@ def authenticate(username: str, password: str) -> UserRecord | None:
     indistinguishably (never leak which one it was to an unauthenticated
     caller). Opens its own connection (like every other app/web/* call site
     does with `db.get_conn()`) rather than taking one as a parameter --
-    app/web/auth.py is a web-layer module, not part of app/core/db/'s
-    conn-passing contract.
+    app/auth/decorators.py is a web-layer module, not part of
+    app/auth/repository/'s conn-passing contract.
     """
     with db.get_conn() as conn:
         user = repository.get_user_by_username(conn, username)

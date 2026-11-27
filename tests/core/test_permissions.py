@@ -1,4 +1,4 @@
-"""Tests for app.core.permissions -- pure, no database."""
+"""Tests for app.auth.permissions -- pure, no database."""
 
 from __future__ import annotations
 

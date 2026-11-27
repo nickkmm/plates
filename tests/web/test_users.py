@@ -6,7 +6,7 @@ The contract under test:
   and point_of_sale get 403 and change nothing.
 - Creating a user, changing their roles or active flag and resetting their
   password apply on that user's next request / login.
-- Every validation rule of app/core/service.py re-renders the form with
+- Every validation rule of app/auth/service.py re-renders the form with
   status 400 and its message, and writes nothing.
 - The list never shows a password hash or an internal role name, and the log
   lines never carry a password or a hash.

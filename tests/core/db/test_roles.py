@@ -1,4 +1,4 @@
-"""Integration tests for app/core/db/roles.py. Needs a real Postgres
+"""Integration tests for app/auth/repository/roles.py. Needs a real Postgres
 connection (see tests/conftest.py's `db_conn`/`clean_db`). `roles`,
 `role_permissions` and `permissions` hold the three seeded system roles and
 the permission catalog (static seed data, not truncated by clean_db); every

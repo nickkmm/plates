@@ -19,7 +19,7 @@ from tests.web._helpers import _insert_order, make_row
 
 
 class TestProduccionRole:
-    """The read-only 'production' role (see app.web.auth.consulta_allowed) --
+    """The read-only 'production' role (see app.auth.decorators.consulta_allowed) --
     started as a full-access role and was demoted to read-only once real
     usage showed it should only ever look things up (see
     auth.FULL_ACCESS_ROLES) -- may only reach the small consult-only

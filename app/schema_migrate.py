@@ -206,7 +206,7 @@ def backfill_users(conn: psycopg.Connection[DictRow]) -> None:
     Same username/password_hash pairs as today (werkzeug hashing is
     unchanged) -- nobody's password is reset. Each user gets one role, its
     AUTH_ROLES entry, defaulting to admin when there is none, matching
-    app.web.auth.role_for()'s existing behavior. It runs after every SQL
+    app.auth.decorators.role_for()'s existing behavior. It runs after every SQL
     migration, so the role goes to user_roles (0018), which replaced the old
     role column on users. ON
     CONFLICT DO NOTHING on both inserts makes a re-run a no-op even without

@@ -24,18 +24,19 @@ one module per domain:
   production.py    -- GET /produccion, GET /produccion/<id> (+ its declaration
                       photos), POST /produccion/<id>/advance|undo (the
                       production board and its status steps)
-  users.py         -- GET /usuarios, GET/POST /usuarios/nuevo,
-                      GET/POST /usuarios/<id>, POST /usuarios/<id>/password
-                      (admin-only login account management)
-  auth_routes.py   -- GET/POST /login, POST /logout
   public_declaration.py -- GET/POST /declaracion (PUBLIC sworn-declaration
                       form, no login; 503 until Turnstile is configured)
+and in app/auth/:
+  admin_routes.py  -- GET /usuarios, GET/POST /usuarios/nuevo,
+                      GET/POST /usuarios/<id>, POST /usuarios/<id>/password
+                      (admin-only login account management)
+  routes.py        -- GET/POST /login, POST /logout
 
 All routes except /login, /logout, /healthz and /declaracion require an
 active logged-in user, checked against the database on every request. Each
 one requires one permission code of the user's role -- see
-app.web.auth.permission_required and app/core/permissions.py. `/` only
-requires a logged-in user (app.web.auth.authenticated) and sends them to the
+app.auth.decorators.permission_required and app/auth/permissions.py. `/` only
+requires a logged-in user (app.auth.decorators.authenticated) and sends them to the
 first nav entry they may open (app/web/navigation.py), or answers a 403 page
 when their role has no permissions.
 

@@ -1287,7 +1287,7 @@ class TestPermissions:
 
     def test_permissions_table_matches_permissions_catalog_exactly(self, db_conn):
         """Guard against the hand-copied seed SQL (init.sql AND
-        0017_permissions.sql) drifting from app/core/permissions.py's
+        0017_permissions.sql) drifting from app/auth/permissions.py's
         PERMISSIONS: same codes, same labels, same order."""
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT code, label FROM permissions ORDER BY sort_order")

@@ -11,6 +11,12 @@ depends on no domain package — the connection pool (`app/shared/db.py`),
 `models.py`, `normalize.py`, `timezones.py` and `uploads.py`. Those modules
 live there, not in `app/core/`.
 
+It also covers the rules and SQL of `app/auth/` (the auth domain): the
+permission catalog (`app/auth/permissions.py`), the users and roles admin
+rules (`app/auth/service.py`) and the `users`/`roles` SQL
+(`app/auth/repository/`). Its login, session check and routes are in
+[`WEB.md`](WEB.md).
+
 ## Full ingestion pipeline
 
 ```mermaid
@@ -298,9 +304,12 @@ of a single 556-line file:
 | `db/customers.py` (Phase 2) | CRUD of `customers` — see details below. |
 | `db/ownership_cards.py` (Phase 2 declarations) | CRUD of `ownership_cards` (ownership card) and `find_card_conflicts` — see details below. |
 | `db/declarations.py` (Phase 3 declarations) | Read/write of `declarations` and `declaration_cards` — see details below. |
-| `db/users.py` (Phase 2) | CRUD/lookup of `users` — real backend of the login (`app/web/auth.py`), see details below. |
-| `db/roles.py` | CRUD of `roles`/`role_permissions` and read of `permissions` — see details below. |
 | `db/pricing.py` (Phase 2) | CRUD of `plate_type_prices` — see details below. |
+
+The SQL for `users`, `user_roles`, `roles`, `role_permissions` and
+`permissions` lives in the auth domain, `app/auth/repository/` (`users.py`
+and `roles.py`, re-exported by its `__init__.py`), and is called as
+`repository.<function>(conn, ...)`; see the `app/auth/` sections below.
 
 Connection config from environment variables (`DB_HOST` default `"db"` —
 **never use that default in Docker Compose**, see
@@ -481,13 +490,13 @@ Flow: **all declarations arrive as «Por revisar» (pending review)**; the point
 must **never** show them to the anonymous person submitting (nor anything about the previous owner or
 the manufacturing date); only "Recibimos tu declaración" (We received your declaration).
 
-### `db/users.py` (Phase 2)
+### `app/auth/repository/users.py` (Phase 2)
 
 Real backend of the login — replaces the `AUTH_USERS`/`AUTH_ROLES` env vars.
 
 | Function | What it does |
 |---|---|
-| `get_user_by_username(conn, username)` | Used by `app/web/auth.py::authenticate` on every login. Returns the row even if `active=False` — it is `authenticate` that decides that an inactive user cannot log in, not this lookup. |
+| `get_user_by_username(conn, username)` | Used by `app/auth/decorators.py::authenticate` on every login. Returns the row even if `active=False` — it is `authenticate` that decides that an inactive user cannot log in, not this lookup. |
 | `get_user_by_id(conn, user_id)` | For `session["user_id"]` → `production_orders.created_by`, and for `current_user()` on every request. |
 | `create_user(conn, *, username, password_hash, roles, active=True, assigned_by=None)` | Inserts the user and one `user_roles` row for each distinct role (repeats are ignored). A nonexistent role is rejected by the `user_roles_role_fkey` FK (`ForeignKeyViolation`). |
 | `list_users(conn)` | All users, by `id`. |
@@ -506,7 +515,7 @@ order (empty list if none), and `created_at` (default
 functions are not yet used by any route: they are for the future
 user management screen.
 
-### `permissions.py` (permission catalog)
+### `app/auth/permissions.py` (permission catalog)
 
 Pure Python, no Flask or database. `PERMISSIONS` is the ordered tuple
 of the 13 `(code, label)` pairs: the code is an English identifier
@@ -524,16 +533,16 @@ codes (regardless of what is stored, so no admin is left without
 access to a new permission); otherwise, the stored codes that still
 exist in the catalog (unknown ones are discarded). `stored` is the
 union of the `role_permissions` codes of all the user's roles
-(`db.get_user_permissions`). `app/web/auth.py` applies it on every request:
+(`repository.get_user_permissions`). `app/auth/decorators.py` applies it on every request:
 each protected route asks for a code with `@permission_required` (see
 [`WEB.md`](WEB.md)).
 
-### `db/roles.py`
+### `app/auth/repository/roles.py`
 
 Read/write of `roles` and `role_permissions`, and read of
 `permissions` (see [`DATABASE.md`](DATABASE.md)). `get_role_permissions` reads
-the codes of a single role (for per-request access, `app/web/auth.py`
-uses `db.get_user_permissions`, the union of all the user's roles); the
+the codes of a single role (for per-request access, `app/auth/decorators.py`
+uses `repository.get_user_permissions`, the union of all the user's roles); the
 writes and `list_permissions` are for a future role management
 screen. The `permissions.PERMISSIONS` catalog has a mirror in the `permissions`
 table. Permission codes are validated against

@@ -1,9 +1,8 @@
 """/login and /logout -- session login page (open) and logout (open, POST only).
 
-Named auth_routes.py, not auth.py: app/web/auth.py already exists and holds
-the actual auth logic (user store, permission lookup, the
-permission_required/authenticated decorators) used by every OTHER blueprint
-too -- these are
+The actual auth logic (user store, permission lookup, the
+permission_required/authenticated decorators) lives in app/auth/decorators.py
+and is used by every OTHER blueprint too -- these are
 just the two routes that call into it.
 """
 

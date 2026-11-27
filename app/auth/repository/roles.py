@@ -1,14 +1,14 @@
 """roles / role_permissions / permissions reads/writes. get_role_permissions
-reads one role's stored codes (app/web/auth.py reads a user's, the union over
+reads one role's stored codes (app/auth/decorators.py reads a user's, the union over
 all their roles, through users.get_user_permissions); the writes and
 list_permissions are the data layer for the "Roles y permisos" section of
-the admin users screen (/usuarios/roles, app/web/blueprints/users.py).
+the admin users screen (/usuarios/roles, app/auth/admin_routes.py).
 
-Permission codes are validated against app/core/permissions.py's
+Permission codes are validated against app/auth/permissions.py's
 PERMISSION_CODES in Python before anything is written, which gives a clean
 ValueError; role_permissions_permission_fkey (a FK to permissions(code)) also
 enforces them in the DB. These functions don't protect system roles; that
-guard belongs to the screen (app/core/user_admin.py and the users blueprint).
+guard belongs to the screen (app/auth/service.py and the users blueprint).
 
 See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.

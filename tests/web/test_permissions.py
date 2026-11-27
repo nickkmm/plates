@@ -1,5 +1,5 @@
 """Route access decided per request from `users`, `user_roles` and
-`role_permissions` (app.web.auth.permission_required): a deactivated user or
+`role_permissions` (app.auth.decorators.permission_required): a deactivated user or
 a role change takes effect on the very next request, a custom role sees only
 its own screens, a user with several roles gets the union of their
 permissions, a user with no permissions gets the 403 page on `/`, and admin

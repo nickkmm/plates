@@ -15,7 +15,7 @@ at the same instant is an accepted race.
 **Roles**: a role label is compared with every other role's label ignoring
 case and accents, so "Bodega" and "bódega" can't both exist (the DB's UNIQUE
 on roles.label only catches exact duplicates). Only custom roles with no
-users can be deleted; the screen never edits admin (see app/web/blueprints/users.py).
+users can be deleted; the screen never edits admin (see app/auth/admin_routes.py).
 """
 
 from __future__ import annotations

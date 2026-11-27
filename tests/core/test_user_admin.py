@@ -1,4 +1,4 @@
-"""app/core/service.py: each validation rule of the /usuarios screen and
+"""app/auth/service.py: each validation rule of the /usuarios screen and
 its exact Spanish message, against the seeded test users (`db_conn`):
 testuser (admin), produccionuser (production), puntoventauser
 (point_of_sale), and the seeded roles (Administrador, Punto de venta,

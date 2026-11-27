@@ -7,7 +7,7 @@ The contract under test:
   and point_of_sale get 403 and change nothing.
 - A new role can be assigned right away, and a permission change applies on
   each holder's next request.
-- Every rule of app/core/service.py re-renders the form with status 400
+- Every rule of app/auth/service.py re-renders the form with status 400
   and its message, and writes nothing.
 - admin is read-only, system roles keep their label and are never deleted,
   and a role some user holds can't be deleted.
