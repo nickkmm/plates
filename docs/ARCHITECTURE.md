@@ -21,7 +21,7 @@ flowchart TD
     ER --> NORM["normalize_row<br/>(app/shared/normalize.py)"]
     NORM --> PROC["process_rows / replace_order<br/>(app/core/ingestion.py)"]
     PROC --> DBL["app/core/db/ (package)"]
-    PROC --> DOM["app/customers/, app/pricing/,<br/>app/inventory/ (repositories)"]
+    PROC --> DOM["app/customers/, app/pricing/,<br/>app/inventory/, app/production/ (repositories)"]
     DOM --> PG
     DBL --> PG[(Postgres, via pool)]
     PROC --> INV[recalc_inventory]
@@ -52,6 +52,14 @@ package with `customers.py` and `ownership_cards.py`;
 import them; they import `app/shared/`, `app/auth/` and, until those move,
 `app.core.db.plates` (customers) and `app.web.helpers` (routes). Their
 templates stay in `app/web/templates/`.
+
+The production and cash summary domains add a `service.py` for their
+business rules: `app/production/` holds `routes.py`, `service.py` (the
+status transitions) and `repository.py` (the production-status SQL);
+`app/cash_summary/` holds `routes.py` and `service.py` (the aggregation and
+its PDF). Until the orders and declarations domains move, `app/production/`
+also imports `app.core.db` and `app.web.blueprints.declarations`, and the
+cash summary queries read `plates` and `production_orders` directly.
 
 This is what lets the historical Excel migration (`app/migrate.py`) reuse
 exactly the same normalization and duplicate detection that the web form

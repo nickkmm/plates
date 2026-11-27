@@ -14,9 +14,11 @@ serving uploaded files (`resolve_upload_path`, `send_stored_file`,
 `app/shared/uploads.py`. The `/login`, `/logout` and `/usuarios` routes, the
 session check and `permission_required` live in the auth domain, `app/auth/`
 (`routes.py`, `admin_routes.py` and `decorators.py`). The `/customers`,
-`/precios` and `/inventory` routes live in their domain packages,
-`app/customers/routes.py`, `app/pricing/routes.py` and
-`app/inventory/routes.py`; their templates stay in `app/web/templates/`.
+`/precios`, `/inventory`, `/produccion` and `/cuadre` routes live in their
+domain packages, `app/customers/routes.py`, `app/pricing/routes.py`,
+`app/inventory/routes.py`, `app/production/routes.py` (see
+[`PRODUCTION.md`](PRODUCTION.md)) and `app/cash_summary/routes.py`; their
+templates stay in `app/web/templates/`.
 
 ## Routes
 
@@ -56,8 +58,8 @@ session check and `permission_required` live in the auth domain, `app/auth/`
 | GET | `/declaraciones/<id>/pdf` | `declarations.py` | PDF of the declaration to hand to the customer (printed). With any `PÉRDIDA` card it is the one the customer has authenticated at a notary; for `DETERIORO` it is an additional **optional download** (the detail shows a "Descargar PDF" button and does not require authentication). Available for any **approved** declaration; pending or rejected → 404 with a Spanish message. Reads the declarant's signature with `resolve_upload_path` (no signature or missing file → `signature_png=None`) and calls `declaration_pdf.build_declaration_pdf(declaration, cards, signature_png, issued_at)`. Response `attachment` `declaracion-<id>.pdf`, `application/pdf`, `nosniff`, `no-store` | `declaration_pdf.build_declaration_pdf`, `db.list_declaration_cards` | (file) | `@permission_required("declarations.review")` |
 | POST | `/declaraciones/<id>/notarized` | `declarations.py` | Marks that the customer returned the declaration authenticated (`db.set_declaration_notarized_received` with the session's `user_id`). Idempotent (marking twice keeps the first mark). Unknown id → list; declaration not approved or without a `PÉRDIDA` card → detail with error (400), no changes | `db.set_declaration_notarized_received` | (redirect) | `@permission_required("declarations.review")` |
 | POST | `/declaraciones/<id>/notarized/undo` | `declarations.py` | Undoes the previous mark (back to NULL). Rejected (400) if the declaration was already attended by an order | `db.set_declaration_notarized_received` | (redirect) | `@permission_required("declarations.review")` |
-| GET | `/cuadre` | `cash_summary.py` | Cash reconciliation (cuadre de caja): totals by date/payment method in `[desde, hasta]` (default today, Phase 5b) | `cash_summary.build_cash_summary` | `cash_summary.html` | `@permission_required("cash_summary.view")` |
-| GET | `/cuadre/pdf` | `cash_summary.py` | Same report, exported to PDF | `cash_summary.build_cash_summary`, `render_cash_summary_pdf` | (PDF download) | `@permission_required("cash_summary.view")` |
+| GET | `/cuadre` | `app/cash_summary/routes.py` | Cash reconciliation (cuadre de caja): totals by date/payment method in `[desde, hasta]` (default today, Phase 5b) | `service.build_cash_summary` | `cash_summary.html` | `@permission_required("cash_summary.view")` |
+| GET | `/cuadre/pdf` | `app/cash_summary/routes.py` | Same report, exported to PDF | `service.build_cash_summary`, `render_cash_summary_pdf` | (PDF download) | `@permission_required("cash_summary.view")` |
 | GET | `/records` | `records.py` | Records: recent ones, or search by plate/order | `db.recent_orders`, `search_plates_by_number`, `search_orders_by_number` | `records.html` | `@permission_required("records.view")` |
 | GET | `/records/<id>` | `records.py` | Order detail (view or edit depending on role); preserves `?q=` for the back link | `db.order_detail` | `record_detail.html` | `@permission_required("records.view")` |
 | POST | `/records/<id>/save` | `records.py` | Saves header + plates edit (insert/update/delete) in one transaction; re-resolves `customer_id` from `requested_by` (never rewrites attributes of an existing customer, B5) | `db.update_order`, `delete_plate`, `normalize.normalize_row`, `customers_repository.resolve_or_create_customer`, `update_plate_full`, `insert_plate`, `recalc_inventory` | `record_detail.html` / redirect | `@permission_required("orders.capture")` |

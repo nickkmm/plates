@@ -19,7 +19,10 @@ rules (`app/auth/service.py`) and the `users`/`roles` SQL
 
 It also covers the SQL of the customers, pricing and inventory domains
 (`app/customers/repository/`, `app/pricing/repository.py`,
-`app/inventory/repository.py`); their routes are in [`WEB.md`](WEB.md).
+`app/inventory/repository.py`), and the rules and SQL of the production
+domain (`app/production/service.py`, `app/production/repository.py`) and
+the cash summary domain (`app/cash_summary/service.py`); their routes are in
+[`WEB.md`](WEB.md).
 
 ## Full ingestion pipeline
 
@@ -295,13 +298,13 @@ concrete case this closes.
 
 ## `db/` (package — formerly a single flat `db.py`, split in Phase 1d)
 
-All the raw SQL (psycopg 3, no ORM) for `production_orders`, `plates`,
-`declarations`/`declaration_cards` and `production_order_events`, split by
-domain instead of a single 556-line file:
+All the raw SQL (psycopg 3, no ORM) for `production_orders`, `plates` and
+`declarations`/`declaration_cards`, split by domain instead of a single
+556-line file:
 
 | Module | What it contains |
 |---|---|
-| `db/__init__.py` | `get_conn()` re-exported from `app/shared/db.py` (see pool below) + explicit re-export of every public function of all the submodules — `db.insert_order(...)`, `db.update_plate(...)`, `db.get_declaration(...)`, etc. are still called exactly the same from outside the package. The customers, ownership cards, pricing and inventory SQL moved to their domain packages (see the table below) and is no longer re-exported here. |
+| `db/__init__.py` | `get_conn()` re-exported from `app/shared/db.py` (see pool below) + explicit re-export of every public function of all the submodules — `db.insert_order(...)`, `db.update_plate(...)`, `db.get_declaration(...)`, etc. are still called exactly the same from outside the package. The customers, ownership cards, pricing, inventory and production-status SQL moved to their domain packages (see the table below) and is no longer re-exported here. |
 | `db/orders.py` | CRUD of `production_orders` + `OrderSummary` (typed dataclass, `class_row`) — the row shape shared by `recent_orders`/`find_orders_by_number`/`search_orders_by_number`. |
 | `db/plates.py` | CRUD of `plates`, including `distinct_cities` (grouped here for symmetry with `distinct_requested_by` in `orders.py`, although both read `plates`). |
 | `db/declarations.py` (Phase 3 declarations) | Read/write of `declarations` and `declaration_cards` — see details below. |
@@ -312,12 +315,15 @@ and `roles.py`, re-exported by its `__init__.py`), and is called as
 `repository.<function>(conn, ...)`; see the `app/auth/` sections below.
 
 The SQL for `customers`, `ownership_cards`, `plate_type_prices`,
-`blank_preparations` and `inventory_categories` lives in the customers,
-pricing and inventory domains (`app/customers/`, `app/pricing/`,
-`app/inventory/`, each with its `routes.py`). Code outside a domain calls it
-through the module, as `customers_repository.<function>(conn, ...)`,
-`pricing_repository.<function>(...)` and `inventory_repository.<function>(...)`;
-a domain's own `routes.py` calls `repository.<function>(...)`.
+`blank_preparations`, `inventory_categories`,
+`production_orders.production_status` and `production_order_events` lives in
+the customers, pricing, inventory and production domains (`app/customers/`,
+`app/pricing/`, `app/inventory/`, `app/production/`, each with its
+`routes.py`). Code outside a domain calls it through the module, as
+`customers_repository.<function>(conn, ...)`,
+`pricing_repository.<function>(...)`, `inventory_repository.<function>(...)`
+and `production_repository.<function>(...)`; a domain's own `routes.py` and
+`service.py` call `repository.<function>(...)`.
 `app/customers/repository/` is a package (`customers.py` and
 `ownership_cards.py`, re-exported by its `__init__.py`).
 
@@ -327,6 +333,7 @@ a domain's own `routes.py` calls `repository.<function>(...)`.
 | `app/customers/repository/ownership_cards.py` (Phase 2 declarations) | CRUD of `ownership_cards` (ownership card) and `find_card_conflicts` — see details below. |
 | `app/pricing/repository.py` (Phase 2) | CRUD of `plate_type_prices` — see details below. |
 | `app/inventory/repository.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
+| `app/production/repository.py` | `production_orders.production_status`/`production_order_events` — see details below. |
 
 Connection config from environment variables (`DB_HOST` default `"db"` —
 **never use that default in Docker Compose**, see
@@ -585,12 +592,12 @@ catalog and its Spanish label.
 | `update_role(conn, name, *, label, permissions)` | Changes the label and **replaces** (does not merge) the permissions. Same `ValueError` validation; `False` without writing anything if the role does not exist. |
 | `delete_role(conn, name)` | Deletes the role and, in cascade, its permissions. `False` if it did not exist. If any user still has it, the FK `user_roles_role_fkey` raises `ForeignKeyViolation` (no pre-check). |
 
-### `db/production.py` (production status)
+### `app/production/repository.py` (production status)
 
 Data layer only for the production status of orders
 (`production_orders.production_status` and `production_order_events`, see
 [`DATABASE.md`](DATABASE.md)); the transition rules are in
-`production.py` (below). It never commits. Constants: `STATUS_PENDING`,
+`app/production/service.py` (below). It never commits. Constants: `STATUS_PENDING`,
 `STATUS_IN_PROGRESS`, `STATUS_READY`, `STATUS_DELIVERED`,
 `PRODUCTION_STATUSES` (all four, in that order) and `ACTIVE_STATUSES` (the first
 three: what is still in the workshop). Records: `ProductionOrderSummary` (an
@@ -610,7 +617,7 @@ non-annulled plates, `plates` is built the same as `OrderSummary.plates`,
 | `list_production_events(conn, order_id)` | The order's history, oldest to newest; `username` is `None` if the event has no user. |
 | `production_statuses_for_orders(conn, order_ids)` | `{order_id: status}` in a single query; `{}` without querying if the list is empty. |
 
-### `production.py` (production status rules)
+### `app/production/service.py` (production status rules)
 
 Business logic without Flask; receives `conn` and never commits/rolls back. An
 order advances one step at a time: `pending` → `in_progress` → `ready` →
@@ -652,13 +659,14 @@ values).
 | `price_list(conn) -> list[PriceRow]` | One row for each `normalize.PLATE_TYPES`, in that order — a type with no rate appears anyway, with `unit_price=None` ("sin tarifa", no rate). Consumed by `/precios`. |
 | `set_price(conn, plate_type, unit_price, updated_by)` | Validates `plate_type` against `normalize.PLATE_TYPES` in Python (message in Spanish before reaching the real FK of Phase 1b) and does `INSERT ... ON CONFLICT (plate_type) DO UPDATE` — it works the same whether the row exists or not, because the table starts empty on purpose. |
 
-### `cash_summary.py` (Phase 5b)
+### `app/cash_summary/service.py` (Phase 5b)
 
-The only business logic in `app/core/` that does **not** live in `db/*.py` —
-it has its own rules beyond CRUD (grouping, exclusions, "never
-turn a missing price into 0"), enough to justify its own
-orchestration module, per the plan. It follows the same connection contract
-as `db/*` (receives an open `conn`, never commits).
+The cash summary domain's business logic — it has its own rules beyond CRUD
+(grouping, exclusions, "never turn a missing price into 0"), enough to
+justify its own module, per the plan. It follows the same connection
+contract as the repositories (receives an open `conn`, never commits). Its
+two queries still read the orders domain's `plates` and `production_orders`
+tables directly (a `TODO(phase 4)` marks them).
 
 | Function | What it does |
 |---|---|
