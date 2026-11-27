@@ -1,4 +1,4 @@
-"""Integration tests for app/core/db/customers.py --
+"""Integration tests for app/customers/repository/customers.py --
 resolve_or_create_customer, list_customers, get_customer_by_name,
 get_customer. Needs a real Postgres connection (see
 tests/conftest.py's `db_conn`/`clean_db`)."""
@@ -9,19 +9,19 @@ import psycopg
 import pytest
 from psycopg.rows import tuple_row
 
-from app.core import db
+from app.customers import repository as customers_repository
 
 
 class TestResolveOrCreateCustomer:
     def test_creates_a_new_customer_and_returns_its_id(self, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V")
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT name FROM customers WHERE id = %s", (customer_id,))
             assert cur.fetchone() == ("PTO.V",)
 
     def test_new_customer_has_all_attributes_null(self, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "NUEVO CLIENTE")
-        customer = db.get_customer(db_conn, customer_id)
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "NUEVO CLIENTE")
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.type is None
         assert customer.document_type is None
@@ -34,8 +34,8 @@ class TestResolveOrCreateCustomer:
         assert customer.municipality is None
 
     def test_second_call_with_same_name_returns_same_id(self, db_conn):
-        first = db.resolve_or_create_customer(db_conn, "MUVA")
-        second = db.resolve_or_create_customer(db_conn, "MUVA")
+        first = customers_repository.resolve_or_create_customer(db_conn, "MUVA")
+        second = customers_repository.resolve_or_create_customer(db_conn, "MUVA")
         assert first == second
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT count(*) FROM customers")
@@ -46,8 +46,8 @@ class TestResolveOrCreateCustomer:
         normalize._REQUESTED_BY_MAP_RAW -- resolve_or_create_customer must
         canonicalize BEFORE the lookup, not just before the insert, or a
         second spelling would create a near-duplicate customer row."""
-        first = db.resolve_or_create_customer(db_conn, "PTOV")
-        second = db.resolve_or_create_customer(db_conn, "PTO DE VENTA")
+        first = customers_repository.resolve_or_create_customer(db_conn, "PTOV")
+        second = customers_repository.resolve_or_create_customer(db_conn, "PTO DE VENTA")
         assert first == second
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT name FROM customers")
@@ -57,20 +57,20 @@ class TestResolveOrCreateCustomer:
         """MUVA GRANADA and MUVA SERGIO are deliberately kept separate by
         normalize_requested_by (see its module docstring) -- must resolve to
         two different customers."""
-        granada = db.resolve_or_create_customer(db_conn, "MUVA GRANADA")
-        sergio = db.resolve_or_create_customer(db_conn, "MUVA SERGIO")
+        granada = customers_repository.resolve_or_create_customer(db_conn, "MUVA GRANADA")
+        sergio = customers_repository.resolve_or_create_customer(db_conn, "MUVA SERGIO")
         assert granada != sergio
 
     def test_new_customer_takes_the_given_attributes(self, db_conn):
         """Fase 3: the /ingest 'cliente' fieldset writes attributes for a
         genuinely brand-new customer through these keyword args."""
-        customer_id = db.resolve_or_create_customer(
+        customer_id = customers_repository.resolve_or_create_customer(
             db_conn, "CLIENTE NUEVO", type="CLIENTE", document_type="CÉDULA",
             document_number="123456", document_relation="DUEÑO", phone="3001112233",
             email="a@b.com", address="CRA 1 # 2-3", neighborhood="CENTRO",
             municipality="CALI",
         )
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.type == "CLIENTE"
         assert customer.document_type == "CÉDULA"
@@ -83,24 +83,24 @@ class TestResolveOrCreateCustomer:
         assert customer.municipality == "CALI"
 
     def test_existing_person_fields_are_never_overwritten_but_null_ones_are_filled(self, db_conn):
-        first_id = db.resolve_or_create_customer(
+        first_id = customers_repository.resolve_or_create_customer(
             db_conn, "PERSONA X", type="CLIENTE", address="CALLE 1", municipality="CALI",
         )
-        second_id = db.resolve_or_create_customer(
+        second_id = customers_repository.resolve_or_create_customer(
             db_conn, "PERSONA X", address="CALLE 99", neighborhood="EL BOSQUE",
             municipality="BOGOTÁ",
         )
         assert first_id == second_id
-        customer = db.get_customer(db_conn, first_id)
+        customer = customers_repository.get_customer(db_conn, first_id)
         assert customer is not None
         assert customer.address == "CALLE 1"  # already set -- untouched
         assert customer.municipality == "CALI"  # already set -- untouched
         assert customer.neighborhood == "EL BOSQUE"  # was NULL -- filled in
 
     def test_a_null_person_field_never_blanks_out_an_existing_value(self, db_conn):
-        first_id = db.resolve_or_create_customer(db_conn, "PERSONA Y", address="CALLE 1")
-        db.resolve_or_create_customer(db_conn, "PERSONA Y")
-        customer = db.get_customer(db_conn, first_id)
+        first_id = customers_repository.resolve_or_create_customer(db_conn, "PERSONA Y", address="CALLE 1")
+        customers_repository.resolve_or_create_customer(db_conn, "PERSONA Y")
+        customer = customers_repository.get_customer(db_conn, first_id)
         assert customer is not None
         assert customer.address == "CALLE 1"
 
@@ -109,14 +109,14 @@ class TestResolveOrCreateCustomer:
         replaced by a different one from a later call -- only a still-NULL
         attribute may be filled in (see
         test_existing_customer_null_attributes_get_backfilled below)."""
-        first_id = db.resolve_or_create_customer(
+        first_id = customers_repository.resolve_or_create_customer(
             db_conn, "PTO.V", type="EMPRESA", phone="3009998877",
         )
-        second_id = db.resolve_or_create_customer(
+        second_id = customers_repository.resolve_or_create_customer(
             db_conn, "PTO.V", type="CLIENTE", phone="3000000000",
         )
         assert first_id == second_id
-        customer = db.get_customer(db_conn, first_id)
+        customer = customers_repository.get_customer(db_conn, first_id)
         assert customer is not None
         assert customer.type == "EMPRESA"
         assert customer.phone == "3009998877"
@@ -127,12 +127,12 @@ class TestResolveOrCreateCustomer:
         backfill created with every attribute NULL) gets filled in the next
         time a caller passes a real value for it -- without touching any
         attribute the customer already has a value for."""
-        first_id = db.resolve_or_create_customer(db_conn, "PTO.V", type="EMPRESA")
-        second_id = db.resolve_or_create_customer(
+        first_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V", type="EMPRESA")
+        second_id = customers_repository.resolve_or_create_customer(
             db_conn, "PTO.V", type="CLIENTE", phone="3001234567",
         )
         assert first_id == second_id
-        customer = db.get_customer(db_conn, first_id)
+        customer = customers_repository.get_customer(db_conn, first_id)
         assert customer is not None
         assert customer.type == "EMPRESA"  # already set -- untouched
         assert customer.phone == "3001234567"  # was NULL -- now filled in
@@ -141,10 +141,10 @@ class TestResolveOrCreateCustomer:
         """A caller that doesn't have a given field to offer passes None for
         it (e.g. ingestion.py's/record_save's name-only calls) -- that must
         never be mistaken for "clear this attribute"."""
-        first_id = db.resolve_or_create_customer(db_conn, "PTO.V", phone="3009998877")
-        second_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        first_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V", phone="3009998877")
+        second_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V")
         assert first_id == second_id
-        customer = db.get_customer(db_conn, first_id)
+        customer = customers_repository.get_customer(db_conn, first_id)
         assert customer is not None
         assert customer.phone == "3009998877"
 
@@ -152,37 +152,37 @@ class TestResolveOrCreateCustomer:
 
 class TestListCustomers:
     def test_returns_every_customer_alphabetically(self, db_conn):
-        db.resolve_or_create_customer(db_conn, "ZETA")
-        db.resolve_or_create_customer(db_conn, "ALFA")
-        names = [c.name for c in db.list_customers(db_conn)]
+        customers_repository.resolve_or_create_customer(db_conn, "ZETA")
+        customers_repository.resolve_or_create_customer(db_conn, "ALFA")
+        names = [c.name for c in customers_repository.list_customers(db_conn)]
         assert names == ["ALFA", "ZETA"]
 
     def test_empty_when_no_customers(self, db_conn):
-        assert db.list_customers(db_conn) == []
+        assert customers_repository.list_customers(db_conn) == []
 
 
 
 class TestGetCustomerByName:
     def test_finds_an_existing_customer_by_canonical_name(self, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
-        found = db.get_customer_by_name(db_conn, "PTO.V")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V")
+        found = customers_repository.get_customer_by_name(db_conn, "PTO.V")
         assert found is not None
         assert found.id == customer_id
 
     def test_matches_via_canonicalization_not_just_exact_string(self, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTOV")  # stored as "PTO.V"
-        found = db.get_customer_by_name(db_conn, "pto de venta")  # same canonical form
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTOV")  # stored as "PTO.V"
+        found = customers_repository.get_customer_by_name(db_conn, "pto de venta")  # same canonical form
         assert found is not None
         assert found.id == customer_id
 
     def test_unknown_name_returns_none(self, db_conn):
-        assert db.get_customer_by_name(db_conn, "NO EXISTE") is None
+        assert customers_repository.get_customer_by_name(db_conn, "NO EXISTE") is None
 
 
 
 class TestGetCustomer:
     def test_returns_none_for_nonexistent_id(self, db_conn):
-        assert db.get_customer(db_conn, 999999) is None
+        assert customers_repository.get_customer(db_conn, 999999) is None
 
 
 class TestUpdateCustomer:
@@ -191,16 +191,16 @@ class TestUpdateCustomer:
     /customers admin screen's whole reason to exist. See its docstring."""
 
     def test_overwrites_every_attribute(self, db_conn):
-        customer_id = db.resolve_or_create_customer(
+        customer_id = customers_repository.resolve_or_create_customer(
             db_conn, "PTO.V", type="EMPRESA", phone="3001112233",
         )
-        db.update_customer(
+        customers_repository.update_customer(
             db_conn, customer_id, name="PTO.V", type="CLIENTE",
             document_type="CÉDULA", document_number="999", document_relation="DUEÑO",
             phone="3009998877", email="nuevo@correo.com", address="CALLE 9", neighborhood="NORTE",
             municipality="PALMIRA",
         )
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.type == "CLIENTE"
         assert customer.document_type == "CÉDULA"
@@ -216,37 +216,37 @@ class TestUpdateCustomer:
         """A real overwrite, not a COALESCE -- passing None for an attribute
         that already had a value must actually clear it, unlike
         resolve_or_create_customer."""
-        customer_id = db.resolve_or_create_customer(
+        customer_id = customers_repository.resolve_or_create_customer(
             db_conn, "PTO.V", phone="3001112233", address="CALLE 1", municipality="CALI",
         )
-        db.update_customer(
+        customers_repository.update_customer(
             db_conn, customer_id, name="PTO.V", type=None, document_type=None,
             document_number=None, document_relation=None, phone=None, email=None,
             address=None, neighborhood=None, municipality=None,
         )
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.phone is None
         assert customer.address is None
         assert customer.municipality is None
 
     def test_can_rename_the_customer(self, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V VIEJO")
-        db.update_customer(
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V VIEJO")
+        customers_repository.update_customer(
             db_conn, customer_id, name="PTO.V NUEVO", type=None, document_type=None,
             document_number=None, document_relation=None, phone=None, email=None,
             address=None, neighborhood=None, municipality=None,
         )
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.name == "PTO.V NUEVO"
 
     def test_renaming_to_a_name_already_used_by_another_customer_raises(self, db_conn):
-        db.resolve_or_create_customer(db_conn, "MUVA GRANADA")
-        other_id = db.resolve_or_create_customer(db_conn, "MUVA SERGIO")
+        customers_repository.resolve_or_create_customer(db_conn, "MUVA GRANADA")
+        other_id = customers_repository.resolve_or_create_customer(db_conn, "MUVA SERGIO")
         db_conn.commit()
         with pytest.raises(psycopg.errors.UniqueViolation):
-            db.update_customer(
+            customers_repository.update_customer(
                 db_conn, other_id, name="MUVA GRANADA", type=None, document_type=None,
                 document_number=None, document_relation=None, phone=None, email=None,
                 address=None, neighborhood=None, municipality=None,

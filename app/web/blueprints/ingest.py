@@ -15,6 +15,8 @@ from app.core.declarations import ACTING_AS_GESTOR
 from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
 from app.core.pdf_extract import ParsedPedido, PdfExtractError
 from app.core.pedido_upload import parse_uploaded_pedido
+from app.customers import repository as customers_repository
+from app.pricing import repository as pricing_repository
 from app.shared.models import ExtractedRow
 from app.shared.normalize import (
     _CITY_SPECIFIC_TYPES,
@@ -286,8 +288,8 @@ def _pricing_context(conn) -> dict[str, str]:
     "Valor" input with the current suggested tariff the moment a plate_type
     is chosen, without a round trip. A type with no configured tariff yet is
     simply absent (never a fabricated 0), same contract as
-    db.current_prices itself."""
-    return {plate_type: str(price) for plate_type, price in db.current_prices(conn).items()}
+    pricing_repository.current_prices itself."""
+    return {plate_type: str(price) for plate_type, price in pricing_repository.current_prices(conn).items()}
 
 
 def _customers_context(conn) -> dict[str, dict]:
@@ -308,7 +310,7 @@ def _customers_context(conn) -> dict[str, dict]:
             "address": c.address or "", "neighborhood": c.neighborhood or "",
             "municipality": c.municipality or "",
         }
-        for c in db.list_customers(conn)
+        for c in customers_repository.list_customers(conn)
     }
 
 
@@ -399,15 +401,15 @@ def _check_declaration(conn, declaration_id: int | None) -> _DeclarationCheck:
 
 
 def _declaration_customer(conn, declaration: db.DeclarationRecord,
-                          cards: list[db.DeclarationCardRecord]) -> db.CustomerRecord | None:
+                          cards: list[db.DeclarationCardRecord]) -> customers_repository.CustomerRecord | None:
     """The declarant as a customer record: the gestor when a gestor filled the
     form in, otherwise the customer the cards were linked to on approval (the
     owner / possessor who declared)."""
     if declaration.acting_as == ACTING_AS_GESTOR:
-        return db.get_customer(conn, declaration.gestor_id) if declaration.gestor_id else None
+        return customers_repository.get_customer(conn, declaration.gestor_id) if declaration.gestor_id else None
     for card in cards:
         if card.customer_id:
-            return db.get_customer(conn, card.customer_id)
+            return customers_repository.get_customer(conn, card.customer_id)
     return None
 
 
@@ -581,7 +583,7 @@ def ingest_post():
             # so nothing already there can register as "already existing"
             # against the fresh rows being inserted in its place.
             with db.get_conn() as conn:
-                db.resolve_or_create_customer(
+                customers_repository.resolve_or_create_customer(
                     conn, rows[0].requested_by, **customer_fields_from_form(request.form)
                 )
                 summary = replace_order(conn, rows[0].order_number, rows,
@@ -623,7 +625,7 @@ def ingest_post():
                         header = _sticky_header_from_form(request.form)
                         lines = _sticky_lines_from_form(request.form)
                     else:
-                        db.resolve_or_create_customer(
+                        customers_repository.resolve_or_create_customer(
                             conn, rows[0].requested_by, **customer_fields_from_form(request.form)
                         )
                         summary = process_rows(conn, rows, created_by=session.get("user_id"))

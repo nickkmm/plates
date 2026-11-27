@@ -28,6 +28,8 @@ from psycopg.rows import tuple_row
 
 from app.auth import repository
 from app.core import db
+from app.customers import repository as customers_repository
+from app.pricing import repository as pricing_repository
 from app.web.app import app as flask_app
 from tests.conftest import TEST_PASSWORD, TEST_USERNAME
 from tests.pdf_fixtures import build_pedido_pdf
@@ -134,18 +136,18 @@ class TestLogout:
 
 class TestCustomers:
     def test_save(self, staff, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V", type="EMPRESA")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V", type="EMPRESA")
         db_conn.commit()
         url = f"/customers/{customer_id}"
         data = {"name": "PTO.V", "customer_type": "CLIENTE", "customer_municipality": "CALI"}
 
         _assert_csrf_rejected(staff.post(url, data=data))
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None and customer.type == "EMPRESA"
 
         resp = staff.post(url, data={**data, "csrf_token": _token(staff, url)})
         assert resp.status_code == 302
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None and customer.type == "CLIENTE"
 
 
@@ -232,7 +234,7 @@ class TestPricing:
         url = "/precios/CARRO PARTICULAR"
 
         def price():
-            return {r.plate_type: r.unit_price for r in db.price_list(db_conn)}.get("CARRO PARTICULAR")
+            return {r.plate_type: r.unit_price for r in pricing_repository.price_list(db_conn)}.get("CARRO PARTICULAR")
 
         _assert_csrf_rejected(staff.post(url, data={"unit_price": "95000"}))
         assert price() is None

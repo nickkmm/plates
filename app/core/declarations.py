@@ -81,6 +81,7 @@ from app.core.db.declarations import (
     STATUS_PENDING_REVIEW,
     STATUS_REJECTED,
 )
+from app.customers import repository as customers_repository
 from app.shared.normalize import (
     ACTING_AS,
     DECLARATION_REASONS,
@@ -412,7 +413,7 @@ def _create_customer(
     conn: psycopg.Connection[DictRow], person: PersonInput, customer_type: str,
     document_relation: str | None = None,
 ) -> int:
-    return db.resolve_or_create_customer(
+    return customers_repository.resolve_or_create_customer(
         conn, person.name, type=customer_type,
         document_type=normalize_choice(person.document_type, DOCUMENT_TYPES),
         document_number=_clean(person.document_number), document_relation=document_relation,
@@ -421,7 +422,7 @@ def _create_customer(
     )
 
 
-def _type_mismatch(customer: db.CustomerRecord | None, expected: str) -> bool:
+def _type_mismatch(customer: customers_repository.CustomerRecord | None, expected: str) -> bool:
     return customer is not None and customer.type != expected
 
 
@@ -431,7 +432,7 @@ def _document_key(value: str | None) -> str:
     return re.sub(r"[^0-9A-Z]", "", (value or "").upper())
 
 
-def _document_mismatch(customer: db.CustomerRecord | None, declared: PersonInput | None) -> bool:
+def _document_mismatch(customer: customers_repository.CustomerRecord | None, declared: PersonInput | None) -> bool:
     """True when an existing customer already has a document number and the
     declared one is a DIFFERENT number. Names are the customer identity in this
     app, so two different people with the same name must not be merged
@@ -452,7 +453,7 @@ def _create_card(
     conn: psycopg.Connection[DictRow], owner_id: int,
     card: OwnershipCardInput | db.DeclarationCardRecord,
 ) -> int:
-    return db.create_ownership_card(
+    return customers_repository.create_ownership_card(
         conn, owner_id, transit_license=card.transit_license, plate_number=card.plate_number,
         engine_number=card.engine_number, chassis_number=card.chassis_number,
         vehicle_type=normalize_choice(card.vehicle_type, PLATE_TYPES),
@@ -478,18 +479,18 @@ class _CardPlan:
     owner: PersonInput
     relation: str | None
     flags: list[str]
-    existing_owner: db.CustomerRecord | None
-    lookup: db.CardLookup
+    existing_owner: customers_repository.CustomerRecord | None
+    lookup: customers_repository.CardLookup
 
 
 def _plan_cards(
     conn: psycopg.Connection[DictRow], inp: DeclarationInput, today: date,
-) -> tuple[list[_CardPlan], db.CustomerRecord | None]:
+) -> tuple[list[_CardPlan], customers_repository.CustomerRecord | None]:
     """Evaluate every card (read-only) and return the plans plus the existing
     gestor customer, if the declarant is a gestor that already exists."""
     acting_as = normalize_choice(inp.acting_as, ACTING_AS)
     is_gestor = acting_as == ACTING_AS_GESTOR
-    existing_gestor = db.get_customer_by_name(conn, inp.declarant.name) if is_gestor else None
+    existing_gestor = customers_repository.get_customer_by_name(conn, inp.declarant.name) if is_gestor else None
     declarant_flags: list[str] = []
     if is_gestor:
         if _type_mismatch(existing_gestor, GESTOR_TYPE):
@@ -508,19 +509,19 @@ def _plan_cards(
     for position, card in enumerate(inp.cards):
         owner, relation = _owner_and_relation(acting_as, inp.declarant, card)
         flags: list[str] = []
-        existing_owner = db.get_customer_by_name(conn, owner.name)
+        existing_owner = customers_repository.get_customer_by_name(conn, owner.name)
 
         last_made = db.last_fabrication_date(conn, card.plate_number)
         if last_made is not None and last_made + relativedelta(months=MIN_MONTHS_BETWEEN_PLATES) > today:
             flags.append(PLATE_MADE_RECENTLY)
 
-        lookup = db.find_card_conflicts(
+        lookup = customers_repository.find_card_conflicts(
             conn, customer_id=existing_owner.id if existing_owner else None,
             transit_license=card.transit_license, plate_number=card.plate_number,
         )
-        if lookup.status == db.CARD_STATUS_OTHER_OWNER:
+        if lookup.status == customers_repository.CARD_STATUS_OTHER_OWNER:
             flags.append(CARD_OTHER_OWNER)
-        elif lookup.status == db.CARD_STATUS_DATA_MISMATCH:
+        elif lookup.status == customers_repository.CARD_STATUS_DATA_MISMATCH:
             flags.append(CARD_DATA_MISMATCH)
 
         in_submission_type = in_submission_document = False
@@ -618,11 +619,11 @@ def _resolve_for_approval(
 ) -> int:
     """Existing customer: NULL type is set to `expected_type` (the admin's
     explicit approval); a DIFFERENT type is an error. Absent: created."""
-    existing = db.get_customer_by_name(conn, person.name)
+    existing = customers_repository.get_customer_by_name(conn, person.name)
     if existing is None:
         return _create_customer(conn, person, expected_type, document_relation)
     if existing.type is None:
-        db.update_customer(
+        customers_repository.update_customer(
             conn, existing.id, name=existing.name, type=expected_type,
             document_type=existing.document_type, document_number=existing.document_number,
             document_relation=existing.document_relation, phone=existing.phone,
@@ -685,25 +686,25 @@ def approve_declaration(
                 f"'{person.name}' aparece como gestor y como propietario/poseedor en la misma "
                 f"declaración ({where}); no se puede aprobar."
             )
-        existing = db.get_customer_by_name(conn, person.name)
+        existing = customers_repository.get_customer_by_name(conn, person.name)
         if existing is not None and existing.type not in (None, expected):
             raise ValueError(
                 f"El cliente '{existing.name}' ya existe con tipo {existing.type}; "
                 f"corrija su tipo a {expected} antes de aprobar ({where})."
             )
-    lookups: list[db.CardLookup] = []
+    lookups: list[customers_repository.CardLookup] = []
     for owner, card in zip(owners, cards, strict=True):
-        existing_owner = db.get_customer_by_name(conn, owner.name)
-        lookup = db.find_card_conflicts(
+        existing_owner = customers_repository.get_customer_by_name(conn, owner.name)
+        lookup = customers_repository.find_card_conflicts(
             conn, customer_id=existing_owner.id if existing_owner else None,
             transit_license=card.transit_license, plate_number=card.plate_number,
         )
-        if lookup.status == db.CARD_STATUS_DATA_MISMATCH:
+        if lookup.status == customers_repository.CARD_STATUS_DATA_MISMATCH:
             raise ValueError(
                 f"En la {_card_label(card)}, la licencia de tránsito y la placa no coinciden "
                 "con la misma tarjeta existente."
             )
-        if lookup.status == db.CARD_STATUS_OTHER_OWNER and card.id not in reassign_card_ids:
+        if lookup.status == customers_repository.CARD_STATUS_OTHER_OWNER and card.id not in reassign_card_ids:
             raise ValueError(
                 f"La {_card_label(card)} ya existe a nombre de otro cliente; "
                 "apruebe con reasignación para moverla."
@@ -716,13 +717,13 @@ def approve_declaration(
         owner_id = _resolve_for_approval(
             conn, owner, OWNER_TYPE, normalize_choice(card.owner_relation, DOCUMENT_RELATIONS),
         )
-        if lookup.status == db.CARD_STATUS_NEW:
+        if lookup.status == customers_repository.CARD_STATUS_NEW:
             card_id = _create_card(conn, owner_id, card)
         else:
             assert lookup.by_transit_license is not None
             card_id = lookup.by_transit_license.id
-            if lookup.status == db.CARD_STATUS_OTHER_OWNER:
-                db.reassign_ownership_card(conn, card_id, owner_id)
+            if lookup.status == customers_repository.CARD_STATUS_OTHER_OWNER:
+                customers_repository.reassign_ownership_card(conn, card_id, owner_id)
         db.set_declaration_card_links(conn, card.id, customer_id=owner_id, ownership_card_id=card_id)
     db.set_declaration_review(
         conn, declaration_id, status=STATUS_APPROVED, reviewed_by=reviewer_user_id, note=note,

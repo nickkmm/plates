@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 from psycopg.rows import tuple_row
 
 from app.core import db
+from app.inventory import repository as inventory_repository
 from tests.web._helpers import _insert_order, make_row
 
 
@@ -90,14 +91,14 @@ class TestReviewUpdateRoute:
             assert cur.fetchone() == (True,)
 
     def test_recalculates_inventory_after_quantity_change(self, authenticated_client, db_conn):
-        db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
+        inventory_repository.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
         order_id = _insert_order(db_conn, order_number="2202", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="UPD444", quantity=5),
                          is_possible_duplicate=True)
-        db.recalc_inventory(db_conn)
+        inventory_repository.recalc_inventory(db_conn)
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'UPD444'")
             plate_id = cur.fetchone()[0]
@@ -161,20 +162,20 @@ class TestReviewDeleteRoute:
     def test_recalc_resets_consumed_when_a_category_loses_its_last_plate(
         self, authenticated_client, db_conn
     ):
-        """db.recalc_inventory's consumed-sum iterates the fixed set of known
+        """inventory_repository.recalc_inventory's consumed-sum iterates the fixed set of known
         materials (INVENTORY_CATEGORIES), not just whatever GROUP BY plate_type
         happens to return -- so a category that drops to zero live plates gets
         consumed explicitly reset to 0, instead of being skipped and left
         stale. A category with other still-live plates continues to
         recalculate correctly (unaffected by this fix)."""
-        db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
+        inventory_repository.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
         order_id = _insert_order(db_conn, order_number="2402", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DEL222", quantity=7),
                          is_possible_duplicate=True)
-        db.recalc_inventory(db_conn)
+        inventory_repository.recalc_inventory(db_conn)
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (7,)  # sanity check before deletion

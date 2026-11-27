@@ -23,6 +23,7 @@ from app.auth import repository
 from app.core import db
 from app.core import declarations as decl
 from app.core.declarations import DeclarationInput, OwnershipCardInput, PersonInput
+from app.customers import repository as customers_repository
 from tests.conftest import TEST_USERNAME
 from tests.core.db._helpers import _insert_order, make_row
 
@@ -98,7 +99,7 @@ def _fabricate(db_conn, plate_number: str, order_date: date, **row_kw) -> None:
 
 
 def _existing_client(db_conn, name: str = "MARIA LOPEZ", type_: str | None = "CLIENTE") -> int:
-    return db.resolve_or_create_customer(db_conn, name, type=type_, phone="PREVIO")
+    return customers_repository.resolve_or_create_customer(db_conn, name, type=type_, phone="PREVIO")
 
 
 def _cards_of(db_conn, declaration_id: int) -> list[db.DeclarationCardRecord]:
@@ -369,7 +370,7 @@ class TestSubmitThenApprove:
         record = _approve(db_conn, declaration_id)
         assert record.review_flags == []
         (row,) = _cards_of(db_conn, declaration_id)
-        owner = db.get_customer(db_conn, row.customer_id)
+        owner = customers_repository.get_customer(db_conn, row.customer_id)
         assert owner is not None
         assert owner.type == "CLIENTE"
         assert owner.name == "MARIA LOPEZ"
@@ -379,7 +380,7 @@ class TestSubmitThenApprove:
         assert (owner.address, owner.neighborhood, owner.municipality) == (
             "CRA 1 # 2-3", "CENTRO", "MEDELLÍN")
         assert (owner.phone, owner.email) == ("3001112233", "maria@example.com")
-        card = db.get_ownership_card(db_conn, row.ownership_card_id)
+        card = customers_repository.get_ownership_card(db_conn, row.ownership_card_id)
         assert card is not None
         assert card.customer_id == owner.id
         assert (card.transit_license, card.plate_number) == ("LIC-001", "ABC123")
@@ -443,7 +444,7 @@ class TestSubmitThenApprove:
         assert row.owner_relation == "POSEEDOR"
         _approve(db_conn, declaration_id)
         (row,) = _cards_of(db_conn, declaration_id)
-        assert db.get_customer(db_conn, row.customer_id).document_relation == "POSEEDOR"
+        assert customers_repository.get_customer(db_conn, row.customer_id).document_relation == "POSEEDOR"
 
     def test_several_cards_of_the_declarant_share_one_customer(self, db_conn):
         cards = [_card(), _card(plate_number="DEF456", transit_license="L2", plate_quantity=2),
@@ -456,7 +457,7 @@ class TestSubmitThenApprove:
         assert len({r.ownership_card_id for r in rows}) == 3
         assert _count(db_conn, "customers") == 1
         assert _count(db_conn, "ownership_cards") == 3
-        assert len(db.list_ownership_cards_for_customer(db_conn, rows[0].customer_id)) == 3
+        assert len(customers_repository.list_ownership_cards_for_customer(db_conn, rows[0].customer_id)) == 3
 
     def test_existing_client_with_a_second_card(self, db_conn):
         _approve(db_conn, _submit_pending(db_conn))
@@ -464,7 +465,7 @@ class TestSubmitThenApprove:
         declaration_id = _submit_pending(db_conn, second)
         _approve(db_conn, declaration_id)
         (row,) = _cards_of(db_conn, declaration_id)
-        assert len(db.list_ownership_cards_for_customer(db_conn, row.customer_id)) == 2
+        assert len(customers_repository.list_ownership_cards_for_customer(db_conn, row.customer_id)) == 2
         assert _count(db_conn, "customers") == 1
 
     def test_two_pending_declarations_of_the_same_new_owner_resolve_to_one_customer(self, db_conn):
@@ -479,7 +480,7 @@ class TestSubmitThenApprove:
 
     def test_same_client_same_card_after_six_months_links_existing_card_untouched(self, db_conn):
         client_id = _existing_client(db_conn)
-        card_id = db.create_ownership_card(
+        card_id = customers_repository.create_ownership_card(
             db_conn, client_id, transit_license="LIC-001", plate_number="ABC123",
             engine_number="OLD-ENGINE", vehicle_brand="OLD-BRAND")
         _fabricate(db_conn, "ABC123", date(2026, 4, 1))
@@ -487,7 +488,7 @@ class TestSubmitThenApprove:
         record = _approve(db_conn, declaration_id)
         (row,) = _cards_of(db_conn, declaration_id)
         assert (row.customer_id, row.ownership_card_id) == (client_id, card_id)
-        card = db.get_ownership_card(db_conn, card_id)
+        card = customers_repository.get_ownership_card(db_conn, card_id)
         assert (card.engine_number, card.vehicle_brand) == ("OLD-ENGINE", "OLD-BRAND")
         assert _count(db_conn, "ownership_cards") == 1
         # Secondary data that differs only lives in the declaration copy.
@@ -495,12 +496,12 @@ class TestSubmitThenApprove:
 
     def test_existing_client_is_linked_never_modified(self, db_conn):
         client_id = _existing_client(db_conn)
-        before = db.get_customer(db_conn, client_id)
+        before = customers_repository.get_customer(db_conn, client_id)
         declaration_id = _submit_pending(db_conn)
-        assert db.get_customer(db_conn, client_id) == before   # untouched by the submission
+        assert customers_repository.get_customer(db_conn, client_id) == before   # untouched by the submission
         _approve(db_conn, declaration_id)
         assert _cards_of(db_conn, declaration_id)[0].customer_id == client_id
-        assert db.get_customer(db_conn, client_id) == before   # nor by the approval
+        assert customers_repository.get_customer(db_conn, client_id) == before   # nor by the approval
 
     def test_exactly_six_months_is_not_recent(self, db_conn):
         _fabricate(db_conn, "ABC123", date(2026, 4, 5))   # + 6 months == TODAY
@@ -518,12 +519,12 @@ class TestSubmitThenApprove:
         inp = _gestor_input(cards=[_gcard(relation="POSEEDOR")])
         declaration_id = _submit_pending(db_conn, inp)
         record = _approve(db_conn, declaration_id)
-        gestor = db.get_customer(db_conn, record.gestor_id)
+        gestor = customers_repository.get_customer(db_conn, record.gestor_id)
         assert gestor is not None
         assert (gestor.type, gestor.document_type, gestor.document_number) == ("GESTOR", "NIT", "900123456")
         assert gestor.document_relation is None
         (row,) = _cards_of(db_conn, declaration_id)
-        owner = db.get_customer(db_conn, row.customer_id)
+        owner = customers_repository.get_customer(db_conn, row.customer_id)
         assert (owner.type, owner.document_relation) == ("CLIENTE", "POSEEDOR")
         assert owner.id != gestor.id
         assert record.acting_as == "GESTOR"
@@ -539,28 +540,28 @@ class TestSubmitThenApprove:
         declaration_id = _submit_pending(db_conn, _gestor_input(cards=cards))
         record = _approve(db_conn, declaration_id)
         rows = _cards_of(db_conn, declaration_id)
-        names = [db.get_customer(db_conn, r.customer_id).name for r in rows]
+        names = [customers_repository.get_customer(db_conn, r.customer_id).name for r in rows]
         assert names == ["MARIA LOPEZ", "LUIS PEREZ", "MARIA LOPEZ"]
         # The repeated owner is ONE customer; gestor + 2 owners = 3 customers.
         assert rows[0].customer_id == rows[2].customer_id != rows[1].customer_id
         assert _count(db_conn, "customers") == 3
         assert _count(db_conn, "ownership_cards") == 3
         for row in rows:
-            assert db.get_ownership_card(db_conn, row.ownership_card_id).customer_id == row.customer_id
-        assert db.get_customer(db_conn, rows[1].customer_id).document_relation == "POSEEDOR"
+            assert customers_repository.get_ownership_card(db_conn, row.ownership_card_id).customer_id == row.customer_id
+        assert customers_repository.get_customer(db_conn, rows[1].customer_id).document_relation == "POSEEDOR"
         assert [r.reason for r in rows] == ["DETERIORO", "DETERIORO", "PÉRDIDA"]
         assert [r.plate_quantity for r in rows] == [1, 2, 1]
         assert record.gestor_id is not None
-        assert db.get_customer(db_conn, record.gestor_id).type == "GESTOR"
+        assert customers_repository.get_customer(db_conn, record.gestor_id).type == "GESTOR"
         assert record.notarized_pdf_path is None
 
     def test_existing_gestor_linked_unmodified(self, db_conn):
         gestor_id = _existing_client(db_conn, "GESTORIA SUR", "GESTOR")
-        before = db.get_customer(db_conn, gestor_id)
+        before = customers_repository.get_customer(db_conn, gestor_id)
         declaration_id = _submit_pending(db_conn, _gestor_input())
         record = _approve(db_conn, declaration_id)
         assert record.gestor_id == gestor_id
-        assert db.get_customer(db_conn, gestor_id) == before
+        assert customers_repository.get_customer(db_conn, gestor_id) == before
 
     def test_default_today_is_used_when_omitted(self, db_conn):
         result = decl.submit_declaration(db_conn, _input())
@@ -585,11 +586,11 @@ class TestSubmitThenApprove:
     def test_approving_after_the_card_went_to_another_owner_raises_and_changes_nothing(self, db_conn):
         declaration_id = _submit_pending(db_conn)
         other = _existing_client(db_conn, "PEDRO RUIZ")
-        card_id = db.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123")
+        card_id = customers_repository.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123")
         with pytest.raises(ValueError, match="otro cliente"):
             decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
         assert db.get_declaration(db_conn, declaration_id).status == "pending_review"
-        assert db.get_ownership_card(db_conn, card_id).customer_id == other
+        assert customers_repository.get_ownership_card(db_conn, card_id).customer_id == other
         assert _count(db_conn, "customers") == 1   # only PEDRO RUIZ
         assert _count(db_conn, "ownership_cards") == 1
         assert all(r.customer_id is None for r in _cards_of(db_conn, declaration_id))
@@ -648,7 +649,7 @@ class TestSubmitPending:
 
     def test_card_on_other_customer(self, db_conn):
         other = _existing_client(db_conn, "PEDRO RUIZ")
-        db.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123")
+        customers_repository.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123")
         result = decl.submit_declaration(db_conn, _input(), today=TODAY)
         self._assert_nothing_created(db_conn, result, [decl.CARD_OTHER_OWNER])
         assert _count(db_conn, "customers") == 1
@@ -656,21 +657,21 @@ class TestSubmitPending:
 
     def test_card_exists_and_owner_is_new(self, db_conn):
         other = _existing_client(db_conn, "PEDRO RUIZ")
-        db.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123")
+        customers_repository.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123")
         result = decl.submit_declaration(
             db_conn, _input(declarant=_owner(name="NUEVA PERSONA")), today=TODAY)
         assert result.flags == [decl.CARD_OTHER_OWNER]
-        assert db.get_customer_by_name(db_conn, "NUEVA PERSONA") is None
+        assert customers_repository.get_customer_by_name(db_conn, "NUEVA PERSONA") is None
 
     def test_licence_with_different_plate(self, db_conn):
         client = _existing_client(db_conn)
-        db.create_ownership_card(db_conn, client, transit_license="LIC-001", plate_number="ZZZ999")
+        customers_repository.create_ownership_card(db_conn, client, transit_license="LIC-001", plate_number="ZZZ999")
         result = decl.submit_declaration(db_conn, _input(), today=TODAY)
         self._assert_nothing_created(db_conn, result, [decl.CARD_DATA_MISMATCH])
 
     def test_plate_with_different_licence(self, db_conn):
         client = _existing_client(db_conn)
-        db.create_ownership_card(db_conn, client, transit_license="OTRA-LIC", plate_number="ABC123")
+        customers_repository.create_ownership_card(db_conn, client, transit_license="OTRA-LIC", plate_number="ABC123")
         result = decl.submit_declaration(db_conn, _input(), today=TODAY)
         self._assert_nothing_created(db_conn, result, [decl.CARD_DATA_MISMATCH])
 
@@ -690,13 +691,13 @@ class TestSubmitPending:
     def test_existing_owner_with_a_different_document_number(self, db_conn):
         """Names are the customer identity: a homonym with another document
         must not be merged silently into the existing customer."""
-        db.resolve_or_create_customer(db_conn, "MARIA LOPEZ", type="CLIENTE", document_number="999")
+        customers_repository.resolve_or_create_customer(db_conn, "MARIA LOPEZ", type="CLIENTE", document_number="999")
         result = decl.submit_declaration(db_conn, _input(), today=TODAY)
         self._assert_nothing_created(db_conn, result, [decl.CUSTOMER_DOCUMENT_MISMATCH])
         assert _count(db_conn, "ownership_cards") == 0
 
     def test_same_document_number_with_other_punctuation_is_not_a_mismatch(self, db_conn):
-        db.resolve_or_create_customer(
+        customers_repository.resolve_or_create_customer(
             db_conn, "MARIA LOPEZ", type="CLIENTE", document_number="1.020.304.050",
         )
         declaration_id = _submit_pending(db_conn)   # no flag, creates nothing
@@ -710,7 +711,7 @@ class TestSubmitPending:
         assert _cards_of(db_conn, declaration_id)[0].customer_id == client_id
 
     def test_existing_gestor_with_a_different_document_number(self, db_conn):
-        db.resolve_or_create_customer(db_conn, "GESTORIA SUR", type="GESTOR", document_number="111")
+        customers_repository.resolve_or_create_customer(db_conn, "GESTORIA SUR", type="GESTOR", document_number="111")
         result = decl.submit_declaration(db_conn, _gestor_input(), today=TODAY)
         self._assert_nothing_created(db_conn, result, [decl.CUSTOMER_DOCUMENT_MISMATCH])
 
@@ -750,7 +751,7 @@ class TestSubmitPending:
 
     def test_flags_are_stored_per_card_and_declaration_flags_are_the_union(self, db_conn):
         other = _existing_client(db_conn, "PEDRO RUIZ")
-        db.create_ownership_card(db_conn, other, transit_license="L3", plate_number="GHI789")
+        customers_repository.create_ownership_card(db_conn, other, transit_license="L3", plate_number="GHI789")
         _fabricate(db_conn, "DEF456", date(2026, 9, 1))
         cards = [_card(), _card(plate_number="DEF456", transit_license="L2"),
                  _card(plate_number="GHI789", transit_license="L3"),
@@ -824,9 +825,9 @@ class TestApprove:
         assert (record.reviewed_by, record.review_note) == (reviewer, "todo bien")
         assert record.reviewed_at is not None
         (row,) = _cards_of(db_conn, declaration_id)
-        owner = db.get_customer(db_conn, row.customer_id)
+        owner = customers_repository.get_customer(db_conn, row.customer_id)
         assert (owner.name, owner.type, owner.document_relation) == ("MARIA LOPEZ", "CLIENTE", "DUEÑO")
-        card = db.get_ownership_card(db_conn, row.ownership_card_id)
+        card = customers_repository.get_ownership_card(db_conn, row.ownership_card_id)
         assert (card.customer_id, card.plate_number) == (owner.id, "ABC123")
         assert record.review_flags == ["plate_made_recently"]   # history is kept
         assert row.review_flags == ["plate_made_recently"]
@@ -839,10 +840,10 @@ class TestApprove:
         decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
         record = db.get_declaration(db_conn, declaration_id)
         assert record.status == "approved"
-        assert db.get_customer(db_conn, record.gestor_id).type == "GESTOR"
+        assert customers_repository.get_customer(db_conn, record.gestor_id).type == "GESTOR"
         rows = _cards_of(db_conn, declaration_id)
         assert rows[0].customer_id == rows[2].customer_id != rows[1].customer_id
-        assert db.get_customer(db_conn, rows[1].customer_id).document_relation == "POSEEDOR"
+        assert customers_repository.get_customer(db_conn, rows[1].customer_id).document_relation == "POSEEDOR"
         assert _count(db_conn, "ownership_cards") == 3
         assert _count(db_conn, "customers") == 3
 
@@ -851,10 +852,10 @@ class TestApprove:
         gestor_id = _existing_client(db_conn, "GESTORIA SUR", None)
         declaration_id = _pending(db_conn, _gestor_input())
         decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
-        client = db.get_customer(db_conn, client_id)
+        client = customers_repository.get_customer(db_conn, client_id)
         assert client.type == "CLIENTE"
         assert client.phone == "PREVIO"           # nothing else touched
-        assert db.get_customer(db_conn, gestor_id).type == "GESTOR"
+        assert customers_repository.get_customer(db_conn, gestor_id).type == "GESTOR"
         record = db.get_declaration(db_conn, declaration_id)
         assert _cards_of(db_conn, declaration_id)[0].customer_id == client_id
         assert record.gestor_id == gestor_id
@@ -882,31 +883,31 @@ class TestApprove:
 
     def test_card_on_other_owner_raises_without_reassign(self, db_conn):
         other = _existing_client(db_conn, "PEDRO RUIZ")
-        card_id = db.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123")
+        card_id = customers_repository.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123")
         declaration_id = _pending(db_conn)
         with pytest.raises(ValueError, match="otro cliente"):
             decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
-        assert db.get_ownership_card(db_conn, card_id).customer_id == other
+        assert customers_repository.get_ownership_card(db_conn, card_id).customer_id == other
         assert db.get_declaration(db_conn, declaration_id).status == "pending_review"
 
     def test_reassign_moves_the_card(self, db_conn):
         other = _existing_client(db_conn, "PEDRO RUIZ")
-        card_id = db.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123",
-                                           engine_number="KEEP")
+        card_id = customers_repository.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123",
+                                                             engine_number="KEEP")
         declaration_id = _pending(db_conn)
         (row,) = _cards_of(db_conn, declaration_id)
         decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn),
                                  reassign_card_ids=[row.id])
         (row,) = _cards_of(db_conn, declaration_id)
         assert row.ownership_card_id == card_id
-        card = db.get_ownership_card(db_conn, card_id)
+        card = customers_repository.get_ownership_card(db_conn, card_id)
         assert card.customer_id == row.customer_id != other
         assert card.engine_number == "KEEP"
 
     def test_reassign_only_moves_the_selected_cards(self, db_conn):
         other = _existing_client(db_conn, "PEDRO RUIZ")
-        db.create_ownership_card(db_conn, other, transit_license="L1", plate_number="ABC123")
-        db.create_ownership_card(db_conn, other, transit_license="L2", plate_number="DEF456")
+        customers_repository.create_ownership_card(db_conn, other, transit_license="L1", plate_number="ABC123")
+        customers_repository.create_ownership_card(db_conn, other, transit_license="L2", plate_number="DEF456")
         cards = [_card(plate_number="ABC123", transit_license="L1"),
                  _card(plate_number="DEF456", transit_license="L2")]
         declaration_id = _pending(db_conn, _input(cards=cards))
@@ -917,14 +918,14 @@ class TestApprove:
         decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn),
                                  reassign_card_ids={first.id, second.id})
         for row in _cards_of(db_conn, declaration_id):
-            assert db.get_ownership_card(db_conn, row.ownership_card_id).customer_id == row.customer_id
+            assert customers_repository.get_ownership_card(db_conn, row.ownership_card_id).customer_id == row.customer_id
             assert row.customer_id != other
 
     def test_approval_is_all_or_nothing(self, db_conn):
         """A blocker on the SECOND card must leave the first one (and the
         customers) untouched: every check happens before the first write."""
         other = _existing_client(db_conn, "PEDRO RUIZ")
-        db.create_ownership_card(db_conn, other, transit_license="L2", plate_number="DEF456")
+        customers_repository.create_ownership_card(db_conn, other, transit_license="L2", plate_number="DEF456")
         cards = [_gcard("ABC123", "L1", owner=_owner(name="LUIS PEREZ")),
                  _gcard("DEF456", "L2", owner=_owner(name="ANA GOMEZ"))]
         declaration_id = _pending(db_conn, _gestor_input(cards=cards))
@@ -952,7 +953,7 @@ class TestApprove:
 
     def test_data_mismatch_raises_even_with_reassign(self, db_conn):
         client = _existing_client(db_conn)
-        db.create_ownership_card(db_conn, client, transit_license="LIC-001", plate_number="ZZZ999")
+        customers_repository.create_ownership_card(db_conn, client, transit_license="LIC-001", plate_number="ZZZ999")
         declaration_id = _pending(db_conn)
         (row,) = _cards_of(db_conn, declaration_id)
         with pytest.raises(ValueError, match="no coinciden"):
@@ -961,8 +962,8 @@ class TestApprove:
 
     def test_licence_and_plate_on_two_different_cards_raises(self, db_conn):
         client = _existing_client(db_conn)
-        db.create_ownership_card(db_conn, client, transit_license="LIC-001", plate_number="AAA111")
-        db.create_ownership_card(db_conn, client, transit_license="LIC-002", plate_number="ABC123")
+        customers_repository.create_ownership_card(db_conn, client, transit_license="LIC-001", plate_number="AAA111")
+        customers_repository.create_ownership_card(db_conn, client, transit_license="LIC-002", plate_number="ABC123")
         declaration_id = _pending(db_conn)
         (row,) = _cards_of(db_conn, declaration_id)
         with pytest.raises(ValueError, match="no coinciden"):
@@ -971,7 +972,7 @@ class TestApprove:
 
     def test_same_card_is_linked(self, db_conn):
         client = _existing_client(db_conn)
-        card_id = db.create_ownership_card(db_conn, client, transit_license="LIC-001", plate_number="ABC123")
+        card_id = customers_repository.create_ownership_card(db_conn, client, transit_license="LIC-001", plate_number="ABC123")
         declaration_id = _pending(db_conn)
         decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
         assert _cards_of(db_conn, declaration_id)[0].ownership_card_id == card_id

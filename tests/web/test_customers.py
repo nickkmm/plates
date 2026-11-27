@@ -6,8 +6,8 @@ The contract under test:
   must 403 here too.
 - The list page shows every customer and supports a ?q= substring filter
   on name.
-- The edit form does a REAL overwrite (db.update_customer), unlike
-  db.resolve_or_create_customer's passive, never-clobber-an-existing-value
+- The edit form does a REAL overwrite (customers_repository.update_customer), unlike
+  customers_repository.resolve_or_create_customer's passive, never-clobber-an-existing-value
   backfill -- an admin can knowingly blank out or replace any field,
   including the name.
 - A blank name, or a rename that collides with a different existing
@@ -17,7 +17,7 @@ The contract under test:
 
 from __future__ import annotations
 
-from app.core import db
+from app.customers import repository as customers_repository
 
 CUSTOMERS_URL = "/customers"
 
@@ -28,24 +28,24 @@ def _detail_url(customer_id: int) -> str:
 
 class TestCustomersList:
     def test_lists_every_customer(self, authenticated_client, db_conn):
-        db.resolve_or_create_customer(db_conn, "ZETA")
-        db.resolve_or_create_customer(db_conn, "ALFA")
+        customers_repository.resolve_or_create_customer(db_conn, "ZETA")
+        customers_repository.resolve_or_create_customer(db_conn, "ALFA")
         html = authenticated_client.get(CUSTOMERS_URL).data.decode()
         assert "ZETA" in html
         assert "ALFA" in html
 
     def test_marks_a_customer_with_no_data_as_sin_datos(self, authenticated_client, db_conn):
-        db.resolve_or_create_customer(db_conn, "NUEVO")
+        customers_repository.resolve_or_create_customer(db_conn, "NUEVO")
         html = authenticated_client.get(CUSTOMERS_URL).data.decode()
         assert "sin datos" in html
 
     def test_marks_a_customer_with_data_as_completo(self, authenticated_client, db_conn):
-        db.resolve_or_create_customer(db_conn, "CON DATOS", phone="3001112233")
+        customers_repository.resolve_or_create_customer(db_conn, "CON DATOS", phone="3001112233")
         html = authenticated_client.get(CUSTOMERS_URL).data.decode()
         assert "completo" in html
 
     def test_a_customer_with_only_person_fields_is_completo(self, authenticated_client, db_conn):
-        db.resolve_or_create_customer(db_conn, "SOLO DIRECCION", address="CALLE 1")
+        customers_repository.resolve_or_create_customer(db_conn, "SOLO DIRECCION", address="CALLE 1")
         html = authenticated_client.get(CUSTOMERS_URL).data.decode()
         assert "completo" in html
         assert "sin datos" not in html
@@ -53,8 +53,8 @@ class TestCustomersList:
     def test_query_filters_by_substring_of_name(self, authenticated_client, db_conn):
         # Deliberately NOT "PTO.V" -- the search box's own placeholder text
         # ("ej. PTO.V") would false-positive a naive `in html` check.
-        db.resolve_or_create_customer(db_conn, "ZAFRAS")
-        db.resolve_or_create_customer(db_conn, "MUVA GRANADA")
+        customers_repository.resolve_or_create_customer(db_conn, "ZAFRAS")
+        customers_repository.resolve_or_create_customer(db_conn, "MUVA GRANADA")
         html = authenticated_client.get(CUSTOMERS_URL, query_string={"q": "muva"}).data.decode()
         assert "MUVA GRANADA" in html
         assert "ZAFRAS" not in html
@@ -66,7 +66,7 @@ class TestCustomersList:
 
 class TestCustomerDetail:
     def test_shows_the_customers_current_attributes(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(
+        customer_id = customers_repository.resolve_or_create_customer(
             db_conn, "PTO.V", type="EMPRESA", phone="3001112233", email="a@b.com",
         )
         html = authenticated_client.get(_detail_url(customer_id)).data.decode()
@@ -74,7 +74,7 @@ class TestCustomerDetail:
         assert "a@b.com" in html
 
     def test_shows_person_fields_and_the_new_type_vocabulary(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(
+        customer_id = customers_repository.resolve_or_create_customer(
             db_conn, "PERSONA", type="CLIENTE", address="CALLE 77", neighborhood="LAS PALMAS",
             municipality="JAMUNDÍ",
         )
@@ -88,13 +88,13 @@ class TestCustomerDetail:
         assert '<option value="CÉDULA DE EXTRANJERÍA"' in html
 
     def test_person_inputs_are_disabled_for_empresa(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "UNA EMPRESA", type="EMPRESA")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "UNA EMPRESA", type="EMPRESA")
         html = authenticated_client.get(_detail_url(customer_id)).data.decode()
         assert 'id="customerAddress" value="" disabled' in html
         assert 'id="documentRelation" disabled' in html
 
     def test_person_inputs_are_enabled_for_cliente(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "UN CLIENTE", type="CLIENTE")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "UN CLIENTE", type="CLIENTE")
         html = authenticated_client.get(_detail_url(customer_id)).data.decode()
         assert 'id="customerAddress" value="" disabled' not in html
         assert 'id="documentRelation" disabled' not in html
@@ -107,7 +107,7 @@ class TestCustomerDetail:
 
 class TestCustomerSave:
     def test_overwrites_every_attribute(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V", type="EMPRESA")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V", type="EMPRESA")
         resp = authenticated_client.post(_detail_url(customer_id), data={
             "name": "PTO.V",
             "customer_type": "CLIENTE",
@@ -122,7 +122,7 @@ class TestCustomerSave:
         })
         assert resp.status_code == 302
 
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.type == "CLIENTE"
         assert customer.document_relation == "DUEÑO"
@@ -134,13 +134,13 @@ class TestCustomerSave:
         assert customer.email == "nuevo@correo.com"
 
     def test_gestor_keeps_person_fields_but_not_document_relation(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "GESTORIA")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "GESTORIA")
         authenticated_client.post(_detail_url(customer_id), data={
             "name": "GESTORIA", "customer_type": "GESTOR",
             "customer_document_relation": "DUEÑO", "customer_address": "CALLE 1",
             "customer_neighborhood": "CENTRO", "customer_municipality": "TULUÁ",
         })
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.type == "GESTOR"
         assert customer.document_relation is None
@@ -149,7 +149,7 @@ class TestCustomerSave:
         )
 
     def test_changing_to_empresa_drops_stored_person_fields(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(
+        customer_id = customers_repository.resolve_or_create_customer(
             db_conn, "CAMBIA", type="CLIENTE", document_relation="DUEÑO", address="CALLE 1",
             neighborhood="CENTRO", municipality="CALI",
         )
@@ -159,7 +159,7 @@ class TestCustomerSave:
             "customer_address": "CALLE 1", "customer_neighborhood": "CENTRO",
             "customer_municipality": "CALI",
         })
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.type == "EMPRESA"
         assert customer.document_relation is None
@@ -168,30 +168,30 @@ class TestCustomerSave:
         assert customer.municipality is None
 
     def test_can_rename_the_customer(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V VIEJO")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V VIEJO")
         authenticated_client.post(_detail_url(customer_id), data={"name": "PTO.V NUEVO"})
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.name == "PTO.V NUEVO"
 
     def test_blank_name_is_rejected(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V")
         resp = authenticated_client.post(_detail_url(customer_id), data={"name": "  "})
         assert resp.status_code == 400
         assert "no puede quedar vacío" in resp.data.decode()
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.name == "PTO.V"
 
     def test_renaming_to_a_name_already_used_by_another_customer_is_rejected(
         self, authenticated_client, db_conn
     ):
-        db.resolve_or_create_customer(db_conn, "MUVA GRANADA")
-        other_id = db.resolve_or_create_customer(db_conn, "MUVA SERGIO")
+        customers_repository.resolve_or_create_customer(db_conn, "MUVA GRANADA")
+        other_id = customers_repository.resolve_or_create_customer(db_conn, "MUVA SERGIO")
         resp = authenticated_client.post(_detail_url(other_id), data={"name": "MUVA GRANADA"})
         assert resp.status_code == 400
         assert "Ya existe otro cliente" in resp.data.decode()
-        customer = db.get_customer(db_conn, other_id)
+        customer = customers_repository.get_customer(db_conn, other_id)
         assert customer is not None
         assert customer.name == "MUVA SERGIO"  # untouched
 
@@ -213,22 +213,22 @@ class TestCustomersForbidden:
         assert punto_venta_client.get(CUSTOMERS_URL).status_code == 403
 
     def test_detail_is_forbidden_for_point_of_sale(self, punto_venta_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V")
         assert punto_venta_client.get(_detail_url(customer_id)).status_code == 403
 
     def test_save_is_forbidden_for_point_of_sale(self, punto_venta_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V", phone="3001112233")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V", phone="3001112233")
         resp = punto_venta_client.post(_detail_url(customer_id), data={"name": "OTRO NOMBRE"})
         assert resp.status_code == 403
-        customer = db.get_customer(db_conn, customer_id)
+        customer = customers_repository.get_customer(db_conn, customer_id)
         assert customer is not None
         assert customer.name == "PTO.V"  # untouched
 
 
 class TestOwnershipCardsTable:
     def test_cliente_with_cards_lists_them(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "DUENO", type="CLIENTE")
-        db.create_ownership_card(
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "DUENO", type="CLIENTE")
+        customers_repository.create_ownership_card(
             db_conn, customer_id, transit_license="LIC-77", plate_number="ABC123",
             engine_number=None, chassis_number=None, vehicle_type="CARRO PARTICULAR",
             registered_in="MEDELLÍN", vehicle_brand="MAZDA",
@@ -239,11 +239,11 @@ class TestOwnershipCardsTable:
             assert text in html
 
     def test_cliente_without_cards_shows_empty_state(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "SIN TARJETA", type="CLIENTE")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "SIN TARJETA", type="CLIENTE")
         html = authenticated_client.get(_detail_url(customer_id)).data.decode()
         assert "todavía no tiene tarjetas de propiedad" in html
 
     def test_non_cliente_has_no_cards_section(self, authenticated_client, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "UNA EMPRESA", type="EMPRESA")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "UNA EMPRESA", type="EMPRESA")
         html = authenticated_client.get(_detail_url(customer_id)).data.decode()
         assert "Tarjetas de propiedad" not in html

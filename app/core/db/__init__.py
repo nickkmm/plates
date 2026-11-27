@@ -11,18 +11,16 @@ This package replaces what used to be a single flat db.py, split by table:
                      row shape (OrderSummary).
     plates.py     -- plates reads/writes (plus distinct_cities, by symmetry
                      with orders.distinct_requested_by).
-    inventory.py  -- blank_preparations / inventory_categories reads/writes.
-    customers.py  -- customers reads/writes (Fase 2).
-    ownership_cards.py -- ownership_cards ("tarjeta de propiedad") reads/writes
-                     and the find_card_conflicts classifier.
     declarations.py -- declarations + declaration_cards (sworn declarations of
                      the public form, one declarant and many ownership cards)
                      reads/writes; the decision rules live in app/core/declarations.py.
-    pricing.py    -- plate_type_prices reads/writes (Fase 2).
     production.py -- production_orders.production_status and
                      production_order_events reads/writes; the transition
                      rules live in app/core/production.py.
 The users and roles tables are read and written by app/auth/repository/.
+The customers, ownership_cards, plate_type_prices, blank_preparations and
+inventory_categories tables live in app/customers/repository/,
+app/pricing/repository.py and app/inventory/repository.py.
 Every public function each submodule exposes is re-exported below,
 explicitly (not `import *`), so existing call sites (`db.insert_order(...)`,
 etc.) keep working completely unchanged.
@@ -30,14 +28,6 @@ etc.) keep working completely unchanged.
 
 from __future__ import annotations
 
-from app.core.db.customers import (
-    CustomerRecord,
-    get_customer,
-    get_customer_by_name,
-    list_customers,
-    resolve_or_create_customer,
-    update_customer,
-)
 from app.core.db.declarations import (
     DeclarationCardRecord,
     DeclarationRecord,
@@ -54,12 +44,6 @@ from app.core.db.declarations import (
     set_declaration_production_order,
     set_declaration_review,
 )
-from app.core.db.inventory import (
-    insert_blank_preparation,
-    inventory_view,
-    ornamental_count,
-    recalc_inventory,
-)
 from app.core.db.orders import (
     OrderSummary,
     delete_order,
@@ -70,24 +54,6 @@ from app.core.db.orders import (
     recent_orders,
     search_orders_by_number,
     update_order,
-)
-from app.core.db.ownership_cards import (
-    CARD_LINK_EXCLUDED_CUSTOMER_TYPES,
-    CARD_STATUS_DATA_MISMATCH,
-    CARD_STATUS_NEW,
-    CARD_STATUS_OTHER_OWNER,
-    CARD_STATUS_SAME_CARD,
-    CardLookup,
-    OwnershipCardRecord,
-    classify_card_lookup,
-    create_ownership_card,
-    find_card_conflicts,
-    get_ownership_card,
-    get_ownership_card_by_plate_number,
-    get_ownership_card_by_transit_license,
-    list_ownership_cards_for_customer,
-    reassign_ownership_card,
-    resolve_card_id_for_plate,
 )
 from app.core.db.plates import (
     delete_plate,
@@ -103,7 +69,6 @@ from app.core.db.plates import (
     update_plate,
     update_plate_full,
 )
-from app.core.db.pricing import PriceRow, current_prices, price_list, set_price
 from app.core.db.production import (
     ACTIVE_STATUSES,
     PRODUCTION_STATUSES,
@@ -124,71 +89,43 @@ from app.shared.db import get_conn
 
 __all__ = [
     "ACTIVE_STATUSES",
-    "CARD_LINK_EXCLUDED_CUSTOMER_TYPES",
-    "CARD_STATUS_DATA_MISMATCH",
-    "CARD_STATUS_NEW",
-    "CARD_STATUS_OTHER_OWNER",
-    "CARD_STATUS_SAME_CARD",
-    "CardLookup",
-    "CustomerRecord",
     "DeclarationCardRecord",
     "DeclarationRecord",
     "OrderSummary",
-    "OwnershipCardRecord",
     "PRODUCTION_STATUSES",
-    "PriceRow",
     "ProductionEvent",
     "ProductionOrderSummary",
     "STATUS_DELIVERED",
     "STATUS_IN_PROGRESS",
     "STATUS_PENDING",
     "STATUS_READY",
-    "classify_card_lookup",
     "count_by_production_status",
     "count_recent_by_ip",
-    "create_ownership_card",
-    "current_prices",
     "delete_order",
     "delete_plate",
     "distinct_cities",
     "distinct_requested_by",
     "existing_plate_numbers",
-    "find_card_conflicts",
     "find_orders_by_number",
     "find_orders_for_plate",
     "get_conn",
-    "get_customer",
-    "get_customer_by_name",
     "get_declaration",
-    "get_ownership_card",
-    "get_ownership_card_by_plate_number",
-    "get_ownership_card_by_transit_license",
     "get_production_status",
-    "insert_blank_preparation",
     "insert_declaration",
     "insert_declaration_card",
     "insert_order",
     "insert_plate",
-    "inventory_view",
     "last_fabrication_date",
-    "list_customers",
     "list_cards_for_declarations",
     "list_declaration_cards",
     "list_declarations",
     "list_declarations_by_production_order",
-    "list_ownership_cards_for_customer",
     "list_production_events",
     "list_production_orders",
     "order_detail",
-    "ornamental_count",
-    "price_list",
     "production_statuses_for_orders",
-    "reassign_ownership_card",
     "relink_plates",
-    "resolve_card_id_for_plate",
-    "recalc_inventory",
     "recent_orders",
-    "resolve_or_create_customer",
     "resolve_plate",
     "review_rows",
     "search_orders_by_number",
@@ -197,9 +134,7 @@ __all__ = [
     "set_declaration_notarized_received",
     "set_declaration_production_order",
     "set_declaration_review",
-    "set_price",
     "set_production_status",
-    "update_customer",
     "update_order",
     "update_plate",
     "update_plate_full",

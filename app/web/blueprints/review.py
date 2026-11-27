@@ -7,6 +7,7 @@ from flask import Blueprint, redirect, render_template, request, url_for
 
 from app.auth.decorators import permission_required
 from app.core import db
+from app.inventory import repository as inventory_repository
 
 bp = Blueprint("review", __name__)
 
@@ -33,7 +34,7 @@ def review_update():
             quantity=int(request.form.get("quantity") or 0),
             is_voided=request.form.get("is_voided") == "on",
         )
-        db.recalc_inventory(conn)  # quantity/void changes affect consumed
+        inventory_repository.recalc_inventory(conn)  # quantity/void changes affect consumed
         conn.commit()
     return redirect(url_for("review.review"))
 
@@ -52,6 +53,6 @@ def review_resolve():
 def review_delete():
     with db.get_conn() as conn:
         db.delete_plate(conn, int(request.form["plate_id"]))
-        db.recalc_inventory(conn)
+        inventory_repository.recalc_inventory(conn)
         conn.commit()
     return redirect(url_for("review.review"))

@@ -20,6 +20,8 @@ from psycopg.rows import tuple_row
 
 from app.core import db
 from app.core import declarations as decl
+from app.customers import repository as customers_repository
+from app.pricing import repository as pricing_repository
 from tests.core.test_declarations import (
     TODAY,
     _card,
@@ -642,7 +644,7 @@ class TestIngestCustomerCapture:
             "plate_number": ["CUS100"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         with db.get_conn() as conn:
-            customer = db.get_customer_by_name(conn, "CLIENTE UNO")
+            customer = customers_repository.get_customer_by_name(conn, "CLIENTE UNO")
         assert customer is not None
         assert customer.type == "CLIENTE"
         assert customer.document_type == "CÉDULA"
@@ -668,7 +670,7 @@ class TestIngestCustomerCapture:
             "plate_number": ["CUS104"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         with db.get_conn() as conn:
-            customer = db.get_customer_by_name(conn, "GESTOR UNO")
+            customer = customers_repository.get_customer_by_name(conn, "GESTOR UNO")
         assert customer is not None
         assert customer.type == "GESTOR"
         assert customer.document_type == "CÉDULA DE EXTRANJERÍA"
@@ -691,7 +693,7 @@ class TestIngestCustomerCapture:
             "plate_number": ["CUS101"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         with db.get_conn() as conn:
-            customer = db.get_customer_by_name(conn, "CLIENTE DOS")
+            customer = customers_repository.get_customer_by_name(conn, "CLIENTE DOS")
         assert customer is not None
         assert customer.document_type == "NIT"
         assert customer.document_relation is None
@@ -710,7 +712,7 @@ class TestIngestCustomerCapture:
             "plate_number": ["CUS102"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         with db.get_conn() as conn:
-            customer = db.get_customer_by_name(conn, "CLIENTE TRES")
+            customer = customers_repository.get_customer_by_name(conn, "CLIENTE TRES")
         assert customer is not None
         assert customer.type == customer_type
         assert customer.phone == "300"  # still kept
@@ -723,7 +725,7 @@ class TestIngestCustomerCapture:
         self, authenticated_client, clean_db
     ):
         with db.get_conn() as conn:
-            db.resolve_or_create_customer(conn, "CLIENTE CUATRO", type="EMPRESA", phone="111")
+            customers_repository.resolve_or_create_customer(conn, "CLIENTE CUATRO", type="EMPRESA", phone="111")
             conn.commit()
         authenticated_client.post("/ingest", data={
             "payment_method": "EFECTIVO",
@@ -733,7 +735,7 @@ class TestIngestCustomerCapture:
             "plate_number": ["CUS103"], "plate_to": [""], "quantity": ["1"], "city": ["BOGOTA"],
         })
         with db.get_conn() as conn:
-            customer = db.get_customer_by_name(conn, "CLIENTE CUATRO")
+            customer = customers_repository.get_customer_by_name(conn, "CLIENTE CUATRO")
         assert customer is not None
         assert customer.type == "EMPRESA"
         assert customer.phone == "111"
@@ -753,7 +755,7 @@ class TestIngestCustomerFieldset:
 
     def test_embedded_customer_lookup_carries_person_fields(self, authenticated_client, clean_db):
         with db.get_conn() as conn:
-            db.resolve_or_create_customer(
+            customers_repository.resolve_or_create_customer(
                 conn, "LOOKUP UNO", type="CLIENTE", address="CALLE 1", neighborhood="CENTRO",
                 municipality="CALI",
             )
@@ -899,7 +901,7 @@ def _hidden(declaration_id: int) -> str:
 
 class TestIngestFromDeclaration:
     def test_get_prefills_header_customer_and_one_line_per_card(self, authenticated_client, db_conn):
-        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("180000"), "t")
+        pricing_repository.set_price(db_conn, "CARRO PARTICULAR", Decimal("180000"), "t")
         declaration_id = _two_card_declaration(db_conn)
 
         resp = authenticated_client.get(f"/ingest?declaration_id={declaration_id}")

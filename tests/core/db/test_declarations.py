@@ -11,6 +11,7 @@ import pytest
 from app.auth import repository
 from app.core import db
 from app.core.db.declarations import STAGES, declaration_stage, requires_notarization
+from app.customers import repository as customers_repository
 from tests.conftest import TEST_USERNAME
 
 _DECLARANT = {"name": "ANA", "document_number": "123"}
@@ -42,7 +43,7 @@ def _set_created_at(db_conn, declaration_id: int, when: datetime) -> None:
 
 class TestInsertAndGet:
     def test_roundtrips_every_field(self, db_conn):
-        gestor_id = db.resolve_or_create_customer(db_conn, "GESTORIA")
+        gestor_id = customers_repository.resolve_or_create_customer(db_conn, "GESTORIA")
         accepted = datetime(2026, 1, 2, 3, 4, 5)
         declaration_id = _insert(
             db_conn, status="approved", review_flags=["a", "b"], gestor_id=gestor_id,
@@ -107,8 +108,8 @@ class TestListDeclarationsByProductionOrder:
 
 class TestDeclarationCards:
     def test_roundtrips_every_field(self, db_conn):
-        owner_id = db.resolve_or_create_customer(db_conn, "ANA")
-        card_id = db.create_ownership_card(db_conn, owner_id, transit_license="L1", plate_number="ABC123")
+        owner_id = customers_repository.resolve_or_create_customer(db_conn, "ANA")
+        card_id = customers_repository.create_ownership_card(db_conn, owner_id, transit_license="L1", plate_number="ABC123")
         declaration_id = _insert(db_conn)
         row_id = db.insert_declaration_card(
             db_conn, declaration_id, position=0, reason="PÉRDIDA", plate_quantity=2,
@@ -175,8 +176,8 @@ class TestDeclarationCards:
         assert db.list_cards_for_declarations(db_conn, []) == {}
 
     def test_set_declaration_card_links(self, db_conn):
-        owner_id = db.resolve_or_create_customer(db_conn, "ANA")
-        card_id = db.create_ownership_card(db_conn, owner_id, transit_license="L1", plate_number="ABC123")
+        owner_id = customers_repository.resolve_or_create_customer(db_conn, "ANA")
+        card_id = customers_repository.create_ownership_card(db_conn, owner_id, transit_license="L1", plate_number="ABC123")
         declaration_id = _insert(db_conn)
         row_id = _insert_card(db_conn, declaration_id)
         other_id = _insert_card(db_conn, declaration_id, 1)
@@ -259,9 +260,9 @@ class TestListDeclarations:
         assert [d.id for d in db.list_declarations(db_conn, query="abc")] == [declaration_id]
 
     def test_query_matches_linked_rows(self, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "JUAN PEREZ", document_number="4242")
-        card_id = db.create_ownership_card(db_conn, customer_id, transit_license="LNK-1", plate_number="LNK123")
-        gestor_id = db.resolve_or_create_customer(db_conn, "LA GESTORIA", document_number="9090")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "JUAN PEREZ", document_number="4242")
+        card_id = customers_repository.create_ownership_card(db_conn, customer_id, transit_license="LNK-1", plate_number="LNK123")
+        gestor_id = customers_repository.resolve_or_create_customer(db_conn, "LA GESTORIA", document_number="9090")
         linked = _insert(db_conn, status="approved", gestor_id=gestor_id,
                          submitted_data={"declarant": {"name": "otra cosa"}})
         _insert_card(db_conn, linked, 0, plate_number="TTT999", transit_license="T9",
@@ -309,7 +310,7 @@ class TestSetDeclarationReview:
     def test_records_review_and_gestor(self, db_conn):
         user = repository.get_user_by_username(db_conn, TEST_USERNAME)
         assert user is not None
-        gestor_id = db.resolve_or_create_customer(db_conn, "GESTORIA")
+        gestor_id = customers_repository.resolve_or_create_customer(db_conn, "GESTORIA")
         declaration_id = _insert(db_conn)
         db.set_declaration_review(db_conn, declaration_id, status="approved", reviewed_by=user.id,
                                   note="ok", gestor_id=gestor_id)

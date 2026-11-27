@@ -1,5 +1,5 @@
-"""Integration tests for app/core/db/ownership_cards.py. Needs a real
-Postgres connection (see tests/conftest.py's `db_conn`/`clean_db`).
+"""Integration tests for app/customers/repository/ownership_cards.py. Needs a
+real Postgres connection (see tests/conftest.py's `db_conn`/`clean_db`).
 
 Exception-inside-a-block rule (tests/conftest.py's clean_db docstring):
 commit() BEFORE the statement that is expected to fail, then rollback()
@@ -11,15 +11,15 @@ from __future__ import annotations
 import psycopg
 import pytest
 
-from app.core import db
+from app.customers import repository as customers_repository
 
 
 def _customer(db_conn, name: str = "CLIENTE UNO") -> int:
-    return db.resolve_or_create_customer(db_conn, name)
+    return customers_repository.resolve_or_create_customer(db_conn, name)
 
 
 def _card(db_conn, customer_id: int, license_: str = "LIC-001", plate: str = "ABC123", **kwargs) -> int:
-    return db.create_ownership_card(
+    return customers_repository.create_ownership_card(
         db_conn, customer_id, transit_license=license_, plate_number=plate, **kwargs,
     )
 
@@ -31,15 +31,15 @@ class TestCreateAndGet:
             db_conn, customer_id, engine_number="ENG1", chassis_number="CHA1",
             vehicle_type="CARRO PARTICULAR", registered_in="MEDELLÍN", vehicle_brand="MAZDA",
         )
-        card = db.get_ownership_card(db_conn, card_id)
-        assert card == db.OwnershipCardRecord(
+        card = customers_repository.get_ownership_card(db_conn, card_id)
+        assert card == customers_repository.OwnershipCardRecord(
             id=card_id, customer_id=customer_id, transit_license="LIC-001",
             plate_number="ABC123", engine_number="ENG1", chassis_number="CHA1",
             vehicle_type="CARRO PARTICULAR", registered_in="MEDELLÍN", vehicle_brand="MAZDA",
         )
 
     def test_optional_fields_default_to_none(self, db_conn):
-        card = db.get_ownership_card(db_conn, _card(db_conn, _customer(db_conn)))
+        card = customers_repository.get_ownership_card(db_conn, _card(db_conn, _customer(db_conn)))
         assert card is not None
         assert card.engine_number is None
         assert card.chassis_number is None
@@ -49,29 +49,29 @@ class TestCreateAndGet:
 
     def test_get_by_transit_license_and_plate(self, db_conn):
         card_id = _card(db_conn, _customer(db_conn))
-        by_license = db.get_ownership_card_by_transit_license(db_conn, "LIC-001")
-        by_plate = db.get_ownership_card_by_plate_number(db_conn, "ABC123")
+        by_license = customers_repository.get_ownership_card_by_transit_license(db_conn, "LIC-001")
+        by_plate = customers_repository.get_ownership_card_by_plate_number(db_conn, "ABC123")
         assert by_license is not None and by_license.id == card_id
         assert by_plate is not None and by_plate.id == card_id
 
     def test_lookups_return_none_when_missing(self, db_conn):
-        assert db.get_ownership_card(db_conn, 999999) is None
-        assert db.get_ownership_card_by_transit_license(db_conn, "NOPE") is None
-        assert db.get_ownership_card_by_plate_number(db_conn, "ZZZ999") is None
+        assert customers_repository.get_ownership_card(db_conn, 999999) is None
+        assert customers_repository.get_ownership_card_by_transit_license(db_conn, "NOPE") is None
+        assert customers_repository.get_ownership_card_by_plate_number(db_conn, "ZZZ999") is None
 
 
 class TestNormalization:
     def test_licence_is_stripped_and_uppercased_and_plate_is_cleaned(self, db_conn):
         card_id = _card(db_conn, _customer(db_conn), license_="  lic 001x ", plate=" abc 123 ")
-        card = db.get_ownership_card(db_conn, card_id)
+        card = customers_repository.get_ownership_card(db_conn, card_id)
         assert card is not None
         assert card.transit_license == "LIC 001X"
         assert card.plate_number == "ABC123"
 
     def test_lookups_normalize_their_input_too(self, db_conn):
         card_id = _card(db_conn, _customer(db_conn))
-        by_license = db.get_ownership_card_by_transit_license(db_conn, " lic-001 ")
-        by_plate = db.get_ownership_card_by_plate_number(db_conn, "abc 123")
+        by_license = customers_repository.get_ownership_card_by_transit_license(db_conn, " lic-001 ")
+        by_plate = customers_repository.get_ownership_card_by_plate_number(db_conn, "abc 123")
         assert by_license is not None and by_license.id == card_id
         assert by_plate is not None and by_plate.id == card_id
 
@@ -80,7 +80,7 @@ class TestNormalization:
             db_conn, _customer(db_conn), engine_number="  E1  ", chassis_number="   ",
             vehicle_type="", registered_in=" CALI ", vehicle_brand=None,
         )
-        card = db.get_ownership_card(db_conn, card_id)
+        card = customers_repository.get_ownership_card(db_conn, card_id)
         assert card is not None
         assert card.engine_number == "E1"
         assert card.chassis_number is None
@@ -131,7 +131,7 @@ class TestListAndReassign:
             _card(db_conn, customer_id, "LIC-001", "AAA111"),
             _card(db_conn, customer_id, "LIC-002", "BBB222"),
         ]
-        cards = db.list_ownership_cards_for_customer(db_conn, customer_id)
+        cards = customers_repository.list_ownership_cards_for_customer(db_conn, customer_id)
         assert [c.id for c in cards] == ids == sorted(ids)
 
     def test_list_only_returns_that_customers_cards(self, db_conn):
@@ -139,40 +139,40 @@ class TestListAndReassign:
         second = _customer(db_conn, "CLIENTE DOS")
         _card(db_conn, first, "LIC-001", "AAA111")
         other = _card(db_conn, second, "LIC-002", "BBB222")
-        assert [c.id for c in db.list_ownership_cards_for_customer(db_conn, second)] == [other]
+        assert [c.id for c in customers_repository.list_ownership_cards_for_customer(db_conn, second)] == [other]
 
     def test_list_is_empty_for_customer_without_cards(self, db_conn):
-        assert db.list_ownership_cards_for_customer(db_conn, _customer(db_conn)) == []
+        assert customers_repository.list_ownership_cards_for_customer(db_conn, _customer(db_conn)) == []
 
     def test_reassign_moves_the_card(self, db_conn):
         first = _customer(db_conn, "CLIENTE UNO")
         second = _customer(db_conn, "CLIENTE DOS")
         card_id = _card(db_conn, first)
-        db.reassign_ownership_card(db_conn, card_id, second)
-        card = db.get_ownership_card(db_conn, card_id)
+        customers_repository.reassign_ownership_card(db_conn, card_id, second)
+        card = customers_repository.get_ownership_card(db_conn, card_id)
         assert card is not None and card.customer_id == second
-        assert db.list_ownership_cards_for_customer(db_conn, first) == []
+        assert customers_repository.list_ownership_cards_for_customer(db_conn, first) == []
 
     def test_reassign_to_nonexistent_customer_raises(self, db_conn):
         card_id = _card(db_conn, _customer(db_conn))
         db_conn.commit()
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
-            db.reassign_ownership_card(db_conn, card_id, 999999)
+            customers_repository.reassign_ownership_card(db_conn, card_id, 999999)
         db_conn.rollback()
 
 
 class TestFindCardConflicts:
     def test_new_when_neither_exists(self, db_conn):
         customer_id = _customer(db_conn)
-        result = db.find_card_conflicts(
+        result = customers_repository.find_card_conflicts(
             db_conn, customer_id=customer_id, transit_license="LIC-001", plate_number="ABC123",
         )
-        assert result.status == db.CARD_STATUS_NEW == "new"
+        assert result.status == customers_repository.CARD_STATUS_NEW == "new"
         assert result.by_transit_license is None
         assert result.by_plate_number is None
 
     def test_new_with_customer_id_none(self, db_conn):
-        result = db.find_card_conflicts(
+        result = customers_repository.find_card_conflicts(
             db_conn, customer_id=None, transit_license="LIC-001", plate_number="ABC123",
         )
         assert result.status == "new"
@@ -180,7 +180,7 @@ class TestFindCardConflicts:
     def test_same_card_when_both_match_and_owner_matches(self, db_conn):
         customer_id = _customer(db_conn)
         card_id = _card(db_conn, customer_id)
-        result = db.find_card_conflicts(
+        result = customers_repository.find_card_conflicts(
             db_conn, customer_id=customer_id, transit_license=" lic-001", plate_number="abc 123",
         )
         assert result.status == "same_card"
@@ -191,14 +191,14 @@ class TestFindCardConflicts:
         owner = _customer(db_conn, "CLIENTE UNO")
         other = _customer(db_conn, "CLIENTE DOS")
         _card(db_conn, owner)
-        result = db.find_card_conflicts(
+        result = customers_repository.find_card_conflicts(
             db_conn, customer_id=other, transit_license="LIC-001", plate_number="ABC123",
         )
         assert result.status == "other_owner"
 
     def test_other_owner_when_customer_id_is_none_and_card_exists(self, db_conn):
         _card(db_conn, _customer(db_conn))
-        result = db.find_card_conflicts(
+        result = customers_repository.find_card_conflicts(
             db_conn, customer_id=None, transit_license="LIC-001", plate_number="ABC123",
         )
         assert result.status == "other_owner"
@@ -206,7 +206,7 @@ class TestFindCardConflicts:
     def test_data_mismatch_licence_exists_with_a_different_plate(self, db_conn):
         customer_id = _customer(db_conn)
         _card(db_conn, customer_id)
-        result = db.find_card_conflicts(
+        result = customers_repository.find_card_conflicts(
             db_conn, customer_id=customer_id, transit_license="LIC-001", plate_number="ZZZ999",
         )
         assert result.status == "data_mismatch"
@@ -216,7 +216,7 @@ class TestFindCardConflicts:
     def test_data_mismatch_plate_exists_with_a_different_licence(self, db_conn):
         customer_id = _customer(db_conn)
         _card(db_conn, customer_id)
-        result = db.find_card_conflicts(
+        result = customers_repository.find_card_conflicts(
             db_conn, customer_id=customer_id, transit_license="LIC-999", plate_number="ABC123",
         )
         assert result.status == "data_mismatch"
@@ -227,7 +227,7 @@ class TestFindCardConflicts:
         customer_id = _customer(db_conn)
         _card(db_conn, customer_id, "LIC-001", "AAA111")
         _card(db_conn, customer_id, "LIC-002", "BBB222")
-        result = db.find_card_conflicts(
+        result = customers_repository.find_card_conflicts(
             db_conn, customer_id=customer_id, transit_license="LIC-001", plate_number="BBB222",
         )
         assert result.status == "data_mismatch"
@@ -240,7 +240,7 @@ class TestFindCardConflicts:
         owner = _customer(db_conn, "CLIENTE UNO")
         other = _customer(db_conn, "CLIENTE DOS")
         _card(db_conn, owner)
-        result = db.find_card_conflicts(
+        result = customers_repository.find_card_conflicts(
             db_conn, customer_id=other, transit_license="LIC-001", plate_number="ZZZ999",
         )
         assert result.status == "data_mismatch"
@@ -250,24 +250,24 @@ class TestFindCardConflicts:
         second = _customer(db_conn, "CLIENTE DOS")
         _card(db_conn, first, "LIC-001", "AAA111")
         _card(db_conn, second, "LIC-002", "BBB222")
-        result = db.find_card_conflicts(
+        result = customers_repository.find_card_conflicts(
             db_conn, customer_id=first, transit_license="LIC-001", plate_number="BBB222",
         )
         assert result.status == "data_mismatch"
 
     def test_find_card_conflicts_never_writes(self, db_conn):
-        db.find_card_conflicts(
+        customers_repository.find_card_conflicts(
             db_conn, customer_id=None, transit_license="LIC-001", plate_number="ABC123",
         )
-        assert db.get_ownership_card_by_transit_license(db_conn, "LIC-001") is None
+        assert customers_repository.get_ownership_card_by_transit_license(db_conn, "LIC-001") is None
 
 
 class TestClassifyCardLookup:
     """The pure decision, without a DB (every combination)."""
 
     @staticmethod
-    def _record(card_id: int, customer_id: int) -> db.OwnershipCardRecord:
-        return db.OwnershipCardRecord(
+    def _record(card_id: int, customer_id: int) -> customers_repository.OwnershipCardRecord:
+        return customers_repository.OwnershipCardRecord(
             id=card_id, customer_id=customer_id, transit_license="L", plate_number="P",
             engine_number=None, chassis_number=None, vehicle_type=None,
             registered_in=None, vehicle_brand=None,
@@ -291,4 +291,4 @@ class TestClassifyCardLookup:
             (None, mine, None, "data_mismatch"),
         ]
         for customer_id, by_license, by_plate, expected in cases:
-            assert db.classify_card_lookup(customer_id, by_license, by_plate) == expected
+            assert customers_repository.classify_card_lookup(customer_id, by_license, by_plate) == expected

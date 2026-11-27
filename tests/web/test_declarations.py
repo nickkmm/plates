@@ -44,6 +44,7 @@ import pytest
 from app.auth import repository
 from app.core import db
 from app.core import declarations as decl
+from app.customers import repository as customers_repository
 from app.shared.models import ExtractedRow
 from app.shared.timezones import utc_now
 from tests.conftest import PUNTO_VENTA_USERNAME, TEST_USERNAME
@@ -81,8 +82,8 @@ def _pending_recent(db_conn) -> int:
 
 
 def _create_card(db_conn, owner_name: str, *, license_: str = "LIC-001", plate: str = "ABC123") -> int:
-    owner_id = db.resolve_or_create_customer(db_conn, owner_name, type="CLIENTE")
-    return db.create_ownership_card(db_conn, owner_id, transit_license=license_, plate_number=plate)
+    owner_id = customers_repository.resolve_or_create_customer(db_conn, owner_name, type="CLIENTE")
+    return customers_repository.create_ownership_card(db_conn, owner_id, transit_license=license_, plate_number=plate)
 
 
 def _luis():
@@ -387,7 +388,7 @@ class TestDetail:
         assert "DUENO DOS" in html and "LIC-002" in html
 
     def test_customer_type_mismatch_shows_existing_type(self, authenticated_client, db_conn):
-        db.resolve_or_create_customer(db_conn, "MARIA LOPEZ", type="EMPRESA")
+        customers_repository.resolve_or_create_customer(db_conn, "MARIA LOPEZ", type="EMPRESA")
         declaration_id = _submit(db_conn)
         (row,) = _cards_of(db_conn, declaration_id)
         assert row.review_flags == [decl.CUSTOMER_TYPE_MISMATCH]
@@ -396,7 +397,7 @@ class TestDetail:
         assert "EMPRESA" in html and "se esperaba CLIENTE" in html
 
     def test_gestor_type_mismatch_is_labelled_on_every_card(self, authenticated_client, db_conn):
-        db.resolve_or_create_customer(db_conn, "GESTORIA SUR", type="CLIENTE")
+        customers_repository.resolve_or_create_customer(db_conn, "GESTORIA SUR", type="CLIENTE")
         cards = [_gcard("ABC123", "L1"), _gcard("DEF456", "L2", owner=_luis())]
         declaration_id = _submit(db_conn, _gestor_input(cards=cards))
         html = authenticated_client.get(_detail(declaration_id)).data.decode()
@@ -414,7 +415,7 @@ class TestDetail:
         assert "Retenida por 1 de 2 tarjetas" in html
 
     def test_customer_document_mismatch_shows_both_documents(self, authenticated_client, db_conn):
-        db.resolve_or_create_customer(db_conn, "MARIA LOPEZ", type="CLIENTE", document_number="777888999")
+        customers_repository.resolve_or_create_customer(db_conn, "MARIA LOPEZ", type="CLIENTE", document_number="777888999")
         declaration_id = _submit(db_conn)
         (row,) = _cards_of(db_conn, declaration_id)
         assert row.review_flags == [decl.CUSTOMER_DOCUMENT_MISMATCH]
@@ -752,12 +753,12 @@ class TestApprove:
     def test_unflagged_declaration_is_approved_end_to_end(self, request, db_conn, client_fixture):
         client = request.getfixturevalue(client_fixture)
         declaration_id = _unflagged_pending(db_conn)
-        assert db.get_customer_by_name(db_conn, "MARIA LOPEZ") is None      # nothing created yet
+        assert customers_repository.get_customer_by_name(db_conn, "MARIA LOPEZ") is None      # nothing created yet
         assert _count(db_conn, "ownership_cards") == 0
         resp = client.post(f"{_detail(declaration_id)}/approve", data={"note": ""})
         assert resp.status_code == 302 and resp.headers["Location"].endswith(_detail(declaration_id))
         assert _status(db_conn, declaration_id) == "approved"
-        assert db.get_customer_by_name(db_conn, "MARIA LOPEZ") is not None
+        assert customers_repository.get_customer_by_name(db_conn, "MARIA LOPEZ") is not None
         (row,) = _cards_of(db_conn, declaration_id)
         assert row.customer_id is not None and row.ownership_card_id is not None
         html = client.get(_detail(declaration_id)).data.decode()
@@ -767,7 +768,7 @@ class TestApprove:
     def test_approval_error_on_an_unflagged_declaration_is_shown_in_spanish(self, authenticated_client, db_conn):
         declaration_id = _unflagged_pending(db_conn)
         # Created after the submission: approve_declaration re-checks the customer's type.
-        db.resolve_or_create_customer(db_conn, "MARIA LOPEZ", type="EMPRESA")
+        customers_repository.resolve_or_create_customer(db_conn, "MARIA LOPEZ", type="EMPRESA")
         resp = authenticated_client.post(f"{_detail(declaration_id)}/approve", data={})
         assert resp.status_code == 400
         html = resp.data.decode()
@@ -786,7 +787,7 @@ class TestApprove:
         assert _status(db_conn, declaration_id) == "approved"
         (row,) = _cards_of(db_conn, declaration_id)
         assert row.ownership_card_id is not None
-        card = db.get_ownership_card(db_conn, row.ownership_card_id)
+        card = customers_repository.get_ownership_card(db_conn, row.ownership_card_id)
         assert card is not None and card.customer_id == row.customer_id
 
     def test_approves_every_card_of_a_multi_card_declaration(self, authenticated_client, db_conn):
@@ -799,15 +800,15 @@ class TestApprove:
         assert _status(db_conn, declaration_id) == "approved"
         done = _cards_of(db_conn, declaration_id)
         assert all(r.customer_id and r.ownership_card_id for r in done)
-        moved = db.get_ownership_card(db_conn, done[1].ownership_card_id)
+        moved = customers_repository.get_ownership_card(db_conn, done[1].ownership_card_id)
         assert moved is not None and moved.customer_id == done[1].customer_id
-        assert db.get_customer(db_conn, done[1].customer_id).name == "LUIS PEREZ"  # type: ignore[union-attr]
+        assert customers_repository.get_customer(db_conn, done[1].customer_id).name == "LUIS PEREZ"  # type: ignore[union-attr]
         record = db.get_declaration(db_conn, declaration_id)
         assert record is not None and record.gestor_id is not None
 
     def test_without_the_card_checkbox_nothing_is_approved_all_or_nothing(self, authenticated_client, db_conn):
         declaration_id = _three_cards_one_flagged(db_conn)
-        before = db.get_ownership_card_by_transit_license(db_conn, "L2")
+        before = customers_repository.get_ownership_card_by_transit_license(db_conn, "L2")
         customers_before = _count(db_conn, "customers")
         resp = authenticated_client.post(f"{_detail(declaration_id)}/approve", data={})
         assert resp.status_code == 400
@@ -816,9 +817,9 @@ class TestApprove:
         assert "ya existe a nombre de otro cliente" in html
         assert 'class="error"' in html
         assert _status(db_conn, declaration_id) == "pending_review"
-        assert db.get_ownership_card_by_transit_license(db_conn, "L2") == before
-        assert db.get_ownership_card_by_transit_license(db_conn, "L1") is None   # card 1 NOT created
-        assert db.get_customer_by_name(db_conn, "GESTORIA SUR") is None
+        assert customers_repository.get_ownership_card_by_transit_license(db_conn, "L2") == before
+        assert customers_repository.get_ownership_card_by_transit_license(db_conn, "L1") is None   # card 1 NOT created
+        assert customers_repository.get_customer_by_name(db_conn, "GESTORIA SUR") is None
         assert all(r.customer_id is None for r in _cards_of(db_conn, declaration_id))
         assert _count(db_conn, "customers") == customers_before
         assert _count(db_conn, "ownership_cards") == 1
@@ -889,8 +890,8 @@ class TestReject:
         assert record.status == "rejected" and record.review_note == "datos falsos"
         assert record.gestor_id is None
         assert all(r.customer_id is None and r.ownership_card_id is None for r in _cards_of(db_conn, declaration_id))
-        assert db.get_customer_by_name(db_conn, "GESTORIA SUR") is None
-        assert db.get_customer_by_name(db_conn, "LUIS PEREZ") is None
+        assert customers_repository.get_customer_by_name(db_conn, "GESTORIA SUR") is None
+        assert customers_repository.get_customer_by_name(db_conn, "LUIS PEREZ") is None
 
     def test_rejected_detail_shows_the_note(self, authenticated_client, db_conn):
         declaration_id = _pending_recent(db_conn)
@@ -1088,7 +1089,7 @@ class TestRoles:
         assert record is not None and record.status == "approved"
         pos_user = repository.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
         assert pos_user is not None and record.reviewed_by == pos_user.id
-        card = db.get_ownership_card(db_conn, _cards_of(db_conn, pending_id)[1].ownership_card_id)
+        card = customers_repository.get_ownership_card(db_conn, _cards_of(db_conn, pending_id)[1].ownership_card_id)
         assert card is not None and card.customer_id == _cards_of(db_conn, pending_id)[1].customer_id
 
     def test_point_of_sale_rejects_and_is_recorded_as_reviewer(self, punto_venta_client, db_conn):

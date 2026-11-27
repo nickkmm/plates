@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.core import db
+from app.pricing import repository as pricing_repository
 from app.shared.normalize import PLATE_TYPES
 
 PRECIOS_URL = "/precios"
@@ -45,7 +45,7 @@ class TestPreciosAdmin:
         )
         assert resp.status_code == 302
 
-        rows = db.price_list(db_conn)
+        rows = pricing_repository.price_list(db_conn)
         by_type = {r.plate_type: r for r in rows}
         row = by_type["CARRO PARTICULAR"]
         assert row.unit_price == Decimal("95000")
@@ -62,10 +62,10 @@ class TestPreciosAdmin:
         self, authenticated_client, db_conn
     ):
         authenticated_client.post(_price_update_url("MOTO PARTICULAR"), data={"unit_price": "50000"})
-        first = db.current_prices(db_conn)["MOTO PARTICULAR"]
+        first = pricing_repository.current_prices(db_conn)["MOTO PARTICULAR"]
 
         authenticated_client.post(_price_update_url("MOTO PARTICULAR"), data={"unit_price": "60000"})
-        second = db.current_prices(db_conn)["MOTO PARTICULAR"]
+        second = pricing_repository.current_prices(db_conn)["MOTO PARTICULAR"]
 
         assert first == Decimal("50000")
         assert second == Decimal("60000")
@@ -79,25 +79,25 @@ class TestPreciosValidation:
         resp = authenticated_client.post(_price_update_url("REMOLQUE"), data={"unit_price": ""})
         assert resp.status_code == 400
         assert "no puede estar vacío" in resp.data.decode()
-        assert "REMOLQUE" not in db.current_prices(db_conn)
+        assert "REMOLQUE" not in pricing_repository.current_prices(db_conn)
 
     def test_negative_price_is_rejected(self, authenticated_client, db_conn):
         resp = authenticated_client.post(_price_update_url("REMOLQUE"), data={"unit_price": "-100"})
         assert resp.status_code == 400
         assert "mayor que cero" in resp.data.decode()
-        assert "REMOLQUE" not in db.current_prices(db_conn)
+        assert "REMOLQUE" not in pricing_repository.current_prices(db_conn)
 
     def test_zero_price_is_rejected(self, authenticated_client, db_conn):
         resp = authenticated_client.post(_price_update_url("REMOLQUE"), data={"unit_price": "0"})
         assert resp.status_code == 400
         assert "mayor que cero" in resp.data.decode()
-        assert "REMOLQUE" not in db.current_prices(db_conn)
+        assert "REMOLQUE" not in pricing_repository.current_prices(db_conn)
 
     def test_non_numeric_price_is_rejected(self, authenticated_client, db_conn):
         resp = authenticated_client.post(_price_update_url("REMOLQUE"), data={"unit_price": "abc"})
         assert resp.status_code == 400
         assert "no es un precio válido" in resp.data.decode()
-        assert "REMOLQUE" not in db.current_prices(db_conn)
+        assert "REMOLQUE" not in pricing_repository.current_prices(db_conn)
 
     def test_invalid_plate_type_in_url_is_rejected_not_500(self, authenticated_client, db_conn):
         """set_price() re-validates plate_type against normalize.PLATE_TYPES
@@ -128,11 +128,11 @@ class TestPreciosForbidden:
     def test_post_is_forbidden_for_point_of_sale(self, punto_venta_client, db_conn):
         resp = punto_venta_client.post(_price_update_url("CARRO PARTICULAR"), data={"unit_price": "1000"})
         assert resp.status_code == 403
-        assert "CARRO PARTICULAR" not in db.current_prices(db_conn)
+        assert "CARRO PARTICULAR" not in pricing_repository.current_prices(db_conn)
 
     def test_forbidden_clients_never_reach_the_db(self, produccion_client, db_conn):
         """A 403 from the decorator must short-circuit before set_price() runs
         -- confirm the table stays empty, not just that the response code is
         right."""
         produccion_client.post(_price_update_url("CARRO PARTICULAR"), data={"unit_price": "1000"})
-        assert db.current_prices(db_conn) == {}
+        assert pricing_repository.current_prices(db_conn) == {}

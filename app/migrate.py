@@ -22,6 +22,7 @@ from pydantic import ValidationError
 
 from app.core import db
 from app.core.ingestion import is_alistado, process_rows
+from app.inventory import repository as inventory_repository
 from app.shared.models import ExtractedRow
 from app.shared.normalize import clean_plate
 
@@ -245,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
         # blank_preparations rows committed with no matching plates).
         with db.get_conn() as conn:
             for d, category, qty, by in RECONCILED_ALISTAMIENTO:
-                db.insert_blank_preparation(
+                inventory_repository.insert_blank_preparation(
                     conn, prep_date=date.fromisoformat(d), category=category,
                     quantity=qty, prepared_by=by,
                 )

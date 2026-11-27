@@ -10,6 +10,9 @@ from app.core import db
 from app.core.ingestion import find_duplicate_plate_numbers
 from app.core.pdf_extract import PdfExtractError
 from app.core.pedido_upload import parse_uploaded_pedido
+from app.customers import repository as customers_repository
+from app.inventory import repository as inventory_repository
+from app.pricing import repository as pricing_repository
 from app.shared.models import ExtractedRow
 from app.shared.normalize import (
     PAYMENT_METHODS,
@@ -144,7 +147,7 @@ def record_detail(order_id):
     with db.get_conn() as conn:
         order, plates = db.order_detail(conn, order_id)
         requesters, cities = _options(conn)
-        prices = {pt: str(price) for pt, price in db.current_prices(conn).items()}
+        prices = {pt: str(price) for pt, price in pricing_repository.current_prices(conn).items()}
         production_status = db.get_production_status(conn, order_id)
     if not order:
         return redirect(url_for("records.records"))
@@ -162,7 +165,7 @@ def _record_detail_error(order_id: int, error: str):
     with db.get_conn() as conn:
         order, plates = db.order_detail(conn, order_id)
         requesters, cities = _options(conn)
-        prices = {pt: str(price) for pt, price in db.current_prices(conn).items()}
+        prices = {pt: str(price) for pt, price in pricing_repository.current_prices(conn).items()}
         production_status = db.get_production_status(conn, order_id)
     return render_template("record_detail.html", order=order, plates=plates,
                            cities=cities, requesters=requesters, categories=FORM_PLATE_TYPES,
@@ -182,7 +185,7 @@ def record_save(order_id):
     /ingest's "Guardar orden" rather than a separate save per row.
 
     Fase 3: the customer this order points to is re-resolved from
-    `requested_by` on every save (db.resolve_or_create_customer, name only)
+    `requested_by` on every save (customers_repository.resolve_or_create_customer, name only)
     -- per the plan's B5, this may only change WHICH customer the order
     points to, never rewrite an existing customer's own stored attributes
     (type/document/phone/etc; that's out of scope here, on purpose -- see
@@ -205,7 +208,7 @@ def record_save(order_id):
             if not existing_order:
                 return redirect(url_for("records.records"))
 
-            customer_id = db.resolve_or_create_customer(conn, requested_by)
+            customer_id = customers_repository.resolve_or_create_customer(conn, requested_by)
             db.update_order(conn, order_id, order_number=order_number,
                             order_date=order_date, requested_by=requested_by,
                             customer_id=customer_id, **order_level_fields)
@@ -219,7 +222,7 @@ def record_save(order_id):
             # fallback for a brand-new row left without an explicit price
             # (mirrors app.core.ingestion._snapshot_unit_price; an edited
             # EXISTING plate never consults this at all, see update_plate_full).
-            prices = db.current_prices(conn)
+            prices = pricing_repository.current_prices(conn)
 
             for plate_id, row in edits:
                 normalized = normalize_row(row)
@@ -246,7 +249,7 @@ def record_save(order_id):
                     is_dup = normalized.plate_number in find_duplicate_plate_numbers(conn, [row])
                     db.insert_plate(conn, order_id=order_id, row=normalized, is_possible_duplicate=is_dup)
 
-            db.recalc_inventory(conn)
+            inventory_repository.recalc_inventory(conn)
             conn.commit()
     except Exception as e:
         return _record_detail_error(order_id, f"Error: {e}")
@@ -302,6 +305,6 @@ def records_search_pdf():
 def records_delete():
     with db.get_conn() as conn:
         db.delete_order(conn, int(request.form["order_id"]))
-        db.recalc_inventory(conn)  # removing plates changes consumed/waste
+        inventory_repository.recalc_inventory(conn)  # removing plates changes consumed/waste
         conn.commit()
     return redirect(url_for("records.records"))

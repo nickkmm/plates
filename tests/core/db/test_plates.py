@@ -18,6 +18,8 @@ import pytest
 from psycopg.rows import tuple_row
 
 from app.core import db
+from app.customers import repository as customers_repository
+from app.pricing import repository as pricing_repository
 from tests.core.db._helpers import _insert_order, _insert_plate_get_id, make_row
 
 
@@ -289,7 +291,7 @@ class TestUpdatePlate:
         is left exactly as it was, no matter what else changes."""
         order_id = _insert_order(db_conn, order_number="1202", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("999999"), "admin")  # must NOT be used
+        pricing_repository.set_price(db_conn, "CARRO PARTICULAR", Decimal("999999"), "admin")  # must NOT be used
         plate_id = _insert_plate_get_id(db_conn, order_id, plate_type="CARRO PARTICULAR",
                                          unit_price=Decimal("150000"), quantity=1)
 
@@ -305,7 +307,7 @@ class TestUpdatePlate:
         CURRENT tariff for the NEW type, discarding the old unit_price."""
         order_id = _insert_order(db_conn, order_number="1203", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
+        pricing_repository.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
         plate_id = _insert_plate_get_id(db_conn, order_id, plate_type="CARRO PARTICULAR",
                                          unit_price=Decimal("150000"))
 
@@ -396,7 +398,7 @@ class TestUpdatePlateFull:
     def test_unchanged_plate_type_leaves_unit_price_untouched_even_if_quantity_changes(self, db_conn):
         order_id = _insert_order(db_conn, order_number="1213", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("999999"), "admin")  # must NOT be used
+        pricing_repository.set_price(db_conn, "CARRO PARTICULAR", Decimal("999999"), "admin")  # must NOT be used
         plate_id = _insert_plate_get_id(db_conn, order_id, plate_type="CARRO PARTICULAR",
                                          unit_price=Decimal("150000"), quantity=1)
 
@@ -413,7 +415,7 @@ class TestUpdatePlateFull:
     def test_changed_plate_type_resnapshots_the_new_types_current_tariff(self, db_conn):
         order_id = _insert_order(db_conn, order_number="1214", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
+        pricing_repository.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
         plate_id = _insert_plate_get_id(db_conn, order_id, plate_type="CARRO PARTICULAR",
                                          unit_price=Decimal("150000"))
 
@@ -627,7 +629,7 @@ class TestLastFabricationDate:
 
 def _order_for_customer_type(db_conn, customer_type, *, name="DUENO UNO", order_number="900"):
     """An order whose customer has `customer_type` (None = not classified)."""
-    customer_id = db.resolve_or_create_customer(db_conn, name)
+    customer_id = customers_repository.resolve_or_create_customer(db_conn, name)
     with db_conn.cursor() as cur:
         cur.execute("UPDATE customers SET type = %s WHERE id = %s", (customer_type, customer_id))
     return db.insert_order(
@@ -638,8 +640,8 @@ def _order_for_customer_type(db_conn, customer_type, *, name="DUENO UNO", order_
 
 
 def _make_card(db_conn, plate="ABC123", license_="LIC-1", name="TITULAR"):
-    owner = db.resolve_or_create_customer(db_conn, name)
-    return db.create_ownership_card(db_conn, owner, transit_license=license_, plate_number=plate)
+    owner = customers_repository.resolve_or_create_customer(db_conn, name)
+    return customers_repository.create_ownership_card(db_conn, owner, transit_license=license_, plate_number=plate)
 
 
 def _card_link(db_conn, plate_id):
@@ -738,7 +740,7 @@ class TestPlateOwnershipCardLink:
         order_id = _order_for_customer_type(db_conn, "CLIENTE")
         plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="ABC123")
         assert _card_link(db_conn, plate_id) is not None
-        empresa = db.resolve_or_create_customer(db_conn, "UNA EMPRESA")
+        empresa = customers_repository.resolve_or_create_customer(db_conn, "UNA EMPRESA")
         with db_conn.cursor() as cur:
             cur.execute("UPDATE customers SET type = 'EMPRESA' WHERE id = %s", (empresa,))
         db.update_order(db_conn, order_id, order_number="900", order_date=date(2026, 1, 1),
@@ -750,8 +752,8 @@ class TestPlateOwnershipCardLink:
         order_id = _order_for_customer_type(db_conn, "EMPRESA", name="EMP")
         plate_id = _insert_plate_get_id(db_conn, order_id, plate_number="ABC123")
         assert _card_link(db_conn, plate_id) is None
-        customer = db.get_customer_by_name(db_conn, "EMP")
-        db.update_customer(
+        customer = customers_repository.get_customer_by_name(db_conn, "EMP")
+        customers_repository.update_customer(
             db_conn, customer.id, name="EMP", type="CLIENTE", document_type=None,
             document_number=None, document_relation=None, phone=None, email=None,
             address=None, neighborhood=None, municipality=None,
@@ -766,5 +768,5 @@ class TestPlateOwnershipCardLink:
 
     def test_resolve_card_id_for_plate_is_case_and_space_insensitive(self, db_conn):
         card_id = _make_card(db_conn)
-        assert db.resolve_card_id_for_plate(db_conn, " abc 123 ", "CLIENTE") == card_id
-        assert db.resolve_card_id_for_plate(db_conn, "ABC123", "EMPRESA") is None
+        assert customers_repository.resolve_card_id_for_plate(db_conn, " abc 123 ", "CLIENTE") == card_id
+        assert customers_repository.resolve_card_id_for_plate(db_conn, "ABC123", "EMPRESA") is None
