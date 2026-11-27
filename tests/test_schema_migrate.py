@@ -36,8 +36,8 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from app import schema_migrate
+from app.auth.permissions import PERMISSIONS
 from app.core import db
-from app.core.permissions import PERMISSIONS
 from app.shared.models import ExtractedRow
 from app.shared.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
 

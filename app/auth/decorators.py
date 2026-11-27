@@ -41,8 +41,9 @@ from urllib.parse import urlparse
 from flask import abort, g, redirect, request, session, url_for
 from werkzeug.security import check_password_hash
 
-from app.core import db, permissions
-from app.core.db.users import UserRecord
+from app.auth import permissions, repository
+from app.auth.repository import UserRecord
+from app.shared import db
 from app.web.navigation import NAV_ITEMS
 
 ROLE_ADMIN = "admin"
@@ -113,7 +114,7 @@ def authenticate(username: str, password: str) -> UserRecord | None:
     conn-passing contract.
     """
     with db.get_conn() as conn:
-        user = db.get_user_by_username(conn, username)
+        user = repository.get_user_by_username(conn, username)
     if user is None or not user.active:
         return None
     if not check_password_hash(user.password_hash, password):
@@ -183,10 +184,10 @@ def current_user() -> UserRecord | None:
         user_id = session.get("user_id")
         if user_id is not None:
             with db.get_conn() as conn:
-                user = db.get_user_by_id(conn, user_id)
+                user = repository.get_user_by_id(conn, user_id)
                 if user is not None:
                     perms = permissions.effective_permissions(
-                        user.roles, db.get_user_permissions(conn, user.id)
+                        user.roles, repository.get_user_permissions(conn, user.id)
                     )
         g._current_user_loaded = True
         g.current_user = user

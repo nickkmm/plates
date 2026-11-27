@@ -26,6 +26,7 @@ from pathlib import Path
 import psycopg.errors
 import pytest
 
+from app.auth import repository
 from app.core import db
 from app.core.declarations import MAX_CARDS, DeclarationInput, SubmitResult, approve_declaration
 from app.web import antispam
@@ -694,7 +695,7 @@ def _only_declaration_id(db_conn) -> int:
 
 def _approve(db_conn, declaration_id: int) -> None:
     """What the point of sale does from the review screen (through the core)."""
-    user = db.get_user_by_username(db_conn, TEST_USERNAME)
+    user = repository.get_user_by_username(db_conn, TEST_USERNAME)
     assert user is not None
     approve_declaration(db_conn, declaration_id, user.id)
 

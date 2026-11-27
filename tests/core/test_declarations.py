@@ -19,6 +19,7 @@ from datetime import date
 
 import pytest
 
+from app.auth import repository
 from app.core import db
 from app.core import declarations as decl
 from app.core.declarations import DeclarationInput, OwnershipCardInput, PersonInput
@@ -78,7 +79,7 @@ def _gestor_input(**kw) -> DeclarationInput:
 
 
 def _reviewer_id(db_conn) -> int:
-    user = db.get_user_by_username(db_conn, TEST_USERNAME)
+    user = repository.get_user_by_username(db_conn, TEST_USERNAME)
     assert user is not None
     return user.id
 

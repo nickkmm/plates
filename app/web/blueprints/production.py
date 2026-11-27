@@ -28,6 +28,7 @@ from typing import Any
 
 from flask import Blueprint, abort, current_app, redirect, render_template, request, session, url_for
 
+from app.auth.decorators import has_permission, permission_required
 from app.core import db
 from app.core.db.declarations import REASON_LOSS
 from app.core.db.production import (
@@ -39,7 +40,6 @@ from app.core.db.production import (
 from app.core.production import advance_order, revert_order
 from app.shared.normalize import inventory_category
 from app.shared.uploads import send_stored_file
-from app.web.auth import has_permission, permission_required
 from app.web.blueprints.declarations import CARD_PHOTO_SIDES, FILE_KINDS
 
 bp = Blueprint("production", __name__)

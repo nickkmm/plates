@@ -41,6 +41,7 @@ from datetime import date, datetime
 
 import pytest
 
+from app.auth import repository
 from app.core import db
 from app.core import declarations as decl
 from app.shared.models import ExtractedRow
@@ -1085,7 +1086,7 @@ class TestRoles:
         assert resp.status_code == 302
         record = db.get_declaration(db_conn, pending_id)
         assert record is not None and record.status == "approved"
-        pos_user = db.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
+        pos_user = repository.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
         assert pos_user is not None and record.reviewed_by == pos_user.id
         card = db.get_ownership_card(db_conn, _cards_of(db_conn, pending_id)[1].ownership_card_id)
         assert card is not None and card.customer_id == _cards_of(db_conn, pending_id)[1].customer_id
@@ -1096,14 +1097,14 @@ class TestRoles:
         assert resp.status_code == 302
         record = db.get_declaration(db_conn, pending_id)
         assert record is not None and record.status == "rejected"
-        pos_user = db.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
+        pos_user = repository.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
         assert pos_user is not None and record.reviewed_by == pos_user.id
 
     def test_point_of_sale_marks_notarized_received_and_undoes_it(self, punto_venta_client, db_conn, declaration_id):
         resp = punto_venta_client.post(f"{_detail(declaration_id)}/notarized")
         assert resp.status_code == 302
         record = db.get_declaration(db_conn, declaration_id)
-        pos_user = db.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
+        pos_user = repository.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
         assert record is not None and pos_user is not None
         assert record.notarized_received_at is not None and record.notarized_received_by == pos_user.id
         assert punto_venta_client.post(f"{_detail(declaration_id)}/notarized/undo").status_code == 302
@@ -1397,7 +1398,7 @@ class TestNotarizedActions:
         resp = authenticated_client.post(f"{_detail(declaration_id)}/notarized")
         assert resp.status_code == 302 and resp.headers["Location"].endswith(_detail(declaration_id))
         record = _record(db_conn, declaration_id)
-        user = db.get_user_by_username(db_conn, TEST_USERNAME)
+        user = repository.get_user_by_username(db_conn, TEST_USERNAME)
         assert user is not None
         assert record.notarized_received_at is not None and record.notarized_received_by == user.id
 

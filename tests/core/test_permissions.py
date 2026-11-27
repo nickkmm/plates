@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.core.permissions import ADMIN_ROLE, PERMISSION_CODES, PERMISSIONS, effective_permissions
+from app.auth.permissions import ADMIN_ROLE, PERMISSION_CODES, PERMISSIONS, effective_permissions
 
 _ISSUE_ORDER = [
     "orders.capture",

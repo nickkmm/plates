@@ -6,7 +6,7 @@ The contract under test:
   and point_of_sale get 403 and change nothing.
 - Creating a user, changing their roles or active flag and resetting their
   password apply on that user's next request / login.
-- Every validation rule of app/core/user_admin.py re-renders the form with
+- Every validation rule of app/core/service.py re-renders the form with
   status 400 and its message, and writes nothing.
 - The list never shows a password hash or an internal role name, and the log
   lines never carry a password or a hash.
@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 import pytest
 from werkzeug.security import generate_password_hash
 
-from app.core import db, user_admin
+from app.auth import repository, service
 from app.web.app import app as flask_app
 from tests.conftest import PRODUCCION_PASSWORD, PRODUCCION_USERNAME, TEST_PASSWORD, TEST_USERNAME
 
@@ -30,14 +30,14 @@ NEW_PASSWORD = "nuevaclave123"
 
 
 def _user(conn, username):
-    user = db.get_user_by_username(conn, username)
+    user = repository.get_user_by_username(conn, username)
     assert user is not None
     return user
 
 
 def _snapshot(conn):
     """(username, roles, active) of every user, to assert nothing changed."""
-    return [(u.username, u.roles, u.active) for u in db.list_users(conn)]
+    return [(u.username, u.roles, u.active) for u in repository.list_users(conn)]
 
 
 @pytest.fixture(autouse=True)
@@ -119,8 +119,8 @@ class TestCreateValidation:
     @pytest.mark.parametrize(
         ("overrides", "message"),
         [
-            ({"username": "ab"}, user_admin.MSG_BAD_USERNAME),
-            ({"username": "a b c"}, user_admin.MSG_BAD_USERNAME),
+            ({"username": "ab"}, service.MSG_BAD_USERNAME),
+            ({"username": "a b c"}, service.MSG_BAD_USERNAME),
             ({"username": "testuser"}, "Ese usuario ya existe."),
             ({"password": "123456789", "password_confirm": "123456789"},
              "La contraseña debe tener al menos 10 caracteres."),
@@ -246,8 +246,8 @@ class TestEditValidation:
         assert 'value="admin" checked' not in html
 
     def test_last_active_admin(self, client, db_conn):
-        db.create_role(db_conn, name="user_manager", label="Gestor de usuarios", permissions=["users.manage"])
-        db.create_user(
+        repository.create_role(db_conn, name="user_manager", label="Gestor de usuarios", permissions=["users.manage"])
+        repository.create_user(
             db_conn, username="gestor.usuarios", password_hash=generate_password_hash("gestorclave123"),
             roles=["user_manager"],
         )
@@ -259,7 +259,7 @@ class TestEditValidation:
         self._assert_rejected(client, db_conn, admin.id, {"roles": ["admin"]}, message)
         self._assert_rejected(client, db_conn, admin.id, {"roles": ["production"], "active": "1"}, message)
 
-        db.create_user(
+        repository.create_user(
             db_conn, username="otro.admin", password_hash=generate_password_hash("otroclave123"),
             roles=["admin"],
         )
@@ -332,7 +332,7 @@ class TestAccess:
         client = request.getfixturevalue(client_fixture)
         target = _user(db_conn, "testuser")
         before = _snapshot(db_conn)
-        hashes = [u.password_hash for u in db.list_users(db_conn)]
+        hashes = [u.password_hash for u in repository.list_users(db_conn)]
         assert client.get("/usuarios").status_code == 403
         assert client.get("/usuarios/nuevo").status_code == 403
         assert client.post("/usuarios/nuevo", data=_new_form()).status_code == 403
@@ -342,7 +342,7 @@ class TestAccess:
             f"/usuarios/{target.id}/password", data={"password": NEW_PASSWORD, "password_confirm": NEW_PASSWORD}
         ).status_code == 403
         assert _snapshot(db_conn) == before
-        assert [u.password_hash for u in db.list_users(db_conn)] == hashes
+        assert [u.password_hash for u in repository.list_users(db_conn)] == hashes
 
 
 class TestNav:
@@ -364,15 +364,15 @@ class TestNav:
 
 class TestList:
     def test_shows_labels_never_hashes_or_role_names(self, authenticated_client, db_conn):
-        db.create_user(db_conn, username="sin.roles", password_hash=generate_password_hash("x"), roles=[])
-        db.create_user(
+        repository.create_user(db_conn, username="sin.roles", password_hash=generate_password_hash("x"), roles=[])
+        repository.create_user(
             db_conn, username="inactivo", password_hash=generate_password_hash("x"), roles=["production"],
             active=False,
         )
         resp = authenticated_client.get("/usuarios")
         assert resp.status_code == 200
         html = resp.get_data(as_text=True)
-        for user in db.list_users(db_conn):
+        for user in repository.list_users(db_conn):
             assert user.username in html
             assert user.password_hash not in html
         assert "point_of_sale" not in html

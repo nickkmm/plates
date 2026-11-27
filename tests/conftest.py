@@ -399,7 +399,7 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
             # treated as a rollback, no error -- which is what let some
             # tests get away with never explicitly recovering from an
             # expected error (e.g. a UNIQUE violation from
-            # db.create_user()) under the old TRUNCATE design, where this
+            # repository.create_user()) under the old TRUNCATE design, where this
             # function's job was done by a real conn.commit()/rollback() at
             # the pool's own `with` exit. RELEASE SAVEPOINT has no such
             # exception -- it errors out on an aborted connection -- so that

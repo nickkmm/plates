@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
 
-from app.web import auth
+from app.auth import decorators as auth
 
 bp = Blueprint("auth_routes", __name__)
 

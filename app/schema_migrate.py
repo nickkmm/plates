@@ -52,9 +52,9 @@ from collections import defaultdict
 import psycopg
 from psycopg.rows import DictRow
 
+from app.auth.decorators import ROLE_ADMIN, load_roles, load_users
 from app.core import db
 from app.shared.normalize import normalize_requested_by
-from app.web.auth import ROLE_ADMIN, load_roles, load_users
 
 _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
 

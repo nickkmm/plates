@@ -23,8 +23,8 @@ import flask
 import pytest
 from werkzeug.security import generate_password_hash
 
-from app.core import db
-from app.web import auth
+from app.auth import decorators as auth
+from app.auth import repository
 
 # --------------------------------------------------------------------------
 # load_users -- ONLY used by app.schema_migrate.backfill_users now
@@ -136,7 +136,7 @@ class TestAuthenticate:
     it (both run at the default READ COMMITTED isolation level)."""
 
     def test_correct_password_returns_the_user_record(self, db_conn):
-        db.create_user(
+        repository.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse"),
             roles=["admin"],
         )
@@ -147,7 +147,7 @@ class TestAuthenticate:
         assert user.roles == ["admin"]
 
     def test_wrong_password_returns_none(self, db_conn):
-        db.create_user(
+        repository.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse"),
             roles=["admin"],
         )
@@ -158,7 +158,7 @@ class TestAuthenticate:
         assert auth.authenticate("ghost", "whatever") is None
 
     def test_empty_password_returns_none(self, db_conn):
-        db.create_user(
+        repository.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse"),
             roles=["admin"],
         )
@@ -170,7 +170,7 @@ class TestAuthenticate:
         hash still checks out -- get_user_by_username deliberately returns
         inactive rows too (that's authenticate's job to filter, not the
         lookup's)."""
-        db.create_user(
+        repository.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse"),
             roles=["admin"], active=False,
         )
@@ -178,7 +178,7 @@ class TestAuthenticate:
         assert auth.authenticate("alice", "correct-horse") is None
 
     def test_returns_the_real_roles_not_a_default(self, db_conn):
-        db.create_user(
+        repository.create_user(
             db_conn, username="ptov", password_hash=generate_password_hash("pw"), roles=["point_of_sale"],
         )
         db_conn.commit()
@@ -192,7 +192,7 @@ class TestVerifyCredentials:
     same commit-before-checking requirement, see TestAuthenticate)."""
 
     def test_correct_password_is_true(self, db_conn):
-        db.create_user(
+        repository.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse-battery-staple"),
             roles=["admin"],
         )
@@ -200,7 +200,7 @@ class TestVerifyCredentials:
         assert auth.verify_credentials("alice", "correct-horse-battery-staple") is True
 
     def test_wrong_password_is_false(self, db_conn):
-        db.create_user(
+        repository.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse-battery-staple"),
             roles=["admin"],
         )
@@ -211,7 +211,7 @@ class TestVerifyCredentials:
         assert auth.verify_credentials("bob", "correct-horse-battery-staple") is False
 
     def test_empty_password_is_false(self, db_conn):
-        db.create_user(
+        repository.create_user(
             db_conn, username="alice", password_hash=generate_password_hash("correct-horse-battery-staple"),
             roles=["admin"],
         )
@@ -305,7 +305,7 @@ def guarded_client(guarded_app):
 def _log_in_as(client, conn, username):
     """Put a real `users` row into the client's session, the way POST /login
     does."""
-    user = db.get_user_by_username(conn, username)
+    user = repository.get_user_by_username(conn, username)
     assert user is not None
     with client.session_transaction() as sess:
         sess["user"] = user.username
@@ -322,7 +322,7 @@ class TestPermissionRequired:
     def test_session_without_role_is_accepted(self, guarded_client, db_conn):
         """The session stores `user` and `user_id` only; the roles come from
         the database on every request."""
-        user = db.get_user_by_username(db_conn, "puntoventauser")
+        user = repository.get_user_by_username(db_conn, "puntoventauser")
         assert user is not None
         with guarded_client.session_transaction() as sess:
             sess["user"] = user.username
@@ -362,7 +362,7 @@ class TestPermissionRequired:
 
     def test_inactive_user_redirects_to_login_and_clears_the_session(self, guarded_client, db_conn):
         user = _log_in_as(guarded_client, db_conn, "puntoventauser")
-        db.update_user(db_conn, user.id, active=False)
+        repository.update_user(db_conn, user.id, active=False)
         db_conn.commit()
         resp = guarded_client.get("/capture-only")
         assert resp.status_code == 302
@@ -373,7 +373,7 @@ class TestPermissionRequired:
     def test_role_change_applies_on_the_next_request(self, guarded_client, db_conn):
         user = _log_in_as(guarded_client, db_conn, "produccionuser")
         assert guarded_client.get("/capture-only").status_code == 403
-        db.set_user_roles(db_conn, user.id, ["point_of_sale"])
+        repository.set_user_roles(db_conn, user.id, ["point_of_sale"])
         db_conn.commit()
         assert guarded_client.get("/capture-only").status_code == 200
 
@@ -385,7 +385,7 @@ class TestAuthenticated:
         assert "/login" in resp.headers["Location"]
 
     def test_session_without_role_is_accepted(self, guarded_client, db_conn):
-        user = db.get_user_by_username(db_conn, "produccionuser")
+        user = repository.get_user_by_username(db_conn, "produccionuser")
         assert user is not None
         with guarded_client.session_transaction() as sess:
             sess["user"] = user.username
@@ -406,7 +406,7 @@ class TestAuthenticated:
 
     def test_inactive_user_redirects_to_login(self, guarded_client, db_conn):
         user = _log_in_as(guarded_client, db_conn, "produccionuser")
-        db.update_user(db_conn, user.id, active=False)
+        repository.update_user(db_conn, user.id, active=False)
         db_conn.commit()
         resp = guarded_client.get("/any-user")
         assert resp.status_code == 302

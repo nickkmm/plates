@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 import pytest
 from psycopg.rows import tuple_row
 
+from app.auth import repository
 from app.core import db
 from app.web.app import app as flask_app
 from tests.conftest import TEST_PASSWORD, TEST_USERNAME
@@ -285,11 +286,11 @@ class TestUsers:
         }
 
         _assert_csrf_rejected(staff.post("/usuarios/nuevo", data=data))
-        assert db.get_user_by_username(db_conn, "cajero.nuevo") is None
+        assert repository.get_user_by_username(db_conn, "cajero.nuevo") is None
 
         resp = staff.post("/usuarios/nuevo", data={**data, "csrf_token": _token(staff, "/usuarios/nuevo")})
         assert resp.status_code == 302
-        assert db.get_user_by_username(db_conn, "cajero.nuevo") is not None
+        assert repository.get_user_by_username(db_conn, "cajero.nuevo") is not None
 
 
 def _big_file(megabytes: int):

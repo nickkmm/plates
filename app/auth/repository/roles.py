@@ -22,7 +22,7 @@ from dataclasses import dataclass
 import psycopg
 from psycopg.rows import DictRow, class_row
 
-from app.core.permissions import PERMISSION_CODES
+from app.auth.permissions import PERMISSION_CODES
 
 
 @dataclass

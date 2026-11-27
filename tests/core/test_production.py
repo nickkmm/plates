@@ -9,6 +9,7 @@ from datetime import date
 import pytest
 from psycopg.rows import tuple_row
 
+from app.auth import repository
 from app.core import db
 from app.core.production import advance_order, next_status, previous_status, revert_order
 from app.shared.models import ExtractedRow
@@ -32,7 +33,7 @@ def _set_status(db_conn, order_id: int, status: str) -> None:
 
 
 def _user_id(db_conn, username: str) -> int:
-    user = db.get_user_by_username(db_conn, username)
+    user = repository.get_user_by_username(db_conn, username)
     assert user is not None
     return user.id
 
