@@ -79,7 +79,9 @@ for the walk-in, one-to-one customer.
 
 - "Enviados": every sent pedido with its state:
   *Por revisar* → *Recibido · pedido 4123* → *En producción* → *Listo* →
-  *Entregado*, or *Devuelto para corregir* with INGSE's comment.
+  *Entregado* (with who received the plates and when; the delivery is
+  signed on INGSE's tablet, see `MIGRATION_PLAN.md`, "Delivery
+  signature"), or *Devuelto para corregir* with INGSE's comment.
 - **Returned pedidos** are editable again (lines and payment method) and
   are resent with the same number. They are separate from the user's open
   pedido, so a returned pedido never mixes with plates added since.

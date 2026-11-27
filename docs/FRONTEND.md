@@ -199,6 +199,17 @@ Reference: Odoo Manufacturing kanban and Shop Floor, Square's order views.
   **Undo** (today: open the detail page, then advance).
 - Toggle to a **list view** for searching; filters by customer and
   delivery date; large-screen mode for a wall display in the workshop.
+- **Delivering requires the recipient's signature** (see
+  [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md), "Delivery signature").
+  *Entregar* opens a panel with the plates, *Nombre de quien recibe*,
+  *Documento* (optional) and a large signature box; *Confirmar entrega* is
+  enabled only with a name and a signature. Built tablet-first: the box is
+  at least 200px high and full width, uses pointer events (finger, stylus
+  and mouse) with `touch-action: none` so drawing never scrolls the page,
+  scales for high-density screens, and has *Borrar firma*. One
+  `<SignaturePad>` component (in `components/`, presentational, exports a
+  PNG) is shared by the board, the order panel and the point of sale. The
+  toast after delivering offers *Deshacer*, which voids the delivery.
 
 ### Orders (`/records` today)
 

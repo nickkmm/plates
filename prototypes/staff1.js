@@ -69,7 +69,7 @@ function orderPanel(id){
   sheet('Pedido '+o.n, '<div class="row wrap" style="margin-bottom:16px">'+statusBadge(o.status)+dueBadge(o.due)+'<span class="badge plain">'+o.src+'</span></div>'+
    '<dl class="dl"><dt>Cliente</dt><dd><b>'+o.cust+'</b></dd><dt>Fecha</dt><dd>'+o.date+'</dd><dt>Forma de pago</dt><dd>'+o.pay+'</dd><dt>Comprobante</dt><dd>FACTURA FV-3-1882</dd><dt>Total</dt><dd><b>'+cop(o.total)+'</b></dd></dl>'+
    '<div class="divider"></div><h3 style="margin-bottom:8px">Placas</h3><div class="table-wrap"><table class="dt"><thead><tr><th>Placa</th><th>Tipo</th><th class="num">Cant.</th><th class="num">Valor</th></tr></thead><tbody>'+o.plates.map(p=>'<tr><td>'+plate(p,o.type)+'</td><td>'+o.type+'</td><td class="num">'+(o.type.startsWith('CARRO')?2:1)+'</td><td class="num">'+cop(o.total/o.plates.length)+'</td></tr>').join('')+'</tbody></table></div>'+
-   '<div class="divider"></div><h3 style="margin-bottom:10px">Siigo</h3>'+siigoBlock(o)+'<div class="divider"></div><h3 style="margin-bottom:10px">Siigo</h3>'+siigoBlock(o)+'<div class="divider"></div><h3 style="margin-bottom:10px">Historial</h3><ul class="timeline"><li class="done">Creado por Laura Muñoz<div class="muted small">'+o.date+' · 9:12 a. m.</div></li><li class="'+(o.status!=='pending'?'done':'now')+'">En realización<div class="muted small">'+(o.status!=='pending'?'Andrés Gil · 10:40 a. m.':'Pendiente')+'</div></li><li class="'+(o.status==='ready'||o.status==='delivered'?'done':'')+'">Lista para entregar</li><li>Entregada</li></ul>',
+   '<div class="divider"></div>'+deliveryBlock(o)+'<h3 style="margin-bottom:10px">Siigo</h3>'+siigoBlock(o)+'<div class="divider"></div><h3 style="margin-bottom:10px">Historial</h3><ul class="timeline"><li class="done">Creado por Laura Muñoz<div class="muted small">'+o.date+' · 9:12 a. m.</div></li><li class="'+(o.status!=='pending'?'done':'now')+'">En realización<div class="muted small">'+(o.status!=='pending'?'Andrés Gil · 10:40 a. m.':'Pendiente')+'</div></li><li class="'+(o.status==='ready'||o.status==='delivered'?'done':'')+'">Lista para entregar</li><li>Entregada</li></ul>',
    '<button class="btn ghost" onclick="confirmDialog(\'¿Eliminar el pedido '+o.n+'?\',\'Se borran sus '+o.plates.length+' placas y se recalcula el inventario. No se puede deshacer.\',\'toast(&quot;Pedido eliminado&quot;)\',\'Eliminar pedido\')">'+ic('trash')+'Eliminar</button><span style="flex:1"></span><button class="btn ghost">Editar</button>', o.cust);
 }
 ROUTES['#/pedidos'] = () => shell('#/pedidos',
@@ -80,6 +80,46 @@ ROUTES['#/pedidos'] = () => shell('#/pedidos',
  D.orders.map(o=>'<tr onclick="orderPanel('+o.id+')"><td><b>'+o.n+'</b>'+(o.src==='Portal'?' <span class="badge yellow plain">Portal</span>':'')+'</td><td>'+o.date+'</td><td>'+o.cust+'</td><td><div class="row wrap" style="gap:4px">'+o.plates.slice(0,2).map(p=>plate(p,o.type)).join('')+(o.plates.length>2?'<span class="muted small">+'+(o.plates.length-2)+'</span>':'')+'</div></td><td>'+o.pay+'</td><td class="num">'+cop(o.total)+'</td><td>'+statusBadge(o.status)+'</td></tr>').join('')+
  '</tbody></table><div class="pager"><span>8 de 1.284 pedidos</span><span class="row"><button class="btn ghost sm">Anterior</button><button class="btn ghost sm">Siguiente</button></span></div></div>');
 
+// ---------- Delivery with signature ----------
+// Closing an order requires the recipient's signature, drawn on the tablet.
+function deliveryBlock(o){
+  if (o.status !== 'delivered') return '';
+  const sig = o.sig || {name:'CARLOS MEDINA', doc:'CC 16.789.432', when:'18/11/2026 4:12 p. m.', by:'Laura Muñoz'};
+  return '<h3 style="margin-bottom:10px">Entrega</h3><div class="grid g2" style="align-items:start"><dl class="dl"><dt>Recibió</dt><dd>'+sig.name+'</dd><dt>Documento</dt><dd>'+sig.doc+'</dd><dt>Fecha</dt><dd>'+sig.when+'</dd><dt>Entregó</dt><dd>'+sig.by+'</dd></dl>'+
+    '<figure class="sig-view">'+(sig.img?'<img src="'+sig.img+'" alt="Firma de '+sig.name+'">':'<svg viewBox="0 0 300 110" aria-label="Firma de '+sig.name+'"><path d="M20 80 C40 20, 60 20, 70 70 S100 100, 120 50 S150 10, 165 70 S200 90, 215 45 S250 40, 280 65" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>')+'<figcaption class="muted small">Firma de quien recibe</figcaption></figure></div><div class="divider"></div>';
+}
+let sigDrawn = false;
+function deliverSheet(id){
+  const o = D.orders.find(x=>x.id===id); sigDrawn = false;
+  sheet('Entregar pedido '+o.n,
+   '<div class="row wrap" style="gap:4px">'+o.plates.map(p=>plate(p,o.type)).join('')+'<span class="muted small" style="margin-left:6px">'+o.cust+'</span></div>'+
+   '<div class="grid g2" style="margin-top:16px"><label class="field"><span>Nombre de quien recibe</span><input id="rcv-name" class="input" value="'+(o.decl?o.cust:'')+'" oninput="sigCheck()"></label><label class="field"><span>Documento</span><input id="rcv-doc" class="input" inputmode="numeric" placeholder="Opcional"></label></div>'+
+   '<div class="field" style="margin-top:12px"><span>Firma</span><div class="sig-pad"><canvas id="sig" aria-label="Recuadro para firmar"></canvas><span class="sig-line"></span><span class="sig-ph muted">Firma aquí con el dedo o el lápiz</span></div>'+
+   '<div class="row between" style="margin-top:6px"><span class="muted small">Al firmar, recibe las placas a satisfacción.</span><button class="btn ghost sm" onclick="sigClear()">Borrar firma</button></div></div>',
+   '<button class="btn ghost" onclick="closeOverlays()">Cancelar</button><button id="sig-ok" class="btn primary" disabled onclick="sigConfirm('+id+')">Confirmar entrega</button>');
+  sigInit();
+}
+function sigInit(){
+  const c = document.getElementById('sig'); if(!c) return;
+  const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio||1;
+  c.width = r.width*dpr; c.height = r.height*dpr;
+  const ctx = c.getContext('2d'); ctx.scale(dpr,dpr); ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--ink-900');
+  let down = false;
+  const pt = e => { const b = c.getBoundingClientRect(); return [e.clientX-b.left, e.clientY-b.top]; };
+  c.onpointerdown = e => { down = true; c.setPointerCapture(e.pointerId); const [x,y] = pt(e); ctx.beginPath(); ctx.moveTo(x,y); };
+  c.onpointermove = e => { if(!down) return; const [x,y] = pt(e); ctx.lineTo(x,y); ctx.stroke(); if(!sigDrawn){ sigDrawn = true; c.parentNode.classList.add('signed'); sigCheck(); } };
+  c.onpointerup = c.onpointercancel = () => { down = false; };
+}
+function sigClear(){ const c = document.getElementById('sig'); c.getContext('2d').clearRect(0,0,c.width,c.height); sigDrawn = false; c.parentNode.classList.remove('signed'); sigCheck(); }
+function sigCheck(){ const b = document.getElementById('sig-ok'); if(b) b.disabled = !(sigDrawn && document.getElementById('rcv-name').value.trim()); }
+function sigConfirm(id){
+  const o = D.orders.find(x=>x.id===id);
+  o.sig = {name: document.getElementById('rcv-name').value.trim().toUpperCase(), doc: document.getElementById('rcv-doc').value || '—', when:'Hoy, ahora', by:'Laura Muñoz', img: document.getElementById('sig').toDataURL('image/png')};
+  o.status = 'delivered'; closeOverlays(); render();
+  toast('Pedido '+o.n+' entregado a '+o.sig.name, ()=>{ o.status='ready'; delete o.sig; render(); });
+}
+
 // ---------- Production board ----------
 let boardView = 'board';
 function card(o){
@@ -88,6 +128,7 @@ function card(o){
 }
 function advance(id){
   const o = D.orders.find(x=>x.id===id), order = ['pending','in_progress','ready','delivered'], prev = o.status;
+  if (prev === 'ready') return deliverSheet(id);
   o.status = order[order.indexOf(prev)+1]; render();
   toast('Pedido '+o.n+' → '+D.statuses[o.status][0], ()=>{ o.status=prev; render(); });
 }

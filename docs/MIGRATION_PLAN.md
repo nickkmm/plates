@@ -98,7 +98,7 @@ end are.
 | orders | `POST /api/order-drafts` (upload a pedido PDF/Excel, returns the parsed draft, saves nothing) | `/ingest/pdf` |
 | orders | `POST /api/plate-lookups` (upload a pedido, returns which orders hold each plate, saves nothing) | `/records/search-pdf` |
 | orders | `GET /api/plates?possible_duplicate=true`, `PATCH /api/plates/{id}` (edit fields, or `{"is_possible_duplicate": false}` to resolve), `DELETE /api/plates/{id}` | `/review`, `/review/update`, `/review/resolve`, `/review/delete` |
-| production | `GET /api/production-orders?status=`, `GET /api/production-orders/{id}`, `POST /api/production-orders/{id}/events` (`{"type": "advance"}` or `{"type": "undo"}`, stored in `production_order_events`) | `/produccion`, `/produccion/<id>`, `/produccion/<id>/advance`, `/produccion/<id>/undo` |
+| production | `GET /api/production-orders?status=`, `GET /api/production-orders/{id}`, `POST /api/production-orders/{id}/events` (`{"type": "advance"}` or `{"type": "undo"}`, stored in `production_order_events`); `POST /api/production-orders/{id}/delivery` (multipart: recipient name, optional document, signature PNG; the only way to reach *Entregada*, see "Delivery signature"), `GET /api/production-orders/{id}/delivery/signature` | `/produccion`, `/produccion/<id>`, `/produccion/<id>/advance`, `/produccion/<id>/undo` |
 | cash_summary | `GET /api/cash-summary?from=&to=`, `GET /api/cash-summary/pdf?from=&to=` | `/cuadre`, `/cuadre/pdf` |
 | declarations | `GET /api/declarations`, `GET /api/declarations/{id}`, `PATCH /api/declarations/{id}` (`status`: approved/rejected; `notarized`: true/false) | `/declaraciones`, `/declaraciones/<id>`, `.../approve`, `.../reject`, `.../notarized`, `.../notarized/undo` |
 | declarations | `GET /api/declarations/{id}/pdf`, `GET /api/declarations/{id}/files/{kind}`, `GET /api/declarations/{id}/cards/{card_id}/photos/{side}`, `GET /api/declarations/{id}/photos.zip` | the matching `/declaraciones/...` and `/produccion/<id>/declarations/...` downloads (one endpoint; the permission check accepts production staff for a declaration linked to an order they can see) |
@@ -137,6 +137,39 @@ identity (colors and typography taken from https://www.ingse.co/) are in
 | `web/blueprints/cash_summary.py`, `core/cash_summary.py` | `cash_summary/` |
 | `web/blueprints/declarations.py`, `public_declaration.py`, `web/antispam.py`, `web/uploads.py`, `core/declarations.py`, `core/declaration_pdf.py`, `core/db/declarations.py` | `declarations/` |
 | `core/normalize.py`, `core/timezones.py`, `core/db/__init__.py` (connection pool) | `shared/` (customer- and plate-specific constants move to their domain) |
+
+## Delivery signature (new requirement)
+
+An order is closed (*Entregada*) only when the person who receives the
+plates signs. The order is opened on a tablet at the counter and the
+recipient signs on the screen with a finger or stylus.
+
+- **Flow:** *Entregar* (board card, order panel or point of sale) opens a
+  panel with the plates, *Nombre de quien recibe* (prefilled from the
+  order's `received_by` when it has one), *Documento* (optional) and a
+  signature box. *Confirmar entrega* stays disabled until there is a name
+  and a signature. The advance event `ready → delivered` is no longer
+  accepted without it: `POST /api/production-orders/{id}/events` with
+  `advance` from `ready` answers `409` and points to the delivery
+  endpoint.
+- **Data:** new table `order_deliveries`: `id`, `production_order_id`,
+  `received_by_name` (`TEXT NOT NULL`), `received_by_document` (nullable),
+  `signature_key` (the PNG in storage), `delivered_by` (user),
+  `delivered_at`, `voided_at`, `voided_by`; a partial unique index allows
+  one non-voided delivery per order. Undoing a delivery (the existing undo,
+  `delivered → ready`) voids the row instead of deleting it, and keeps the
+  signature file, so every signature ever given stays auditable.
+- **Storage:** the signature PNG goes through the same storage module as
+  declaration photos: the uploads directory until phase 5, the MinIO bucket
+  after it (phase 5 moves existing signatures with the rest).
+- **Where it shows:** the order panel (*Entrega*: who received, document,
+  date, who delivered, the signature), the customer portal (*Entregado*,
+  with who received and when), and the order's PDF when there is one.
+- **Orders delivered before this exists** have no signature; the panel
+  says *Entregado sin firma (antes de la firma digital)*.
+- **When:** built with the `production` domain in phase 4 (API, the
+  `order_deliveries` migration and the Next screens), so the point of
+  sale and the board share one delivery component.
 
 ## Coordination with the Siigo integration
 
@@ -210,7 +243,7 @@ Suggested order, simplest first:
 2. `pricing`
 3. `inventory`
 4. `auth` admin screens (users and roles)
-5. `production`
+5. `production`, including the delivery signature (see "Delivery signature")
 6. `orders` (point of sale, records, review): the largest and most critical.
    Same behavior as today; the Siigo changes come in phase 8.
 7. `cash_summary` (including the PDF download)
