@@ -1,7 +1,7 @@
 """Application-level authentication: DB-backed user store + access decorators.
 
 **Fase 2 change**: the live login flow (authenticate/verify_credentials
-below) now queries the `users` table (via app/core/db/users.py) instead of
+below) now queries the `users` table (via app/auth/repository/users.py) instead of
 reading AUTH_USERS/AUTH_ROLES env vars. Nobody's password changes: the Fase 1
 backfill (app.schema_migrate.backfill_users) already copied every
 AUTH_USERS/AUTH_ROLES entry into `users` with the SAME werkzeug hash.
@@ -15,7 +15,7 @@ in the live request path below calls them anymore.
 Access control (#63): every protected route is decorated with
 @permission_required("<code>") (or @authenticated for / alone). A user holds
 several roles (user_roles); their permissions are the union of those roles'
-role_permissions, through app/core/permissions.effective_permissions, and
+role_permissions, through app/auth/permissions.effective_permissions, and
 admin in any of them grants every permission code. The user, their roles and
 their permissions are read from the database on EVERY request and cached on
 flask.g -- so a deactivated user is logged out, and a role change takes
@@ -23,7 +23,7 @@ effect, on their next request.
 
 Generate a password hash for a new user with:
 
-    python -m app.web.hash_password 'the-password'
+    python -m app.auth.hash_password 'the-password'
 
 Sessions are signed with SECRET_KEY (configured in app.py) and store `user`
 (username) and (Fase 2) `user_id` (users.id) only -- the last one lets
@@ -41,8 +41,9 @@ from urllib.parse import urlparse
 from flask import abort, g, redirect, request, session, url_for
 from werkzeug.security import check_password_hash
 
-from app.core import db, permissions
-from app.core.db.users import UserRecord
+from app.auth import permissions, repository
+from app.auth.repository import UserRecord
+from app.shared import db
 from app.web.navigation import NAV_ITEMS
 
 ROLE_ADMIN = "admin"
@@ -109,11 +110,11 @@ def authenticate(username: str, password: str) -> UserRecord | None:
     indistinguishably (never leak which one it was to an unauthenticated
     caller). Opens its own connection (like every other app/web/* call site
     does with `db.get_conn()`) rather than taking one as a parameter --
-    app/web/auth.py is a web-layer module, not part of app/core/db/'s
-    conn-passing contract.
+    app/auth/decorators.py is a web-layer module, not part of
+    app/auth/repository/'s conn-passing contract.
     """
     with db.get_conn() as conn:
-        user = db.get_user_by_username(conn, username)
+        user = repository.get_user_by_username(conn, username)
     if user is None or not user.active:
         return None
     if not check_password_hash(user.password_hash, password):
@@ -183,10 +184,10 @@ def current_user() -> UserRecord | None:
         user_id = session.get("user_id")
         if user_id is not None:
             with db.get_conn() as conn:
-                user = db.get_user_by_id(conn, user_id)
+                user = repository.get_user_by_id(conn, user_id)
                 if user is not None:
                     perms = permissions.effective_permissions(
-                        user.roles, db.get_user_permissions(conn, user.id)
+                        user.roles, repository.get_user_permissions(conn, user.id)
                     )
         g._current_user_loaded = True
         g.current_user = user

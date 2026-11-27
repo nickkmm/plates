@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from flask import Blueprint, redirect, render_template, request, url_for
 
+from app.auth.decorators import permission_required
 from app.core import db
-from app.web.auth import permission_required
 
 bp = Blueprint("review", __name__)
 

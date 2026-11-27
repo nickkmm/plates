@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from flask import Blueprint, abort, current_app, render_template, request, session
 
+from app.auth.decorators import permission_required
 from app.core import db
 from app.core.db.declarations import STATUS_APPROVED, STATUS_PENDING_REVIEW, requires_notarization
 from app.core.declarations import ACTING_AS_GESTOR
@@ -30,7 +31,6 @@ from app.shared.normalize import (
     normalize_requested_by,
     validate_plate,
 )
-from app.web.auth import permission_required
 from app.web.helpers import (
     FORM_PLATE_TYPES,
     _options,

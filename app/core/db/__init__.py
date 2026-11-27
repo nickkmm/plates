@@ -18,14 +18,11 @@ This package replaces what used to be a single flat db.py, split by table:
     declarations.py -- declarations + declaration_cards (sworn declarations of
                      the public form, one declarant and many ownership cards)
                      reads/writes; the decision rules live in app/core/declarations.py.
-    users.py      -- users reads/writes (Fase 2; backs app/web/auth.py).
-    roles.py      -- roles / role_permissions / permissions reads/writes (the
-                     permission catalog itself lives in app/core/permissions.py,
-                     mirrored in the `permissions` table).
     pricing.py    -- plate_type_prices reads/writes (Fase 2).
     production.py -- production_orders.production_status and
                      production_order_events reads/writes; the transition
                      rules live in app/core/production.py.
+The users and roles tables are read and written by app/auth/repository/.
 Every public function each submodule exposes is re-exported below,
 explicitly (not `import *`), so existing call sites (`db.insert_order(...)`,
 etc.) keep working completely unchanged.
@@ -123,32 +120,6 @@ from app.core.db.production import (
     production_statuses_for_orders,
     set_production_status,
 )
-from app.core.db.roles import (
-    PermissionRecord,
-    RoleRecord,
-    create_role,
-    delete_role,
-    get_role,
-    get_role_permissions,
-    list_permissions,
-    list_roles,
-    update_role,
-)
-from app.core.db.users import (
-    UserRecord,
-    assign_role,
-    count_active_users_with_role,
-    create_user,
-    get_user_by_id,
-    get_user_by_username,
-    get_user_permissions,
-    list_users,
-    list_users_with_role,
-    set_user_password,
-    set_user_roles,
-    unassign_role,
-    update_user,
-)
 from app.shared.db import get_conn
 
 __all__ = [
@@ -165,28 +136,20 @@ __all__ = [
     "OrderSummary",
     "OwnershipCardRecord",
     "PRODUCTION_STATUSES",
-    "PermissionRecord",
     "PriceRow",
     "ProductionEvent",
     "ProductionOrderSummary",
-    "RoleRecord",
     "STATUS_DELIVERED",
     "STATUS_IN_PROGRESS",
     "STATUS_PENDING",
     "STATUS_READY",
-    "UserRecord",
-    "assign_role",
     "classify_card_lookup",
-    "count_active_users_with_role",
     "count_by_production_status",
     "count_recent_by_ip",
     "create_ownership_card",
-    "create_role",
-    "create_user",
     "current_prices",
     "delete_order",
     "delete_plate",
-    "delete_role",
     "distinct_cities",
     "distinct_requested_by",
     "existing_plate_numbers",
@@ -201,11 +164,6 @@ __all__ = [
     "get_ownership_card_by_plate_number",
     "get_ownership_card_by_transit_license",
     "get_production_status",
-    "get_role",
-    "get_role_permissions",
-    "get_user_by_id",
-    "get_user_by_username",
-    "get_user_permissions",
     "insert_blank_preparation",
     "insert_declaration",
     "insert_declaration_card",
@@ -219,12 +177,8 @@ __all__ = [
     "list_declarations",
     "list_declarations_by_production_order",
     "list_ownership_cards_for_customer",
-    "list_permissions",
     "list_production_events",
     "list_production_orders",
-    "list_roles",
-    "list_users",
-    "list_users_with_role",
     "order_detail",
     "ornamental_count",
     "price_list",
@@ -245,13 +199,8 @@ __all__ = [
     "set_declaration_review",
     "set_price",
     "set_production_status",
-    "set_user_password",
-    "set_user_roles",
-    "unassign_role",
     "update_customer",
     "update_order",
     "update_plate",
     "update_plate_full",
-    "update_role",
-    "update_user",
 ]

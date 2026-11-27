@@ -11,7 +11,7 @@
 > already in production** (Phases 1-5b, see
 > `ARCHITECTURE_AND_POS_PLAN.md` at the repo root for the full history):
 > `/ingest` captures all the POS fields, `/precios` manages
-> `plate_type_prices`, `/cuadre` aggregates the totals, and `app/web/auth.py`
+> `plate_type_prices`, `/cuadre` aggregates the totals, and `app/auth/decorators.py`
 > queries `users` on every login. This document reflects that final state.
 >
 > **Historical note (Phase 1c)**: the original Phase 1 named `clientes`/
@@ -148,7 +148,7 @@ erDiagram
         timestamp created_at
     }
     permissions {
-        text code PK "code from app/core/permissions.py"
+        text code PK "code from app/auth/permissions.py"
         text label "UNIQUE NOT NULL — Spanish label"
         int sort_order "order in PERMISSIONS"
     }
@@ -328,9 +328,9 @@ customer is left for a future customer administration screen.
 
 *Added in Phase 1 (as `usuarios`; renamed to `users` in **Phase 1c**),
 populated by backfill from `AUTH_USERS`/`AUTH_ROLES`.* Since **Phase 2**,
-`app/web/auth.py::authenticate` queries this table on every login (via
-`app/core/db/users.py`) — the same hashes the backfill already brought over,
-nobody had to reset a password. `load_users()`/`load_roles()` in `auth.py`
+`app/auth/decorators.py::authenticate` queries this table on every login (via
+`app/auth/repository/users.py`) — the same hashes the backfill already brought over,
+nobody had to reset a password. `load_users()`/`load_roles()` in `decorators.py`
 are kept, but **only** as the historical code that did the original backfill;
 the live login no longer calls them.
 
@@ -352,7 +352,7 @@ called `rol`.
 for each role a user has: a user can have several roles, and their permissions
 are the **union** of the permissions (`role_permissions`) of all of them. If
 any of their roles is `admin`, they have all the permissions
-(`app/core/permissions.py::effective_permissions`). It is the only place where
+(`app/auth/permissions.py::effective_permissions`). It is the only place where
 role assignments live.
 
 | Column | Type | Constraint/Default | Note |
@@ -378,7 +378,7 @@ they had. It only runs while `users.role` exists, so it is safe to run twice.
 *Added in migration `0015` (`app/migrations/0015_roles_and_permissions.sql`).*
 The roles a user can belong to. Created in `init.sql` before `users` and
 `user_roles`, so that `user_roles.role` references it directly.
-`app/web/auth.py` decides access on every request with the permissions of the
+`app/auth/decorators.py` decides access on every request with the permissions of the
 user's roles; this table is also the basis for a role management screen.
 
 | Column | Type | Constraint/Default | Note |
@@ -400,7 +400,7 @@ unexpected production data.
 
 *Added in migration `0017` (`app/migrations/0017_permissions.sql`).*
 The catalog of permissions that can be granted to a role: a database mirror of
-`app/core/permissions.py::PERMISSIONS`. Created in `init.sql` before
+`app/auth/permissions.py::PERMISSIONS`. Created in `init.sql` before
 `role_permissions`, so that `role_permissions.permission` references it
 directly. The routes still check the Python codes; this table is the basis for
 the future role management screen (`db.list_permissions`).
@@ -426,7 +426,7 @@ migration **and** an entry in `PERMISSIONS`.
 | Column | Type | Constraint/Default | Note |
 |---|---|---|---|
 | `role` | TEXT | NOT NULL, PK, FK → `roles(name)` `ON DELETE CASCADE ON UPDATE CASCADE` | Deleting a role deletes its permissions. |
-| `permission` | TEXT | NOT NULL, PK, FK → `permissions(code)` `ON DELETE CASCADE ON UPDATE CASCADE` (`role_permissions_permission_fkey`, migration `0017`) | A code from the catalog `app/core/permissions.py::PERMISSIONS` (`orders.capture`, `records.view`, ...). It is still validated in Python (`app/core/db/roles.py`) before writing, which gives a clear `ValueError`; since migration `0017` the FK additionally makes Postgres reject any unknown code. Before adding the FK, `0017` deletes the rows with codes that are not in the catalog (today they grant nothing: `effective_permissions` discards them, so nobody's access changes). |
+| `permission` | TEXT | NOT NULL, PK, FK → `permissions(code)` `ON DELETE CASCADE ON UPDATE CASCADE` (`role_permissions_permission_fkey`, migration `0017`) | A code from the catalog `app/auth/permissions.py::PERMISSIONS` (`orders.capture`, `records.view`, ...). It is still validated in Python (`app/auth/repository/roles.py`) before writing, which gives a clear `ValueError`; since migration `0017` the FK additionally makes Postgres reject any unknown code. Before adding the FK, `0017` deletes the rows with codes that are not in the catalog (today they grant nothing: `effective_permissions` discards them, so nobody's access changes). |
 
 The seed reproduces today's access, plus the production codes:
 `admin` has all 13 codes (informational: `effective_permissions` always gives

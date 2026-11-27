@@ -6,7 +6,7 @@ addopts = "-ra --strict-markers"
 [tool.coverage.run]
 source = ["app"]
 branch = true
-omit = ["app/web/hash_password.py"]
+omit = ["app/auth/hash_password.py"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -46,10 +46,18 @@ warn_unused_ignores = true
 check_untyped_defs = true
 no_implicit_optional = true
 
-# The Flask app + tests are practical rather than maximally strict; core/ and
-# shared/ are the highest-value modules to hold to a tight bar.
+# The Flask app + tests are practical rather than maximally strict; core/,
+# shared/ and the auth rules and SQL are the highest-value modules to hold to a
+# tight bar.
 [[tool.mypy.overrides]]
-module = ["app.core.*", "app.shared.*"]
+module = [
+    "app.core.*",
+    "app.shared.*",
+    "app.auth.service",
+    "app.auth.permissions",
+    "app.auth.repository",
+    "app.auth.repository.*",
+]
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]

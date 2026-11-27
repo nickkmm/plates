@@ -35,6 +35,12 @@ architecture refactor by domain without adding an ORM, a DI framework or a
 repository layer, plus a real connection pool (`psycopg_pool`). Full
 details in [`CORE.md`](CORE.md).
 
+Login, the per-request session check, `permission_required`, the users and
+roles admin screens and their SQL form the auth domain, `app/auth/` (its
+SQL in `app/auth/repository/`). Every blueprint imports
+`app.auth.decorators.permission_required`; `app/auth/` imports no other domain
+package, only `app/shared/` (and `app.web.navigation` for the landing page).
+
 This is what lets the historical Excel migration (`app/migrate.py`) reuse
 exactly the same normalization and duplicate detection that the web form
 uses — a single path for validating business rules, not two parallel

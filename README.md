@@ -135,7 +135,7 @@ docker compose exec web python -m app.schema_migrate
 ```
 
 **First admin.** Hash a password with
-`python -m app.web.hash_password 'the-password'` and put the user in
+`python -m app.auth.hash_password 'the-password'` and put the user in
 `AUTH_USERS` (`username:hash`, plus `AUTH_ROLES` as `username:role` if it
 should not be `admin`) before the first `python -m app.schema_migrate`. That
 backfill runs once, only on a brand-new database; after that, users and

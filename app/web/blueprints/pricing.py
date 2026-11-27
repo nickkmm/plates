@@ -17,8 +17,8 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
+from app.auth.decorators import permission_required
 from app.core import db
-from app.web.auth import permission_required
 
 bp = Blueprint("pricing", __name__)
 

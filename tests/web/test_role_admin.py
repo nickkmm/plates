@@ -7,7 +7,7 @@ The contract under test:
   and point_of_sale get 403 and change nothing.
 - A new role can be assigned right away, and a permission change applies on
   each holder's next request.
-- Every rule of app/core/user_admin.py re-renders the form with status 400
+- Every rule of app/auth/service.py re-renders the form with status 400
   and its message, and writes nothing.
 - admin is read-only, system roles keep their label and are never deleted,
   and a role some user holds can't be deleted.
@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 import pytest
 from werkzeug.security import generate_password_hash
 
-from app.core import db, user_admin
+from app.auth import repository, service
 from app.web.app import app as flask_app
 from tests.conftest import PRODUCCION_PASSWORD, PRODUCCION_USERNAME, TEST_PASSWORD, TEST_USERNAME
 
@@ -36,11 +36,11 @@ ADMIN_READ_ONLY = "El rol Administrador siempre tiene todos los permisos y no se
 def _snapshot(conn):
     """Every role with its label, flag and stored permissions, to assert
     nothing changed."""
-    return [(r.name, r.label, r.is_system, r.permissions) for r in db.list_roles(conn)]
+    return [(r.name, r.label, r.is_system, r.permissions) for r in repository.list_roles(conn)]
 
 
 def _role_by_label(conn, label):
-    matches = [r for r in db.list_roles(conn) if r.label == label]
+    matches = [r for r in repository.list_roles(conn) if r.label == label]
     assert len(matches) == 1, label
     return matches[0]
 
@@ -86,7 +86,7 @@ class TestCreateAndAssign:
         assert role.permissions == ["inventory.manage"]
         assert not role.is_system
 
-        target = db.get_user_by_username(db_conn, PRODUCCION_USERNAME)
+        target = repository.get_user_by_username(db_conn, PRODUCCION_USERNAME)
         assert target is not None
         resp = admin.post(f"/usuarios/{target.id}", data={"roles": ["production", role.name], "active": "1"})
         assert resp.status_code == 302
@@ -108,10 +108,10 @@ class TestCreateAndAssign:
         assert "Crear rol" in html
         assert 'name="csrf_token"' in html
         assert 'href="/usuarios/roles"' in html
-        codes = [p.code for p in db.list_permissions(db_conn)]
+        codes = [p.code for p in repository.list_permissions(db_conn)]
         positions = [html.index(f'name="permissions" value="{code}"') for code in codes]
         assert positions == sorted(positions)
-        for permission in db.list_permissions(db_conn):
+        for permission in repository.list_permissions(db_conn):
             assert permission.label in html
 
     def test_unknown_codes_are_ignored(self, authenticated_client, db_conn):
@@ -132,7 +132,7 @@ class TestPermissionChanges:
         production = _fresh_client(PRODUCCION_USERNAME, PRODUCCION_PASSWORD)
         assert production.get("/records").status_code == 200
 
-        role = db.get_role(db_conn, "production")
+        role = repository.get_role(db_conn, "production")
         assert role is not None
         kept = [code for code in role.permissions if code != "records.view"]
         resp = admin.post("/usuarios/roles/production", data={"label": "Producción", "permissions": kept})
@@ -142,16 +142,16 @@ class TestPermissionChanges:
         assert production.get("/records").status_code == 403
 
     def test_removing_production_manage(self, authenticated_client, db_conn):
-        user = db.get_user_by_username(db_conn, PRODUCCION_USERNAME)
+        user = repository.get_user_by_username(db_conn, PRODUCCION_USERNAME)
         assert user is not None
-        before = db.get_user_permissions(db_conn, user.id)
+        before = repository.get_user_permissions(db_conn, user.id)
         assert "production.manage" in before
-        role = db.get_role(db_conn, "production")
+        role = repository.get_role(db_conn, "production")
         assert role is not None
         kept = [code for code in role.permissions if code != "production.manage"]
         resp = authenticated_client.post("/usuarios/roles/production", data={"permissions": kept})
         assert resp.status_code == 302
-        after = db.get_user_permissions(db_conn, user.id)
+        after = repository.get_user_permissions(db_conn, user.id)
         assert after == before - {"production.manage"}
 
 
@@ -179,7 +179,7 @@ class TestValidation:
         assert _snapshot(db_conn) == before
 
     def test_duplicate_ignores_case_and_accents(self, authenticated_client, db_conn):
-        db.create_role(db_conn, name="custom_bodega", label="Bódega", permissions=["inventory.manage"])
+        repository.create_role(db_conn, name="custom_bodega", label="Bódega", permissions=["inventory.manage"])
         before = _snapshot(db_conn)
         resp = _create(authenticated_client, label="bodega")
         assert resp.status_code == 400
@@ -196,13 +196,13 @@ class TestValidation:
         assert 'value="inventory.manage" checked' not in html
 
     def test_edit_rejected_with_400_and_nothing_written(self, authenticated_client, db_conn):
-        db.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
+        repository.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
         before = _snapshot(db_conn)
         for form, message in (
-            ({"label": "", "permissions": ["inventory.manage"]}, user_admin.MSG_BAD_ROLE_LABEL),
+            ({"label": "", "permissions": ["inventory.manage"]}, service.MSG_BAD_ROLE_LABEL),
             ({"label": "Punto de Venta", "permissions": ["inventory.manage"]},
-             user_admin.MSG_DUPLICATE_ROLE_LABEL),
-            ({"label": "Bodega"}, user_admin.MSG_NO_PERMISSION),
+             service.MSG_DUPLICATE_ROLE_LABEL),
+            ({"label": "Bodega"}, service.MSG_NO_PERMISSION),
         ):
             resp = authenticated_client.post("/usuarios/roles/custom_bodega", data=form)
             assert resp.status_code == 400
@@ -210,12 +210,12 @@ class TestValidation:
             assert _snapshot(db_conn) == before
 
     def test_custom_role_can_take_its_own_label_with_other_casing(self, authenticated_client, db_conn):
-        db.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
+        repository.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
         resp = authenticated_client.post(
             "/usuarios/roles/custom_bodega", data={"label": "BODEGA", "permissions": ["records.view"]}
         )
         assert resp.status_code == 302
-        role = db.get_role(db_conn, "custom_bodega")
+        role = repository.get_role(db_conn, "custom_bodega")
         assert role is not None
         assert role.label == "BODEGA"
         assert role.permissions == ["records.view"]
@@ -228,18 +228,18 @@ class TestSystemRoles:
         assert "Guardar cambios" not in html
         assert "Eliminar rol" not in html
         assert 'name="label"' not in html
-        for permission in db.list_permissions(db_conn):
+        for permission in repository.list_permissions(db_conn):
             assert f'name="permissions" value="{permission.code}" checked disabled' in html
 
     def test_admin_post_is_400_and_writes_nothing(self, authenticated_client, db_conn):
-        before = db.get_role_permissions(db_conn, "admin")
+        before = repository.get_role_permissions(db_conn, "admin")
         resp = authenticated_client.post(
             "/usuarios/roles/admin", data={"label": "Jefe", "permissions": ["records.view"]}
         )
         assert resp.status_code == 400
         assert ADMIN_READ_ONLY in resp.get_data(as_text=True)
-        assert db.get_role_permissions(db_conn, "admin") == before
-        role = db.get_role(db_conn, "admin")
+        assert repository.get_role_permissions(db_conn, "admin") == before
+        role = repository.get_role(db_conn, "admin")
         assert role is not None and role.label == "Administrador"
 
     def test_system_role_label_is_ignored(self, authenticated_client, db_conn):
@@ -247,7 +247,7 @@ class TestSystemRoles:
             "/usuarios/roles/production", data={"label": "Fábrica", "permissions": ["records.view"]}
         )
         assert resp.status_code == 302
-        role = db.get_role(db_conn, "production")
+        role = repository.get_role(db_conn, "production")
         assert role is not None
         assert role.label == "Producción"
         assert role.permissions == ["records.view"]
@@ -273,44 +273,44 @@ class TestSystemRoles:
 
 class TestDelete:
     def test_role_held_by_an_inactive_user_is_kept(self, authenticated_client, db_conn):
-        db.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
-        db.create_user(
+        repository.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
+        repository.create_user(
             db_conn, username="bodeguero", password_hash=generate_password_hash("x"), roles=["custom_bodega"],
             active=False,
         )
         resp = authenticated_client.post("/usuarios/roles/custom_bodega/delete")
         assert resp.status_code == 400
         assert "No se puede eliminar un rol con usuarios asignados." in resp.get_data(as_text=True)
-        assert db.get_role(db_conn, "custom_bodega") is not None
+        assert repository.get_role(db_conn, "custom_bodega") is not None
 
     def test_unused_custom_role_is_deleted(self, authenticated_client, db_conn):
-        db.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
+        repository.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
         resp = authenticated_client.post("/usuarios/roles/custom_bodega/delete")
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/usuarios/roles"
         assert "Rol eliminado." in authenticated_client.get("/usuarios/roles").get_data(as_text=True)
-        assert db.get_role(db_conn, "custom_bodega") is None
+        assert repository.get_role(db_conn, "custom_bodega") is None
 
     def test_user_assigned_in_between_maps_to_the_in_use_message(
         self, authenticated_client, db_conn, monkeypatch
     ):
-        db.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
-        real_delete_role = db.delete_role
+        repository.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
+        real_delete_role = repository.delete_role
 
         def _assign_then_delete(conn, name):
-            db.create_user(
+            repository.create_user(
                 conn, username="bodeguero", password_hash=generate_password_hash("x"), roles=[name]
             )
             return real_delete_role(conn, name)
 
-        monkeypatch.setattr(db, "delete_role", _assign_then_delete)
+        monkeypatch.setattr(repository, "delete_role", _assign_then_delete)
         resp = authenticated_client.post("/usuarios/roles/custom_bodega/delete")
         assert resp.status_code == 400
         assert "No se puede eliminar un rol con usuarios asignados." in resp.get_data(as_text=True)
-        assert db.get_role(db_conn, "custom_bodega") is not None
+        assert repository.get_role(db_conn, "custom_bodega") is not None
 
     def test_custom_role_page_has_the_delete_button(self, authenticated_client, db_conn):
-        db.create_role(db_conn, name="custom_bodega", label="Bo'dega \"x\"", permissions=["inventory.manage"])
+        repository.create_role(db_conn, name="custom_bodega", label="Bo'dega \"x\"", permissions=["inventory.manage"])
         html = authenticated_client.get("/usuarios/roles/custom_bodega").get_data(as_text=True)
         assert "Eliminar rol" in html
         assert "¿Eliminar el rol " in html
@@ -324,7 +324,7 @@ class TestLabelRace:
     def test_unique_violation_on_create_maps_to_the_duplicate_message(
         self, authenticated_client, db_conn, monkeypatch
     ):
-        monkeypatch.setattr(user_admin, "validate_role", lambda *args, **kwargs: None)
+        monkeypatch.setattr(service, "validate_role", lambda *args, **kwargs: None)
         before = _snapshot(db_conn)
         resp = _create(authenticated_client, label="Producción")
         assert resp.status_code == 400
@@ -334,8 +334,8 @@ class TestLabelRace:
     def test_unique_violation_on_update_maps_to_the_duplicate_message(
         self, authenticated_client, db_conn, monkeypatch
     ):
-        db.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
-        monkeypatch.setattr(user_admin, "validate_role", lambda *args, **kwargs: None)
+        repository.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
+        monkeypatch.setattr(service, "validate_role", lambda *args, **kwargs: None)
         before = _snapshot(db_conn)
         resp = authenticated_client.post(
             "/usuarios/roles/custom_bodega", data={"label": "Producción", "permissions": ["records.view"]}
@@ -347,8 +347,8 @@ class TestLabelRace:
 
 class TestList:
     def test_list_page(self, authenticated_client, db_conn):
-        db.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
-        db.create_user(
+        repository.create_role(db_conn, name="custom_bodega", label="Bodega", permissions=["inventory.manage"])
+        repository.create_user(
             db_conn, username="bodeguero", password_hash=generate_password_hash("x"), roles=["custom_bodega"],
         )
         resp = authenticated_client.get("/usuarios/roles")
@@ -365,7 +365,7 @@ class TestList:
         assert "Nuevo rol" in html and 'href="/usuarios/roles/nuevo"' in html
         for name in ("admin", "point_of_sale", "production", "custom_bodega"):
             assert f'href="/usuarios/roles/{name}"' in html
-        order = [html.index(f'href="/usuarios/roles/{r.name}"') for r in db.list_roles(db_conn)]
+        order = [html.index(f'href="/usuarios/roles/{r.name}"') for r in repository.list_roles(db_conn)]
         assert order == sorted(order)
 
     def test_users_page_links_to_roles(self, authenticated_client):
@@ -403,7 +403,7 @@ class TestNoInternalNames:
         admin = _fresh_client(TEST_USERNAME, TEST_PASSWORD)
         assert _create(admin).status_code == 302
         role = _role_by_label(db_conn, "Bodega")
-        target = db.get_user_by_username(db_conn, PRODUCCION_USERNAME)
+        target = repository.get_user_by_username(db_conn, PRODUCCION_USERNAME)
         assert target is not None
         admin.post(f"/usuarios/{target.id}", data={"roles": ["production", role.name], "active": "1"})
 

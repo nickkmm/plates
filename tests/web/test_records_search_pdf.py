@@ -199,7 +199,7 @@ class TestGracefulFailure:
 class TestProduccionRoleAllowed:
     """Reconciliation guard: this route is the third member of the consult-only
     allowlist (alongside /records and /records/<id>) mentioned in
-    app.web.auth's docs -- a read-only role like 'production' must be able to
+    app.auth.decorators's docs -- a read-only role like 'production' must be able to
     reach it, unlike every write route."""
 
     def test_production_role_can_search_by_pdf(self, produccion_client):

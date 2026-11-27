@@ -58,6 +58,8 @@ from flask import (
 )
 from psycopg.rows import DictRow
 
+from app.auth import repository
+from app.auth.decorators import permission_required
 from app.core import db
 from app.core import declarations as decl
 from app.core.db.declarations import (
@@ -82,7 +84,6 @@ from app.core.declaration_pdf import build_declaration_pdf
 from app.shared.normalize import clean_plate, normalize_requested_by
 from app.shared.timezones import utc_now
 from app.shared.uploads import UploadError, resolve_upload_path, send_stored_file
-from app.web.auth import permission_required
 
 bp = Blueprint("declarations", __name__)
 
@@ -305,7 +306,7 @@ def _render_detail(
             production_status = db.get_production_status(conn, declaration.production_order_id)
         needs_notary = declaration.status == STATUS_APPROVED and requires_notarization(card_records)
         received_user = (
-            db.get_user_by_id(conn, declaration.notarized_received_by)
+            repository.get_user_by_id(conn, declaration.notarized_received_by)
             if declaration.notarized_received_by is not None else None
         )
         submitted_cards = declaration.submitted_data.get("cards") or []

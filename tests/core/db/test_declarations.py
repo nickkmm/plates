@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import psycopg
 import pytest
 
+from app.auth import repository
 from app.core import db
 from app.core.db.declarations import STAGES, declaration_stage, requires_notarization
 from tests.conftest import TEST_USERNAME
@@ -306,7 +307,7 @@ class TestCountRecentByIp:
 
 class TestSetDeclarationReview:
     def test_records_review_and_gestor(self, db_conn):
-        user = db.get_user_by_username(db_conn, TEST_USERNAME)
+        user = repository.get_user_by_username(db_conn, TEST_USERNAME)
         assert user is not None
         gestor_id = db.resolve_or_create_customer(db_conn, "GESTORIA")
         declaration_id = _insert(db_conn)
@@ -430,7 +431,7 @@ class TestRequiresNotarization:
 
 class TestSetNotarizedReceived:
     def test_marks_with_user_and_time_and_clears(self, db_conn):
-        user = db.get_user_by_username(db_conn, TEST_USERNAME)
+        user = repository.get_user_by_username(db_conn, TEST_USERNAME)
         assert user is not None
         declaration_id = _insert(db_conn, status="approved")
         record = db.get_declaration(db_conn, declaration_id)

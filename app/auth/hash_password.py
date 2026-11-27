@@ -1,8 +1,8 @@
 """Generate a werkzeug password hash for the AUTH_USERS env var.
 
 Usage:
-    python -m app.web.hash_password 'plaintext-password'
-    python -m app.web.hash_password           # prompts (input hidden)
+    python -m app.auth.hash_password 'plaintext-password'
+    python -m app.auth.hash_password           # prompts (input hidden)
 
 Prints a pbkdf2 hash. Combine it with a username for AUTH_USERS, e.g.:
     AUTH_USERS=alice:<printed-hash>

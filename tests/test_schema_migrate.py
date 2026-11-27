@@ -36,8 +36,8 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from app import schema_migrate
+from app.auth.permissions import PERMISSIONS
 from app.core import db
-from app.core.permissions import PERMISSIONS
 from app.shared.models import ExtractedRow
 from app.shared.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
 
@@ -1287,7 +1287,7 @@ class TestPermissions:
 
     def test_permissions_table_matches_permissions_catalog_exactly(self, db_conn):
         """Guard against the hand-copied seed SQL (init.sql AND
-        0017_permissions.sql) drifting from app/core/permissions.py's
+        0017_permissions.sql) drifting from app/auth/permissions.py's
         PERMISSIONS: same codes, same labels, same order."""
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT code, label FROM permissions ORDER BY sort_order")

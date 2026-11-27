@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
 
+from app.auth.decorators import permission_required
 from app.core import db
 from app.core.ingestion import find_duplicate_plate_numbers
 from app.core.pdf_extract import PdfExtractError
@@ -20,7 +21,6 @@ from app.shared.normalize import (
     normalize_row,
     validate_plate,
 )
-from app.web.auth import permission_required
 from app.web.helpers import FORM_PLATE_TYPES, _options, _padded, _validate_order_header, today_iso
 
 bp = Blueprint("records", __name__)

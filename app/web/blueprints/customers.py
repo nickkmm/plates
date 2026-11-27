@@ -18,6 +18,7 @@ from __future__ import annotations
 import psycopg
 from flask import Blueprint, redirect, render_template, request, url_for
 
+from app.auth.decorators import permission_required
 from app.core import db
 from app.shared.normalize import (
     CUSTOMER_TYPES,
@@ -25,7 +26,6 @@ from app.shared.normalize import (
     DOCUMENT_TYPES,
     normalize_requested_by,
 )
-from app.web.auth import permission_required
 from app.web.helpers import customer_fields_from_form
 
 bp = Blueprint("customers", __name__)

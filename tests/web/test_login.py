@@ -1,7 +1,7 @@
 """Integration tests for the login/logout session lifecycle (POST /login,
 POST /logout) plus the two bare routes that live directly in
 app/web/app.py rather than in a blueprint: / and /healthz. Mirrors
-app/web/blueprints/auth_routes.py.
+app/auth/routes.py.
 
 Tests that only need to inspect a redirect's Location header (not the
 fully-rendered target page) deliberately avoid the `clean_db` fixture so

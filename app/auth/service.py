@@ -15,7 +15,7 @@ at the same instant is an accepted race.
 **Roles**: a role label is compared with every other role's label ignoring
 case and accents, so "Bodega" and "bódega" can't both exist (the DB's UNIQUE
 on roles.label only catches exact duplicates). Only custom roles with no
-users can be deleted; the screen never edits admin (see app/web/blueprints/users.py).
+users can be deleted; the screen never edits admin (see app/auth/admin_routes.py).
 """
 
 from __future__ import annotations
@@ -27,10 +27,9 @@ import unicodedata
 import psycopg
 from psycopg.rows import DictRow
 
-from app.core import db
-from app.core.db.roles import RoleRecord
-from app.core.db.users import UserRecord
-from app.core.permissions import ADMIN_ROLE
+from app.auth import repository
+from app.auth.permissions import ADMIN_ROLE
+from app.auth.repository import RoleRecord, UserRecord
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,50}$")
 PASSWORD_MIN_LENGTH = 10
@@ -39,7 +38,7 @@ ROLE_LABEL_MAX_LENGTH = 60
 MSG_BAD_USERNAME = (
     "El usuario debe tener entre 3 y 50 caracteres: letras, números, punto, guion o guion bajo."
 )
-# Returned by the web layer when db.create_user raises UniqueViolation.
+# Returned by the web layer when repository.create_user raises UniqueViolation.
 MSG_DUPLICATE_USERNAME = "Ese usuario ya existe."
 MSG_SHORT_PASSWORD = f"La contraseña debe tener al menos {PASSWORD_MIN_LENGTH} caracteres."
 MSG_PASSWORD_MISMATCH = "Las contraseñas no coinciden."
@@ -69,7 +68,7 @@ def validate_password(password: str, password_confirm: str) -> str | None:
 def _validate_roles(conn: psycopg.Connection[DictRow], roles: list[str]) -> str | None:
     if not roles:
         return MSG_NO_ROLE
-    known = {r.name for r in db.list_roles(conn)}
+    known = {r.name for r in repository.list_roles(conn)}
     if any(role not in known for role in roles):
         return MSG_INVALID_ROLE
     return None
@@ -114,7 +113,7 @@ def validate_user_update(
         target.active
         and was_admin
         and (drops_admin or not active)
-        and db.count_active_users_with_role(conn, ADMIN_ROLE) <= 1
+        and repository.count_active_users_with_role(conn, ADMIN_ROLE) <= 1
     ):
         return MSG_LAST_ADMIN
     return None
@@ -136,7 +135,7 @@ def clean_permissions(conn: psycopg.Connection[DictRow], permissions: list[str])
     """The submitted codes that are in the catalog, without duplicates, in
     catalog order. Unknown codes are dropped silently."""
     wanted = set(permissions)
-    return [p.code for p in db.list_permissions(conn) if p.code in wanted]
+    return [p.code for p in repository.list_permissions(conn) if p.code in wanted]
 
 
 def validate_role(
@@ -153,7 +152,7 @@ def validate_role(
     if not label or len(label) > ROLE_LABEL_MAX_LENGTH:
         return MSG_BAD_ROLE_LABEL
     folded = _fold_label(label)
-    if any(r.name != role_name and _fold_label(r.label) == folded for r in db.list_roles(conn)):
+    if any(r.name != role_name and _fold_label(r.label) == folded for r in repository.list_roles(conn)):
         return MSG_DUPLICATE_ROLE_LABEL
     if not permissions:
         return MSG_NO_PERMISSION

@@ -2,9 +2,9 @@
 
 CRITICAL ORDERING: ``app.web.app`` reads ``SECRET_KEY`` from the environment
 at MODULE IMPORT TIME (not inside a factory function) and raises
-``RuntimeError`` if it's unset. ``app.web.auth`` reads ``AUTH_USERS`` lazily
+``RuntimeError`` if it's unset. ``app.auth.decorators`` reads ``AUTH_USERS`` lazily
 (inside functions), but we set both here together, up front, so that ANY test
-module importing ``app.web.app`` or ``app.web.auth`` -- directly or
+module importing ``app.web.app`` or ``app.auth.decorators`` -- directly or
 transitively -- never races the module-level check. Because pytest always
 imports a directory's ``conftest.py`` before collecting test modules inside
 it, everything below runs before any ``tests/**/test_*.py`` file is imported.
@@ -13,7 +13,7 @@ Do not reorder: the env vars must be set before the ``from app...`` imports
 further down this file.
 
 **Fase 2**: the live login flow now queries the `users` TABLE, not
-AUTH_USERS/AUTH_ROLES (see app/web/auth.py's module docstring) -- so the
+AUTH_USERS/AUTH_ROLES (see app/auth/decorators.py's module docstring) -- so the
 three test identities below are seeded into `users` by the `clean_db`
 fixture itself (see TEST_USERS/its INSERT below), not just exported as env
 vars. AUTH_USERS/AUTH_ROLES are still set here too, because
@@ -44,7 +44,7 @@ _TEST_PASSWORD_HASH = generate_password_hash(TEST_PASSWORD)
 # A second user with the 'production' role -- read-only today (demoted from
 # its original full-access grant once real usage showed it should only ever
 # look things up), for testing the default-deny role restrictions (see
-# app.web.auth.consulta_allowed). TEST_USERNAME deliberately has role 'admin'
+# app.auth.decorators.consulta_allowed). TEST_USERNAME deliberately has role 'admin'
 # below -- it must keep behaving as full-access, matching production today
 # (every AUTH_USERS-era account with no AUTH_ROLES entry defaulted to admin).
 PRODUCCION_USERNAME = "produccionuser"
@@ -399,7 +399,7 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
             # treated as a rollback, no error -- which is what let some
             # tests get away with never explicitly recovering from an
             # expected error (e.g. a UNIQUE violation from
-            # db.create_user()) under the old TRUNCATE design, where this
+            # repository.create_user()) under the old TRUNCATE design, where this
             # function's job was done by a real conn.commit()/rollback() at
             # the pool's own `with` exit. RELEASE SAVEPOINT has no such
             # exception -- it errors out on an aborted connection -- so that

@@ -10,6 +10,7 @@ from datetime import date, datetime
 
 from psycopg.rows import tuple_row
 
+from app.auth import repository
 from app.core import db
 from tests.conftest import TEST_USERNAME
 from tests.core.db._helpers import _insert_order, make_row
@@ -29,7 +30,7 @@ def _order(db_conn, order_number: str, order_date: date = date(2026, 1, 1), *, s
 
 
 def _user_id(db_conn, username: str = TEST_USERNAME) -> int:
-    user = db.get_user_by_username(db_conn, username)
+    user = repository.get_user_by_username(db_conn, username)
     assert user is not None
     return user.id
 
