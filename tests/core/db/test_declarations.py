@@ -12,6 +12,7 @@ from app.auth import repository
 from app.core import db
 from app.core.db.declarations import STAGES, declaration_stage, requires_notarization
 from app.customers import repository as customers_repository
+from app.orders import repository as orders_repository
 from tests.conftest import TEST_USERNAME
 
 _DECLARANT = {"name": "ANA", "document_number": "123"}
@@ -91,7 +92,7 @@ class TestListDeclarationsByProductionOrder:
         from app.shared.models import ExtractedRow
 
         def order(number: str) -> int:
-            return db.insert_order(db_conn, row=ExtractedRow(
+            return orders_repository.insert_order(db_conn, row=ExtractedRow(
                 order_number=number, order_date=date(2026, 9, 1), requested_by="ANA",
                 plate_type="CARRO PARTICULAR"), customer_id=None, created_by=None)
 
@@ -366,7 +367,7 @@ def _stage_fixtures(db_conn) -> dict[str, int]:
 
     from app.shared.models import ExtractedRow
 
-    order_id = db.insert_order(db_conn, row=ExtractedRow(
+    order_id = orders_repository.insert_order(db_conn, row=ExtractedRow(
         order_number="9001", order_date=date(2026, 9, 1), requested_by="ANA",
         plate_type="CARRO PARTICULAR"), customer_id=None, created_by=None)
     ids: dict[str, int] = {}

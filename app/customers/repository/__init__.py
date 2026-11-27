@@ -36,6 +36,7 @@ from app.customers.repository.ownership_cards import (
     get_ownership_card_by_transit_license,
     list_ownership_cards_for_customer,
     reassign_ownership_card,
+    relink_plates,
     resolve_card_id_for_plate,
 )
 
@@ -59,6 +60,7 @@ __all__ = [
     "list_customers",
     "list_ownership_cards_for_customer",
     "reassign_ownership_card",
+    "relink_plates",
     "resolve_card_id_for_plate",
     "resolve_or_create_customer",
     "update_customer",

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import psycopg
 from psycopg.rows import DictRow, class_row
 
-from app.core.db import plates
+from app.customers.repository.ownership_cards import relink_plates
 from app.shared.normalize import normalize_requested_by
 
 
@@ -188,4 +188,4 @@ def update_customer(
         )
     # A type change (e.g. CLIENTE -> EMPRESA) changes which of this customer's
     # plates may carry an ownership_card_id.
-    plates.relink_plates(conn, customer_id=customer_id)
+    relink_plates(conn, customer_id=customer_id)

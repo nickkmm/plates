@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date
 from urllib.parse import urlparse
 
-from app.core import db
+from app.orders import repository as orders_repository
 from tests.web._helpers import _insert_order, make_row
 
 
@@ -65,7 +65,7 @@ class TestProduccionRole:
         save button; the plate's data must still be visible as plain text."""
         order_id = _insert_order(db_conn, order_number="5102", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="PRD111", quantity=2),
                          is_possible_duplicate=False)
         db_conn.commit()

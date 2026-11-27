@@ -8,6 +8,7 @@ from flask import Blueprint, redirect, render_template, request, url_for
 from app.auth.decorators import permission_required
 from app.core import db
 from app.inventory import repository as inventory_repository
+from app.orders import repository as orders_repository
 
 bp = Blueprint("review", __name__)
 
@@ -16,7 +17,7 @@ bp = Blueprint("review", __name__)
 @permission_required("duplicates.review")
 def review():
     with db.get_conn() as conn:
-        rows = db.review_rows(conn)
+        rows = orders_repository.review_rows(conn)
     return render_template("review.html", rows=rows)
 
 
@@ -26,7 +27,7 @@ def review_update():
     plate_id = int(request.form["plate_id"])
     plate_number = (request.form.get("plate_number") or "").strip() or None
     with db.get_conn() as conn:
-        db.update_plate(
+        orders_repository.update_plate(
             conn,
             plate_id,
             plate_type=(request.form.get("plate_type") or "").strip(),
@@ -43,7 +44,7 @@ def review_update():
 @permission_required("duplicates.review")
 def review_resolve():
     with db.get_conn() as conn:
-        db.resolve_plate(conn, int(request.form["plate_id"]))
+        orders_repository.resolve_plate(conn, int(request.form["plate_id"]))
         conn.commit()
     return redirect(url_for("review.review"))
 
@@ -52,7 +53,7 @@ def review_resolve():
 @permission_required("duplicates.review")
 def review_delete():
     with db.get_conn() as conn:
-        db.delete_plate(conn, int(request.form["plate_id"]))
+        orders_repository.delete_plate(conn, int(request.form["plate_id"]))
         inventory_repository.recalc_inventory(conn)
         conn.commit()
     return redirect(url_for("review.review"))

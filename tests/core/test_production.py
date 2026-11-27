@@ -10,7 +10,7 @@ import pytest
 from psycopg.rows import tuple_row
 
 from app.auth import repository
-from app.core import db
+from app.orders import repository as orders_repository
 from app.production import repository as production_repository
 from app.production.service import advance_order, next_status, previous_status, revert_order
 from app.shared.models import ExtractedRow
@@ -20,7 +20,7 @@ _STALE = "El estado de la orden cambió mientras tanto. Revisa el estado actual 
 
 
 def _new_order(db_conn) -> int:
-    return db.insert_order(
+    return orders_repository.insert_order(
         db_conn,
         row=ExtractedRow(order_number="500", order_date=date(2026, 1, 1), requested_by="PEDRO",
                          plate_type="CARRO PARTICULAR"),

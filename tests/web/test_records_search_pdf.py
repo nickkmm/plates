@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from psycopg.rows import tuple_row
 
-from app.core import db
+from app.orders import repository as orders_repository
 from app.shared.models import ExtractedRow
 from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf, build_pedido_xlsx
 
@@ -43,7 +43,7 @@ def _insert_order(conn, *, order_number: str, order_date, requested_by: str) -> 
     """Back-compat shim for this file's "just need an order header to exist"
     setup calls -- see the identical helper (and its full rationale) in
     tests/core/db/_helpers.py."""
-    return db.insert_order(
+    return orders_repository.insert_order(
         conn,
         row=ExtractedRow(order_number=order_number, order_date=order_date, requested_by=requested_by,
                           plate_type="MOTO PARTICULAR"),
@@ -78,9 +78,9 @@ class TestConsultOnly:
             raise AssertionError("process_rows must never run from the search-pdf route")
 
         # records.py (where this route lives) doesn't import process_rows at all --
-        # patch the canonical source in app.core.ingestion so this still catches a
+        # patch the canonical source in app.orders.service so this still catches a
         # future regression that reaches it via `ingestion.process_rows(...)`.
-        monkeypatch.setattr("app.core.ingestion.process_rows", boom)
+        monkeypatch.setattr("app.orders.service.process_rows", boom)
 
         before = row_counts(db_conn)
         resp = upload(authenticated_client, build_pedido_pdf())
@@ -94,7 +94,7 @@ class TestConsultOnly:
         order_id = _insert_order(
             db_conn, order_number="EXIST-1", order_date=date(2026, 1, 1), requested_by="CLIENTE DEMO"
         )
-        db.insert_plate(
+        orders_repository.insert_plate(
             db_conn, order_id=order_id,
             row=make_row(plate_number="FND001", plate_type="CARRO PARTICULAR"),
             is_possible_duplicate=False,
@@ -116,7 +116,7 @@ class TestLookupResults:
         order_id = _insert_order(
             db_conn, order_number="EXIST-2", order_date=date(2026, 1, 1), requested_by="CLIENTE DEMO"
         )
-        db.insert_plate(
+        orders_repository.insert_plate(
             db_conn, order_id=order_id,
             row=make_row(plate_number="FND002", plate_type="CARRO PARTICULAR"),
             is_possible_duplicate=False,
@@ -209,7 +209,7 @@ class TestProduccionRoleAllowed:
 
 class TestExcelSearch:
     def test_xlsx_is_searched_like_the_pdf_and_saves_nothing(self, authenticated_client, db_conn):
-        db.insert_order(
+        orders_repository.insert_order(
             db_conn, row=ExtractedRow(order_number="55", order_date=date(2026, 1, 1), requested_by="ANA",
                                        plate_type="MOTO PARTICULAR", plate_number="ABC12D"),
             customer_id=None, created_by=None,

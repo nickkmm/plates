@@ -26,9 +26,9 @@ import psycopg
 from psycopg.rows import DictRow
 from pydantic import BaseModel
 
-from app.core import db
 from app.customers import repository as customers_repository
 from app.inventory import repository as inventory_repository
+from app.orders import repository as orders_repository
 from app.pricing import repository as pricing_repository
 from app.shared.models import ExtractedRow
 from app.shared.normalize import inventory_category, is_real_plate, normalize_row
@@ -61,7 +61,7 @@ def is_alistado(row: ExtractedRow) -> bool:
 
 def _dedup_candidates(rows: list[ExtractedRow]) -> tuple[set[str], Counter[str]]:
     """Real (non-voided) plate_numbers among `rows`, as both a set (candidates
-    to check against the DB via db.existing_plate_numbers) and a Counter (to
+    to check against the DB via orders_repository.existing_plate_numbers) and a Counter (to
     catch a number repeated more than once within the same batch, which is
     suspicious even if it's never been seen before).
 
@@ -131,7 +131,7 @@ def _order_level_mismatches(order_number: str, group: list[ExtractedRow]) -> lis
 
 def _snapshot_unit_price(row: ExtractedRow, prices: dict[str, Decimal]) -> ExtractedRow:
     """New plate, insert-time unit_price fallback (the first case of the
-    re-snapshot rule -- see docs/DATABASE.md / app/core/db/plates.py's
+    re-snapshot rule -- see docs/DATABASE.md / app/orders/repository/plates.py's
     _resnapshot_unit_price for the other two, which apply on EDIT instead).
 
     If `row` already carries a unit_price (the /ingest form always sends one,
@@ -160,7 +160,7 @@ def find_duplicate_plate_numbers(
     normalized = [normalize_row(r) for r in rows]
     plate_rows = [r for r in normalized if not is_alistado(r)]
     live_candidates, batch_counts = _dedup_candidates(plate_rows)
-    already_present = db.existing_plate_numbers(conn, live_candidates)
+    already_present = orders_repository.existing_plate_numbers(conn, live_candidates)
     return {pn for pn in live_candidates if pn in already_present or batch_counts[pn] > 1}
 
 
@@ -219,7 +219,7 @@ def process_rows(
         )
         summary.blank_preparations += 1
 
-    already_present = db.existing_plate_numbers(conn, live_candidates)
+    already_present = orders_repository.existing_plate_numbers(conn, live_candidates)
 
     # One current-tariff snapshot for the whole batch (Fase 2) -- applied
     # per row below as a fallback only for rows with no unit_price of their
@@ -234,7 +234,7 @@ def process_rows(
     for order_number, group in groups.items():
         head = group[0]
         customer_id = customers_repository.resolve_or_create_customer(conn, head.requested_by)
-        order_id = db.insert_order(conn, row=head, customer_id=customer_id, created_by=created_by)
+        order_id = orders_repository.insert_order(conn, row=head, customer_id=customer_id, created_by=created_by)
         summary.orders_inserted += 1
 
         summary.review_notes.extend(_order_level_mismatches(order_number, group))
@@ -246,7 +246,7 @@ def process_rows(
                 and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
             )
             priced = _snapshot_unit_price(r, prices)
-            db.insert_plate(conn, order_id=order_id, row=priced, is_possible_duplicate=is_dup)
+            orders_repository.insert_plate(conn, order_id=order_id, row=priced, is_possible_duplicate=is_dup)
             _count_row(summary, priced, is_dup)
 
     inventory_repository.recalc_inventory(conn)
@@ -316,18 +316,18 @@ def replace_order(
     # Fuse: delete every existing order under this order_number (and its
     # plates) before inserting the replacement -- regardless of whether
     # that's 0, 1, or 2+ rows (WCY449/pedido 1030 shows 2+ really happens).
-    existing = db.find_orders_by_number(conn, order_number)
+    existing = orders_repository.find_orders_by_number(conn, order_number)
     for match in existing:
-        db.delete_order(conn, match.id)
+        orders_repository.delete_order(conn, match.id)
         summary.plates_deleted += match.n_plates
     summary.orders_replaced = len(existing)
 
-    already_present = db.existing_plate_numbers(conn, live_candidates)
+    already_present = orders_repository.existing_plate_numbers(conn, live_candidates)
     prices = pricing_repository.current_prices(conn)
 
     head = normalized[0]
     customer_id = customers_repository.resolve_or_create_customer(conn, head.requested_by)
-    order_id = db.insert_order(conn, row=head, customer_id=customer_id, created_by=created_by)
+    order_id = orders_repository.insert_order(conn, row=head, customer_id=customer_id, created_by=created_by)
     summary.orders_inserted = 1
 
     summary.review_notes.extend(_order_level_mismatches(order_number, normalized))
@@ -339,7 +339,7 @@ def replace_order(
             and (r.plate_number in already_present or batch_counts[r.plate_number] > 1)
         )
         priced = _snapshot_unit_price(r, prices)
-        db.insert_plate(conn, order_id=order_id, row=priced, is_possible_duplicate=is_dup)
+        orders_repository.insert_plate(conn, order_id=order_id, row=priced, is_possible_duplicate=is_dup)
         _count_row(summary, priced, is_dup)
 
     inventory_repository.recalc_inventory(conn)

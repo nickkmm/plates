@@ -20,7 +20,7 @@ from decimal import Decimal
 import psycopg
 from psycopg.rows import DictRow
 
-from app.customers.repository.ownership_cards import resolve_card_id_for_plate
+from app.customers.repository.ownership_cards import card_id_for_order_plate
 from app.pricing.repository import current_prices
 from app.shared.models import ExtractedRow
 from app.shared.normalize import clean_plate
@@ -94,17 +94,17 @@ def insert_plate(conn: psycopg.Connection[DictRow], *, order_id: int, row: Extra
 
     row.unit_price/reason/vehicle_brand (Fase 2) are written as given --
     this function does NOT apply the tariff-snapshot fallback itself (that's
-    app.core.ingestion's job, once per batch, before calling this per row);
+    app.orders.service's job, once per batch, before calling this per row);
     it just persists whatever the row already carries, same as every other
     field here.
 
     ownership_card_id is NOT taken from `row`: it is resolved here from the
-    order's customer type and the plate (see _card_id_for and
-    ownership_cards.resolve_card_id_for_plate), so every insert path
+    order's customer type and the plate (see
+    ownership_cards.card_id_for_order_plate), so every insert path
     (ingestion, replace_order, record_save) applies the same rule.
     """
     with conn.cursor() as cur:
-        card_id = _card_id_for(
+        card_id = card_id_for_order_plate(
             cur, order_id=order_id, plate_number=row.plate_number, plate_to=row.plate_to,
             is_voided=row.is_voided, is_plate_annulled=row.is_plate_annulled,
             is_batch_replacement=row.is_batch_replacement,
@@ -198,34 +198,6 @@ def review_rows(conn: psycopg.Connection[DictRow]) -> list[dict]:
         return cur.fetchall()
 
 
-def _card_id_for(
-    cur: psycopg.Cursor[DictRow], *, order_id: int | None, plate_number: str | None,
-    plate_to: str | None, is_voided: bool | None, is_plate_annulled: bool | None,
-    is_batch_replacement: bool | None,
-) -> int | None:
-    """Resolve plates.ownership_card_id for a plate of `order_id` on the
-    caller's cursor: looks up the order's customer type (NULL when the order
-    or its customer is missing/unclassified) and delegates the rule to
-    ownership_cards.resolve_card_id_for_plate."""
-    customer_type = None
-    if order_id is not None:
-        cur.execute(
-            """
-            SELECT c.type FROM production_orders o
-            LEFT JOIN customers c ON c.id = o.customer_id
-            WHERE o.id = %s
-            """,
-            (order_id,),
-        )
-        found = cur.fetchone()
-        customer_type = found["type"] if found else None
-    return resolve_card_id_for_plate(
-        cur.connection, plate_number, customer_type, plate_to=plate_to,
-        is_voided=bool(is_voided), is_plate_annulled=bool(is_plate_annulled),
-        is_batch_replacement=bool(is_batch_replacement),
-    )
-
-
 def _resnapshot_unit_price(
     cur: psycopg.Cursor[DictRow], plate_id: int, new_plate_type: str
 ) -> Decimal | None:
@@ -269,7 +241,7 @@ def update_plate(conn: psycopg.Connection[DictRow], plate_id: int, *, plate_type
             (plate_id,),
         )
         current = cur.fetchone()
-        card_id = _card_id_for(
+        card_id = card_id_for_order_plate(
             cur, order_id=current["order_id"] if current else None,
             plate_number=plate_number, plate_to=current["plate_to"] if current else None,
             is_voided=is_voided,
@@ -325,7 +297,7 @@ def update_plate_full(conn: psycopg.Connection[DictRow], plate_id: int, *, plate
         new_unit_price = _resnapshot_unit_price(cur, plate_id, plate_type)
         cur.execute("SELECT order_id FROM plates WHERE id = %s", (plate_id,))
         current = cur.fetchone()
-        card_id = _card_id_for(
+        card_id = card_id_for_order_plate(
             cur, order_id=current["order_id"] if current else None,
             plate_number=plate_number, plate_to=plate_to, is_voided=is_voided,
             is_plate_annulled=is_plate_annulled, is_batch_replacement=is_batch_replacement,
@@ -344,44 +316,6 @@ def update_plate_full(conn: psycopg.Connection[DictRow], plate_id: int, *, plate
              is_plate_annulled, is_batch_replacement, new_unit_price, reason, vehicle_brand,
              card_id, plate_id),
         )
-
-
-def relink_plates(conn: psycopg.Connection[DictRow], *, order_id: int | None = None,
-                  customer_id: int | None = None) -> None:
-    """Recompute plates.ownership_card_id for every plate of one order
-    (`order_id`) or of every order of one customer (`customer_id`).
-
-    Needed when something OTHER than the plate changes its eligibility: an
-    order is re-pointed to another customer (update_order) or a customer's
-    type is edited (update_customer). Exactly one of the two must be given.
-    """
-    if (order_id is None) == (customer_id is None):
-        raise ValueError("pass exactly one of order_id / customer_id")
-    with conn.cursor() as cur:
-        if order_id is not None:
-            cur.execute("SELECT id FROM production_orders WHERE id = %s", (order_id,))
-        else:
-            cur.execute("SELECT id FROM production_orders WHERE customer_id = %s", (customer_id,))
-        order_ids = [r["id"] for r in cur.fetchall()]
-        for oid in order_ids:
-            cur.execute(
-                """
-                SELECT id, plate_number, plate_to, is_voided, is_plate_annulled,
-                       is_batch_replacement, ownership_card_id
-                FROM plates WHERE order_id = %s
-                """,
-                (oid,),
-            )
-            for p in cur.fetchall():
-                card_id = _card_id_for(
-                    cur, order_id=oid, plate_number=p["plate_number"], plate_to=p["plate_to"],
-                    is_voided=p["is_voided"], is_plate_annulled=p["is_plate_annulled"],
-                    is_batch_replacement=p["is_batch_replacement"],
-                )
-                if card_id != p["ownership_card_id"]:
-                    cur.execute(
-                        "UPDATE plates SET ownership_card_id = %s WHERE id = %s", (card_id, p["id"])
-                    )
 
 
 def resolve_plate(conn: psycopg.Connection[DictRow], plate_id: int) -> None:

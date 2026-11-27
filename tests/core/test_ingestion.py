@@ -1,10 +1,10 @@
-"""Tests for app.core.ingestion.process_rows -- the single ingestion backend.
+"""Tests for app.orders.service.process_rows -- the single ingestion backend.
 
 Needs a real Postgres connection (see tests/conftest.py: `db_conn` truncates
 all 4 tables first via `clean_db`, then hands back a connection for setup/
 assertions). Since Fase 1d, process_rows/replace_order/find_duplicate_
 plate_numbers all take that same `db_conn` as their first argument (they no
-longer open their own connection internally -- see app/core/ingestion.py's
+longer open their own connection internally -- see app/orders/service.py's
 module docstring), so these tests both drive the call under test AND read
 back its effects through the identical session/transaction.
 """
@@ -19,9 +19,10 @@ from psycopg.rows import tuple_row
 
 from app.auth import repository
 from app.core import db
-from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
 from app.customers import repository as customers_repository
 from app.inventory import repository as inventory_repository
+from app.orders import repository as orders_repository
+from app.orders.service import find_duplicate_plate_numbers, process_rows, replace_order
 from app.pricing import repository as pricing_repository
 from app.production import repository as production_repository
 from app.shared.models import ExtractedRow
@@ -42,7 +43,7 @@ def _insert_order(conn, *, order_number: str, order_date, requested_by: str) -> 
     """Back-compat shim for this file's pre-existing "seed an order to
     replace/fuse against" setup calls -- see the identical helper (and its
     full rationale) in tests/core/db/_helpers.py."""
-    return db.insert_order(
+    return orders_repository.insert_order(
         conn,
         row=ExtractedRow(order_number=order_number, order_date=order_date, requested_by=requested_by,
                           plate_type="MOTO PARTICULAR"),
@@ -562,7 +563,7 @@ class TestReplaceOrder:
     def test_replaces_a_single_existing_order_leaving_only_the_new_one(self, db_conn):
         old_id = _insert_order(db_conn, order_number="1010", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=old_id,
+        orders_repository.insert_plate(db_conn, order_id=old_id,
                          row=make_row(order_number="1010", plate_type="CARRO PARTICULAR",
                                       is_batch_replacement=True, quantity=50),
                          is_possible_duplicate=False)
@@ -599,13 +600,13 @@ class TestReplaceOrder:
         must delete ALL of them (and ALL their plates), not just one."""
         first_id = _insert_order(db_conn, order_number="1020", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=first_id,
+        orders_repository.insert_plate(db_conn, order_id=first_id,
                          row=make_row(order_number="1020", plate_type="CARRO PARTICULAR",
                                       is_batch_replacement=True, quantity=30),
                          is_possible_duplicate=False)
         second_id = _insert_order(db_conn, order_number="1020", order_date=date(2026, 1, 10),
                                      requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=second_id,
+        orders_repository.insert_plate(db_conn, order_id=second_id,
                          row=make_row(order_number="1020", plate_type="CARRO PARTICULAR",
                                       plate_number="OLD999"),
                          is_possible_duplicate=False)
@@ -650,7 +651,7 @@ class TestReplaceOrder:
                                      quantity=100, prepared_by=None)
         old_id = _insert_order(db_conn, order_number="1040", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=old_id,
+        orders_repository.insert_plate(db_conn, order_id=old_id,
                          row=make_row(order_number="1040", plate_type="CARRO PARTICULAR",
                                       is_batch_replacement=True, quantity=40),
                          is_possible_duplicate=False)
@@ -681,7 +682,7 @@ class TestReplaceOrder:
 
         old_id = _insert_order(db_conn, order_number="1051", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=old_id,
+        orders_repository.insert_plate(db_conn, order_id=old_id,
                          row=make_row(order_number="1051", plate_type="CARRO PARTICULAR",
                                       is_batch_replacement=True, quantity=1),
                          is_possible_duplicate=False)
@@ -705,7 +706,7 @@ class TestReplaceOrder:
     def test_within_batch_repeat_is_flagged_on_both_new_rows(self, db_conn):
         old_id = _insert_order(db_conn, order_number="1060", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=old_id,
+        orders_repository.insert_plate(db_conn, order_id=old_id,
                          row=make_row(order_number="1060", plate_type="CARRO PARTICULAR",
                                       is_batch_replacement=True, quantity=1),
                          is_possible_duplicate=False)
@@ -743,7 +744,7 @@ class TestReplaceOrder:
         of when the order was originally placed."""
         old_id = _insert_order(db_conn, order_number="1072", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=old_id,
+        orders_repository.insert_plate(db_conn, order_id=old_id,
                          row=make_row(order_number="1072", plate_type="CARRO PARTICULAR",
                                       is_batch_replacement=True, quantity=1),
                          is_possible_duplicate=False)
@@ -783,7 +784,7 @@ class TestReplaceOrder:
         summary = replace_order(db_conn, "1074", new_rows)
         assert summary.orders_replaced == 1
 
-        (new_order,) = db.find_orders_by_number(db_conn, "1074")
+        (new_order,) = orders_repository.find_orders_by_number(db_conn, "1074")
         assert new_order.id != old_id
         assert production_repository.get_production_status(db_conn, new_order.id) == "pending"
         assert production_repository.list_production_events(db_conn, new_order.id) == []
@@ -814,7 +815,7 @@ class TestAtomicity:
         # insert_plate call overall -- it's for order "9001", by which point
         # "9000"'s order + plate have already been (uncommitted-ly) inserted
         # in this same transaction.
-        real_insert_plate = db.insert_plate
+        real_insert_plate = orders_repository.insert_plate
         calls = {"n": 0}
 
         def _boom(*args, **kwargs):
@@ -823,7 +824,7 @@ class TestAtomicity:
                 raise RuntimeError("simulated failure partway through process_rows")
             return real_insert_plate(*args, **kwargs)
 
-        monkeypatch.setattr(db, "insert_plate", _boom)
+        monkeypatch.setattr(orders_repository, "insert_plate", _boom)
 
         with pytest.raises(RuntimeError, match="simulated failure"), db.get_conn() as conn:
             process_rows(conn, rows)
@@ -881,7 +882,7 @@ class TestOwnershipCardLink:
         self._classify(db_conn, "JUAN", "GESTOR")
         old_id = _insert_order(db_conn, order_number="710", order_date=date(2026, 1, 1),
                                requested_by="JUAN")
-        db.insert_plate(db_conn, order_id=old_id, row=make_row(order_number="710", plate_number=None),
+        orders_repository.insert_plate(db_conn, order_id=old_id, row=make_row(order_number="710", plate_number=None),
                         is_possible_duplicate=False)
         replace_order(db_conn, "710", [make_row(order_number="710", requested_by="JUAN",
                                                  plate_number="LNK123")])

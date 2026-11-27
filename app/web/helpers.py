@@ -13,7 +13,7 @@ from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from app.core import db
+from app.orders import repository as orders_repository
 from app.shared.normalize import (
     CUSTOMER_TYPES,
     DOCUMENT_RELATIONS,
@@ -38,7 +38,7 @@ def today_iso() -> str:
 
 
 def _options(conn):
-    return db.distinct_requested_by(conn), db.distinct_cities(conn)
+    return orders_repository.distinct_requested_by(conn), orders_repository.distinct_cities(conn)
 
 
 def _padded(values: list[str], size: int) -> list[str]:

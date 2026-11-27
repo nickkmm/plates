@@ -16,6 +16,7 @@ from psycopg.rows import tuple_row
 
 from app.core import db
 from app.inventory import repository as inventory_repository
+from app.orders import repository as orders_repository
 from tests.web._helpers import _insert_order, make_row
 
 
@@ -25,7 +26,7 @@ class TestInventoryRoute:
                                      quantity=50, prepared_by=None)
         order_id = _insert_order(db_conn, order_number="2500", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="ORNAMENTAL", quantity=3),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="ORNAMENTAL", quantity=3),
                          is_possible_duplicate=False)
         inventory_repository.recalc_inventory(db_conn)
         db_conn.commit()

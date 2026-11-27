@@ -24,6 +24,7 @@ from app.core import db
 from app.core import declarations as decl
 from app.core.declarations import DeclarationInput, OwnershipCardInput, PersonInput
 from app.customers import repository as customers_repository
+from app.orders import repository as orders_repository
 from tests.conftest import TEST_USERNAME
 from tests.core.db._helpers import _insert_order, make_row
 
@@ -94,7 +95,7 @@ def _count(db_conn, table: str) -> int:
 def _fabricate(db_conn, plate_number: str, order_date: date, **row_kw) -> None:
     order_id = _insert_order(db_conn, order_number=f"O-{plate_number}-{order_date}",
                              order_date=order_date, requested_by="PEDRO")
-    db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number=plate_number, **row_kw),
+    orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number=plate_number, **row_kw),
                     is_possible_duplicate=False)
 
 

@@ -21,8 +21,8 @@ import pandas as pd
 from pydantic import ValidationError
 
 from app.core import db
-from app.core.ingestion import is_alistado, process_rows
 from app.inventory import repository as inventory_repository
+from app.orders.service import is_alistado, process_rows
 from app.shared.models import ExtractedRow
 from app.shared.normalize import clean_plate
 

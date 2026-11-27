@@ -30,6 +30,7 @@ from app.auth import repository
 from app.core import db
 from app.core.declarations import MAX_CARDS, DeclarationInput, SubmitResult, approve_declaration
 from app.customers import repository as customers_repository
+from app.orders import repository as orders_repository
 from app.web import antispam
 from app.web.app import app as flask_app
 from app.web.blueprints import public_declaration as pd
@@ -864,7 +865,7 @@ class TestEndToEnd:
         clean_resp = post(client, _form(_card(0, plate_number="ZZZ999", transit_license="L-OK"),
                                         declarant_name="Pedro Ok"))
         order_id = _insert_order(db_conn, order_number="R1", order_date=date.today(), requested_by="X")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="ABC123"),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="ABC123"),
                         is_possible_duplicate=False)
         db_conn.commit()
         resp = post(client, _form())

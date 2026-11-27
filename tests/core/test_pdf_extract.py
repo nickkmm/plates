@@ -1,4 +1,4 @@
-"""Unit tests for app.core.pdf_extract — pure parsing, no DB, no Flask.
+"""Unit tests for app.orders.pdf_extract — pure parsing, no DB, no Flask.
 
 Every PDF here is generated on the fly by tests.pdf_fixtures; the real sample
 pedidos are gitignored business data and must never be a test dependency.
@@ -10,7 +10,7 @@ from datetime import date
 
 import pytest
 
-from app.core.pdf_extract import (
+from app.orders.pdf_extract import (
     PdfExtractError,
     extract_rows_from_pdf,
     parse_order_date,

@@ -8,8 +8,8 @@ the routes show as is.
 
 from __future__ import annotations
 
-from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
-from app.core.xlsx_extract import parse_pedido_xlsx
+from app.orders.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_pdf
+from app.orders.xlsx_extract import parse_pedido_xlsx
 
 _PDF_MAGIC = b"%PDF"
 _ZIP_MAGIC = b"PK\x03\x04"           # .xlsx is a zip container

@@ -64,6 +64,12 @@ module = [
     "app.production.service",
     "app.production.repository",
     "app.cash_summary.service",
+    "app.orders.service",
+    "app.orders.pedido_upload",
+    "app.orders.pdf_extract",
+    "app.orders.xlsx_extract",
+    "app.orders.repository",
+    "app.orders.repository.*",
 ]
 disallow_untyped_defs = true
 

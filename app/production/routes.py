@@ -31,6 +31,7 @@ from flask import Blueprint, abort, current_app, redirect, render_template, requ
 from app.auth.decorators import has_permission, permission_required
 from app.core import db
 from app.core.db.declarations import REASON_LOSS
+from app.orders import repository as orders_repository
 from app.production import repository
 from app.production.repository import (
     STATUS_DELIVERED,
@@ -86,7 +87,7 @@ def _may_undo(status: str) -> bool:
 
 def _render_detail(order_id: int, *, error: str | None = None):
     with db.get_conn() as conn:
-        order, plates = db.order_detail(conn, order_id)
+        order, plates = orders_repository.order_detail(conn, order_id)
         status = repository.get_production_status(conn, order_id)
         if order is None or status is None:
             abort(404)

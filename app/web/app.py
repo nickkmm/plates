@@ -4,6 +4,12 @@ This module only creates the `app` object, configures it, registers each
 domain's blueprint, and holds the 2 routes too small to earn their own
 blueprint (/  and /healthz). The actual routes live in app/web/blueprints/,
 one module per domain:
+  declarations.py  -- GET /declaraciones, GET /declaraciones/<id>[/file/<kind>],
+                      POST /declaraciones/<id>/approve|reject (review of the
+                      sworn declarations from the public form)
+  public_declaration.py -- GET/POST /declaracion (PUBLIC sworn-declaration
+                      form, no login; 503 until Turnstile is configured)
+and in app/orders/routes/:
   ingest.py        -- GET/POST /ingest, GET/POST /ingest/pdf (the
                       "Registrar" form, by hand or pre-filled from an
                       uploaded pedido PDF)
@@ -11,11 +17,6 @@ one module per domain:
                       POST /records/<id>/save, POST /records/search-pdf,
                       POST /records/delete
   review.py        -- GET /review, POST /review/update|resolve|delete
-  declarations.py  -- GET /declaraciones, GET /declaraciones/<id>[/file/<kind>],
-                      POST /declaraciones/<id>/approve|reject (review of the
-                      sworn declarations from the public form)
-  public_declaration.py -- GET/POST /declaracion (PUBLIC sworn-declaration
-                      form, no login; 503 until Turnstile is configured)
 and in app/auth/:
   admin_routes.py  -- GET /usuarios, GET/POST /usuarios/nuevo,
                       GET/POST /usuarios/<id>, POST /usuarios/<id>/password
@@ -68,15 +69,15 @@ from app.auth.routes import bp as auth_routes_bp
 from app.cash_summary.routes import bp as cash_summary_bp
 from app.customers.routes import bp as customers_bp
 from app.inventory.routes import bp as inventory_bp
+from app.orders.routes.ingest import bp as ingest_bp
+from app.orders.routes.records import bp as records_bp
+from app.orders.routes.review import bp as review_bp
 from app.pricing.routes import bp as pricing_bp
 from app.production.routes import PRODUCTION_STATUS_LABELS
 from app.production.routes import bp as production_bp
 from app.shared.timezones import format_bogota
 from app.web.blueprints.declarations import bp as declarations_bp
-from app.web.blueprints.ingest import bp as ingest_bp
 from app.web.blueprints.public_declaration import bp as public_declaration_bp
-from app.web.blueprints.records import bp as records_bp
-from app.web.blueprints.review import bp as review_bp
 from app.web.csrf import csrf
 from app.web.helpers import format_cop
 from app.web.navigation import NAV_ITEMS

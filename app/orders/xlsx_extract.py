@@ -22,7 +22,7 @@ from typing import IO, Any
 import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
 
-from app.core.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_rows
+from app.orders.pdf_extract import ParsedPedido, PdfExtractError, parse_pedido_rows
 
 XlsxSource = bytes | bytearray | IO[bytes]
 

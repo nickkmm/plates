@@ -75,7 +75,7 @@ class ExtractedRow(BaseModel):
     # editable (real prices vary by negotiated discount) -- whatever is set
     # here at insert time is what gets saved verbatim, never re-derived from
     # the tariff table after the fact. See the re-snapshot rule in
-    # app/core/ingestion.py / app/core/db/plates.py.
+    # app/orders/service.py / app/orders/repository/plates.py.
     unit_price: Decimal | None = Field(default=None, ge=0, description="VALOR PLACA")
 
     @field_validator("order_number", mode="before")
