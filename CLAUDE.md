@@ -83,8 +83,10 @@ plates is the internal plate-production and point-of-sale app for INGSE
 - `app/auth/`: login, session check and `permission_required`, users and
   roles admin, the permission catalog and their repository
   (`app/auth/repository/`).
-- `app/customers/`, `app/pricing/`, `app/inventory/`: each domain's routes
-  (`routes.py`) and SQL (`repository`); their templates stay in
+- `app/customers/`, `app/pricing/`, `app/inventory/`, `app/production/`,
+  `app/cash_summary/`: each domain's routes (`routes.py`) and SQL
+  (`repository`); `app/production/` and `app/cash_summary/` also hold a
+  `service.py` for the business rules. Their templates stay in
   `app/web/templates/`.
 - CSRF: every `method="post"` form and every JS request that changes data
   must carry the CSRF token (`csrf_token()` field or `X-CSRFToken` header);

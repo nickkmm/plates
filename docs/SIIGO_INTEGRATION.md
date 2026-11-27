@@ -496,7 +496,7 @@ Built after the transfer is live. Common parts first.
   `AdvancePayment` (fields `type`, `payment`, `items`/`value`).
 - Total = sum of `unit_price * quantity` of plates that are neither
   `is_voided` nor `is_plate_annulled`, the same rule as `/cuadre`
-  (`app/core/cash_summary.py:118-119`) (+ extra items once §6.6 exists).
+  (`app/cash_summary/service.py`, `build_cash_summary`) (+ extra items once §6.6 exists).
   Blocked if any line has no price.
 - One receipt per order in this version (abonos are undecided; the table
   allows several documents per order later, see §6.5).

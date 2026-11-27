@@ -22,6 +22,7 @@ from decimal import Decimal
 import pytest
 
 from app.core import db
+from app.production import repository as production_repository
 from tests.core.test_declarations import _count
 from tests.web._helpers import make_row
 from tests.web.test_declarations import JPEG, _approved, _attend, _with_photos
@@ -54,7 +55,7 @@ def _order(db_conn, order_number: str = "8001", plate_number: str = "ABC123") ->
 
 
 def _set_status(db_conn, order_id: int, status: str) -> None:
-    current = db.get_production_status(db_conn, order_id)
+    current = production_repository.get_production_status(db_conn, order_id)
     assert current is not None
     with db_conn.cursor() as cur:
         cur.execute("UPDATE production_orders SET production_status = %s WHERE id = %s", (status, order_id))
@@ -93,11 +94,11 @@ class TestProductionFlow:
             assert resp.status_code == 302
             assert resp.headers["Location"].endswith(_detail(order_id))
             assert _counts(produccion_client.get(BOARD_URL).data.decode()) == counts
-        assert db.get_production_status(db_conn, order_id) == "delivered"
+        assert production_repository.get_production_status(db_conn, order_id) == "delivered"
 
         resp = _post(produccion_client, order_id, "undo", "delivered")
         assert resp.status_code == 302
-        assert db.get_production_status(db_conn, order_id) == "ready"
+        assert production_repository.get_production_status(db_conn, order_id) == "ready"
 
     def test_each_step_is_in_the_history_and_logged(self, produccion_client, db_conn, caplog):
         order_id = _order(db_conn)
@@ -152,7 +153,7 @@ class TestPointOfSale:
         events = _count(db_conn, "production_order_events")
         assert _post(punto_venta_client, order_id, "advance", status).status_code == 403
         assert _post(punto_venta_client, order_id, "undo", status).status_code == 403
-        assert db.get_production_status(db_conn, order_id) == status
+        assert production_repository.get_production_status(db_conn, order_id) == status
         assert _count(db_conn, "production_order_events") == events
 
     def test_marks_a_ready_order_delivered_and_undoes_only_that(self, punto_venta_client, db_conn):
@@ -161,14 +162,14 @@ class TestPointOfSale:
         html = punto_venta_client.get(_detail(order_id)).data.decode()
         assert "Marcar entregada" in html and "Deshacer último cambio" not in html
         assert _post(punto_venta_client, order_id, "advance", "ready").status_code == 302
-        assert db.get_production_status(db_conn, order_id) == "delivered"
+        assert production_repository.get_production_status(db_conn, order_id) == "delivered"
 
         html = punto_venta_client.get(_detail(order_id)).data.decode()
         assert "Deshacer último cambio" in html
         assert _post(punto_venta_client, order_id, "undo", "delivered").status_code == 302
-        assert db.get_production_status(db_conn, order_id) == "ready"
+        assert production_repository.get_production_status(db_conn, order_id) == "ready"
         assert _post(punto_venta_client, order_id, "undo", "ready").status_code == 403
-        assert db.get_production_status(db_conn, order_id) == "ready"
+        assert production_repository.get_production_status(db_conn, order_id) == "ready"
 
 
 class TestStaleStatus:
@@ -178,7 +179,7 @@ class TestStaleStatus:
         resp = _post(produccion_client, order_id, "advance", "in_progress")
         assert resp.status_code == 400
         assert "El estado de la orden cambió mientras tanto" in resp.data.decode()
-        assert db.get_production_status(db_conn, order_id) == "pending"
+        assert production_repository.get_production_status(db_conn, order_id) == "pending"
         assert _count(db_conn, "production_order_events") == events
 
     def test_undo_of_a_pending_order_is_400(self, produccion_client, db_conn):
@@ -248,7 +249,7 @@ class TestBadges:
     def _attended_in_progress(self, db_conn) -> tuple[int, int]:
         declaration_id = _approved(db_conn)
         order_id = _attend(db_conn, declaration_id)
-        assert db.set_production_status(
+        assert production_repository.set_production_status(
             db_conn, order_id, from_status="pending", to_status="in_progress", user_id=None,
         )
         return declaration_id, order_id
@@ -265,13 +266,13 @@ class TestBadges:
         second = _approved(db_conn, name="BETO ATENDIDO", plate="BBB222")
         _attend(db_conn, second, "7002")
         calls = []
-        original = db.production_statuses_for_orders
+        original = production_repository.production_statuses_for_orders
 
         def spy(conn, order_ids):
             calls.append(set(order_ids))
             return original(conn, order_ids)
 
-        monkeypatch.setattr(db, "production_statuses_for_orders", spy)
+        monkeypatch.setattr(production_repository, "production_statuses_for_orders", spy)
         html = authenticated_client.get("/declaraciones?stage=attended").data.decode()
         assert len(calls) == 1 and len(calls[0]) == 2
         assert "prod-in_progress" in html and "prod-pending" in html

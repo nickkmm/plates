@@ -20,6 +20,7 @@ from psycopg.rows import tuple_row
 from app.auth import repository
 from app.core import db
 from app.customers import repository as customers_repository
+from app.production import repository as production_repository
 from tests.core.db._helpers import _insert_order, make_row
 
 
@@ -517,9 +518,9 @@ class TestDeleteOrder:
         order_id = _insert_order(db_conn, order_number="1003", order_date=date(2026, 1, 1),
                                  requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="B2"), is_possible_duplicate=False)
-        db.set_production_status(db_conn, order_id, from_status="pending", to_status="in_progress",
+        production_repository.set_production_status(db_conn, order_id, from_status="pending", to_status="in_progress",
                                  user_id=None)
-        db.set_production_status(db_conn, order_id, from_status="in_progress", to_status="ready",
+        production_repository.set_production_status(db_conn, order_id, from_status="in_progress", to_status="ready",
                                  user_id=None)
 
         db.delete_order(db_conn, order_id)

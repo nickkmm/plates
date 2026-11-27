@@ -15,7 +15,7 @@ The contract under test:
 - The "Cuadre" nav link is gated by pos_roles, same as "Registrar".
 
 Aggregation correctness itself (grouping, exclusions, Decimal typing) is
-covered in tests/core/test_cash_summary.py -- this file only exercises the
+covered in tests/core/test_cash_summary.py (app/cash_summary/service.py) -- this file only exercises the
 web layer around it.
 """
 

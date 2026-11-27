@@ -241,7 +241,7 @@ first index outside a PK/UNIQUE — see quirks for both.
 | `received_by` | TEXT | nullable | Who physically received the order — distinct from `customer_id`/`requested_by`. Before Phase 1c, `nombre_recibe`. |
 | `notes` | TEXT | nullable | Before Phase 1c, `observaciones`. |
 | `created_by` | INTEGER | FK → `users(id)`, nullable | The logged-in user who saved the order — distinct from `dispatched_by`/`received_by` (physical delivery data, not who entered it into the system). Before Phase 1c, `creado_por`. |
-| `production_status` | TEXT | NOT NULL DEFAULT `'pending'` | *Added in migration `0016`.* Production status of the order: `pending` → `in_progress` → `ready` → `delivered` (to do, in progress, ready for delivery, delivered). The values are English identifiers, like `user_roles.role`; the Spanish labels are supplied by the web layer. Every new order is born `pending` through the default, without `insert_order` writing it. Orders that already existed when `0016` ran were left as `delivered` (see quirks). Indexed (`production_orders_production_status_idx`). Every change is recorded in `production_order_events`; the rules live in `app/core/production.py` (see [`CORE.md`](CORE.md)). No `CHECK`, like the rest of the schema. |
+| `production_status` | TEXT | NOT NULL DEFAULT `'pending'` | *Added in migration `0016`.* Production status of the order: `pending` → `in_progress` → `ready` → `delivered` (to do, in progress, ready for delivery, delivered). The values are English identifiers, like `user_roles.role`; the Spanish labels are supplied by the web layer. Every new order is born `pending` through the default, without `insert_order` writing it. Orders that already existed when `0016` ran were left as `delivered` (see quirks). Indexed (`production_orders_production_status_idx`). Every change is recorded in `production_order_events`; the rules live in `app/production/service.py` (see [`CORE.md`](CORE.md)). No `CHECK`, like the rest of the schema. |
 | `created_at` | TIMESTAMP | DEFAULT now() | Never used to sort by "recent" (see `recent_orders` in [`CORE.md`](CORE.md)). |
 
 ### `plates`
@@ -467,7 +467,7 @@ reads must never use `COALESCE(unit_price, 0)`.
 
 *Added in migration `0016`.* Production status history: one row for each
 change of `production_orders.production_status` (advancing or undoing a step),
-written by `app/core/db/production.py::set_production_status` only when the
+written by `app/production/repository.py::set_production_status` only when the
 change actually happened.
 
 | Column | Type | Constraint/Default | Note |
@@ -712,7 +712,7 @@ nothing pending to rename.
 ### `plates_order_id_idx` — the first index in this schema outside a PK/UNIQUE
 
 Added in Phase 1, in anticipation of the cash reconciliation report
-(`/cuadre`, Phase 5b — `app/core/cash_summary.py`), which did introduce the
+(`/cuadre`, Phase 5b — `app/cash_summary/service.py`), which did introduce the
 first real aggregate `JOIN` over the whole `plates` table
 (`plates JOIN production_orders`, filtered by `order_date`). Before this, the
 schema had no index beyond the ones Postgres creates automatically for the

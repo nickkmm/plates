@@ -3,10 +3,10 @@
 Pure web layer: every aggregation rule (grouping by order_date then
 payment_method, the SIN FORMA DE PAGO bucket, excluding voided/annulled
 plates, and the missing-unit_price warning list) lives in
-app/core/cash_summary.py -- this module only parses/validates the desde/
+app/cash_summary/service.py -- this module only parses/validates the desde/
 hasta query params, calls build_cash_summary/render_cash_summary_pdf, and
-renders or streams the result. No SQL here, per docs/CORE.md's rule that no
-query/business rule lives outside app/core/.
+renders or streams the result. No SQL here: the queries and business rules
+live in the service.
 
 @permission_required("cash_summary.view") on BOTH routes -- the plan is explicit
 both the HTML view and the PDF export need it: PTO.V is exactly who reads
@@ -20,8 +20,8 @@ from datetime import date
 from flask import Blueprint, Response, render_template, request
 
 from app.auth.decorators import permission_required
-from app.core import db
-from app.core.cash_summary import build_cash_summary, render_cash_summary_pdf
+from app.cash_summary.service import build_cash_summary, render_cash_summary_pdf
+from app.shared import db
 from app.web.helpers import today_iso
 
 bp = Blueprint("cash_summary", __name__)

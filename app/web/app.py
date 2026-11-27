@@ -11,14 +11,9 @@ one module per domain:
                       POST /records/<id>/save, POST /records/search-pdf,
                       POST /records/delete
   review.py        -- GET /review, POST /review/update|resolve|delete
-  cash_summary.py  -- GET /cuadre, GET /cuadre/pdf (daily cash-reconciliation
-                      report, Fase 5b)
   declarations.py  -- GET /declaraciones, GET /declaraciones/<id>[/file/<kind>],
                       POST /declaraciones/<id>/approve|reject (review of the
                       sworn declarations from the public form)
-  production.py    -- GET /produccion, GET /produccion/<id> (+ its declaration
-                      photos), POST /produccion/<id>/advance|undo (the
-                      production board and its status steps)
   public_declaration.py -- GET/POST /declaracion (PUBLIC sworn-declaration
                       form, no login; 503 until Turnstile is configured)
 and in app/auth/:
@@ -32,6 +27,11 @@ and in each domain package's routes.py:
   app/pricing/     -- GET /precios, POST /precios/<plate_type> (admin-only
                       tariff editor, Fase 5a)
   app/inventory/   -- GET /inventory, POST /inventory/alistado
+  app/production/  -- GET /produccion, GET /produccion/<id> (+ its declaration
+                      photos), POST /produccion/<id>/advance|undo (the
+                      production board and its status steps)
+  app/cash_summary/ -- GET /cuadre, GET /cuadre/pdf (daily cash-reconciliation
+                      report, Fase 5b)
 
 All routes except /login, /logout, /healthz and /declaracion require an
 active logged-in user, checked against the database on every request. Each
@@ -65,15 +65,15 @@ from app.auth import decorators as auth
 from app.auth.admin_routes import bp as users_bp
 from app.auth.decorators import authenticated
 from app.auth.routes import bp as auth_routes_bp
+from app.cash_summary.routes import bp as cash_summary_bp
 from app.customers.routes import bp as customers_bp
 from app.inventory.routes import bp as inventory_bp
 from app.pricing.routes import bp as pricing_bp
+from app.production.routes import PRODUCTION_STATUS_LABELS
+from app.production.routes import bp as production_bp
 from app.shared.timezones import format_bogota
-from app.web.blueprints.cash_summary import bp as cash_summary_bp
 from app.web.blueprints.declarations import bp as declarations_bp
 from app.web.blueprints.ingest import bp as ingest_bp
-from app.web.blueprints.production import PRODUCTION_STATUS_LABELS
-from app.web.blueprints.production import bp as production_bp
 from app.web.blueprints.public_declaration import bp as public_declaration_bp
 from app.web.blueprints.records import bp as records_bp
 from app.web.blueprints.review import bp as review_bp

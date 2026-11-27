@@ -2,9 +2,9 @@
 
 The **Producción** screen (`/produccion`) is where the production team sees
 all the orders created by the point of sale and takes them through to
-delivery. The business rules are in `app/core/production.py` (no Flask) and
-the data layer in `app/core/db/production.py`; the screen is in
-`app/web/blueprints/production.py` with the templates `production.html` and
+delivery. The business rules are in `app/production/service.py` (no Flask) and
+the data layer in `app/production/repository.py`; the screen is in
+`app/production/routes.py` with the templates `production.html` and
 `production_detail.html`.
 
 ## The full flow

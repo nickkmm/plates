@@ -1,4 +1,4 @@
-"""Tests for app/core/production.py -- next_status/previous_status (pure) and
+"""Tests for app/production/service.py -- next_status/previous_status (pure) and
 advance_order/revert_order (need a real Postgres connection, see
 tests/conftest.py's `db_conn`/`clean_db`)."""
 
@@ -11,7 +11,8 @@ from psycopg.rows import tuple_row
 
 from app.auth import repository
 from app.core import db
-from app.core.production import advance_order, next_status, previous_status, revert_order
+from app.production import repository as production_repository
+from app.production.service import advance_order, next_status, previous_status, revert_order
 from app.shared.models import ExtractedRow
 from tests.conftest import PRODUCCION_USERNAME, TEST_USERNAME
 
@@ -67,8 +68,8 @@ class TestAdvanceOrder:
         steps = [("pending", "in_progress"), ("in_progress", "ready"), ("ready", "delivered")]
         for n, (from_status, to_status) in enumerate(steps, start=1):
             assert advance_order(db_conn, order_id, user_id, expected_status=from_status) == to_status
-            assert db.get_production_status(db_conn, order_id) == to_status
-            events = db.list_production_events(db_conn, order_id)
+            assert production_repository.get_production_status(db_conn, order_id) == to_status
+            events = production_repository.list_production_events(db_conn, order_id)
             assert len(events) == n
             assert (events[-1].from_status, events[-1].to_status) == (from_status, to_status)
             assert events[-1].username == TEST_USERNAME
@@ -86,8 +87,8 @@ class TestRevertOrder:
         _set_status(db_conn, order_id, "ready")
         user_id = _user_id(db_conn, PRODUCCION_USERNAME)
         assert revert_order(db_conn, order_id, user_id, expected_status="ready") == "in_progress"
-        assert db.get_production_status(db_conn, order_id) == "in_progress"
-        events = db.list_production_events(db_conn, order_id)
+        assert production_repository.get_production_status(db_conn, order_id) == "in_progress"
+        events = production_repository.list_production_events(db_conn, order_id)
         assert [(e.from_status, e.to_status, e.username) for e in events] == [
             ("ready", "in_progress", PRODUCCION_USERNAME),
         ]
@@ -97,7 +98,7 @@ class TestRevertOrder:
         order_id = _new_order(db_conn)
         _set_status(db_conn, order_id, "delivered")
         assert revert_order(db_conn, order_id, None, expected_status="delivered") == "ready"
-        assert db.get_production_status(db_conn, order_id) == "ready"
+        assert production_repository.get_production_status(db_conn, order_id) == "ready"
 
 
 class TestErrors:
@@ -106,8 +107,8 @@ class TestErrors:
 
     @staticmethod
     def _assert_unchanged(db_conn, order_id: int, status: str, events: int) -> None:
-        assert db.get_production_status(db_conn, order_id) == status
-        assert len(db.list_production_events(db_conn, order_id)) == events
+        assert production_repository.get_production_status(db_conn, order_id) == status
+        assert len(production_repository.list_production_events(db_conn, order_id)) == events
 
     @pytest.mark.parametrize("move", [advance_order, revert_order])
     def test_nonexistent_order(self, db_conn, move):
@@ -161,7 +162,7 @@ class TestErrors:
         """The status read matches, but the conditional UPDATE loses the race
         (another session moved it in between): still the stale message."""
         order_id = _new_order(db_conn)
-        monkeypatch.setattr(db, "set_production_status", lambda *args, **kwargs: False)
+        monkeypatch.setattr(production_repository, "set_production_status", lambda *args, **kwargs: False)
         with pytest.raises(ValueError) as excinfo:
             advance_order(db_conn, order_id, None, expected_status="pending")
         assert str(excinfo.value) == _STALE

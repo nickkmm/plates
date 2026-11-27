@@ -61,6 +61,9 @@ module = [
     "app.customers.repository.*",
     "app.pricing.repository",
     "app.inventory.repository",
+    "app.production.service",
+    "app.production.repository",
+    "app.cash_summary.service",
 ]
 disallow_untyped_defs = true
 
