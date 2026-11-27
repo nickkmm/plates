@@ -80,6 +80,9 @@ plates is the internal plate-production and point-of-sale app for INGSE
 
 - `app/web/`: Flask app, one blueprint per domain in `app/web/blueprints/`,
   Jinja templates.
+- `app/auth/`: login, session check and `permission_required`, users and
+  roles admin, the permission catalog and their repository
+  (`app/auth/repository/`).
 - CSRF: every `method="post"` form and every JS request that changes data
   must carry the CSRF token (`csrf_token()` field or `X-CSRFToken` header);
   see `docs/WEB.md`, "CSRF protection".

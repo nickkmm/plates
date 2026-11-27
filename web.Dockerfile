@@ -18,7 +18,7 @@ EXPOSE 8000
 # app's own current_app.logger.info calls and unhandled-exception tracebacks
 # would show up). Doesn't include the username (gunicorn's %(u)s comes from
 # WSGI's REMOTE_USER, which our session-cookie auth never sets) -- that's
-# what the app.logger.info calls in auth_routes.py/ingest.py/records.py are
-# for.
+# what the app.logger.info calls in app/auth/routes.py and the
+# ingest/records blueprints are for.
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120", \
      "--access-logfile", "-", "app.web.app:app"]
