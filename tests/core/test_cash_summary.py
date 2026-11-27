@@ -31,7 +31,7 @@ from app.core.cash_summary import (
     build_cash_summary,
     render_cash_summary_pdf,
 )
-from app.core.models import ExtractedRow
+from app.shared.models import ExtractedRow
 
 
 def _make_row(**overrides: object) -> ExtractedRow:

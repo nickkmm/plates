@@ -4,9 +4,9 @@ requested_by (the intermediary typed on an order -- PTO.V, MUVA, etc.) and
 the sale "customer" are the SAME entity (see docs/DATABASE.md): a customer
 row is looked up/created by its canonical name, exactly the same canonical
 form `customers.name`'s UNIQUE constraint and the Fase 1 backfill both use
-(app.core.normalize.normalize_requested_by).
+(app.shared.normalize.normalize_requested_by).
 
-See app/core/db/__init__.py for the module-wide connection/transaction
+See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.
 """
 
@@ -18,7 +18,7 @@ import psycopg
 from psycopg.rows import DictRow, class_row
 
 from app.core.db.plates import relink_plates
-from app.core.normalize import normalize_requested_by
+from app.shared.normalize import normalize_requested_by
 
 
 @dataclass

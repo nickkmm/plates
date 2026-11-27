@@ -2,7 +2,7 @@
 pending -> in_progress -> ready -> delivered, or one step back. No Flask.
 
 The data layer is app/core/db/production.py. Takes an open `conn` and never
-commits/rolls back (same contract as app/core/db/__init__.py).
+commits/rolls back (same contract as app/shared/db.py).
 
 **Optimistic concurrency**: the caller passes the status the person SAW
 (`expected_status`, e.g. from the board they clicked on). The change only

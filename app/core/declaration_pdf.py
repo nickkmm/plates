@@ -51,7 +51,7 @@ from app.core.declarations import (
     DATA_POLICY_TITLE,
     MARKETING_STATEMENT,
 )
-from app.core.timezones import to_bogota
+from app.shared.timezones import to_bogota
 
 COMPANY_NAME = "INGSE SAS"
 COMPANY_TAGLINE = "NIT 900.773.756-0 · Fabricante autorizado de la Placa Única Nacional para Vehículos"

@@ -4,14 +4,14 @@ ornamental_count.
 Needs a real Postgres connection (see tests/conftest.py's
 `db_conn`/`clean_db`). Setup here calls db.py's own
 insert_order/insert_plate directly -- deliberately bypassing
-app.core.ingestion and app.core.normalize."""
+app.core.ingestion and app.shared.normalize."""
 
 from __future__ import annotations
 
 from datetime import date
 
 from app.core import db
-from app.core.normalize import INVENTORY_CATEGORIES
+from app.shared.normalize import INVENTORY_CATEGORIES
 from tests.core.db._helpers import _insert_order, make_row
 
 

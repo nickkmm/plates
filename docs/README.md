@@ -20,7 +20,7 @@ it is not repeated here.
 |---|---|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Components, deployment (Docker/networks), CI/CD pipeline |
 | [`DATABASE.md`](DATABASE.md) | Full schema, ER diagram, columns, data quirks |
-| [`CORE.md`](CORE.md) | `app/core/`: normalization, PDF extraction, ingestion pipeline |
+| [`CORE.md`](CORE.md) | `app/core/` and `app/shared/`: connection pool, normalization, PDF extraction, ingestion pipeline |
 | [`WEB.md`](WEB.md) | `app/web/`: routes, roles/permissions, templates, complete flows |
 | [`PRODUCTION.md`](PRODUCTION.md) | Production screen: an order's flow through to delivery, states, permissions and routes |
 | [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md) | Local infra gotchas, testing, environment variables |

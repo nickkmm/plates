@@ -7,8 +7,10 @@ from flask import Blueprint, current_app, redirect, render_template, request, se
 
 from app.core import db
 from app.core.ingestion import find_duplicate_plate_numbers
-from app.core.models import ExtractedRow
-from app.core.normalize import (
+from app.core.pdf_extract import PdfExtractError
+from app.core.pedido_upload import parse_uploaded_pedido
+from app.shared.models import ExtractedRow
+from app.shared.normalize import (
     PAYMENT_METHODS,
     REASONS,
     RECEIPT_TYPES,
@@ -18,8 +20,6 @@ from app.core.normalize import (
     normalize_row,
     validate_plate,
 )
-from app.core.pdf_extract import PdfExtractError
-from app.core.pedido_upload import parse_uploaded_pedido
 from app.web.auth import permission_required
 from app.web.helpers import FORM_PLATE_TYPES, _options, _padded, _validate_order_header, today_iso
 

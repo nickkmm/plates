@@ -15,10 +15,10 @@ flowchart TD
         PDF["Order upload: PDF or Excel<br/>(/ingest/pdf)"]
         MIG["Excel migration<br/>(app/migrate.py, one-off)"]
     end
-    M --> ER["ExtractedRow<br/>(app/core/models.py)"]
+    M --> ER["ExtractedRow<br/>(app/shared/models.py)"]
     PDF -->|"pdfplumber.extract_tables() / openpyxl"| ER
     MIG --> ER
-    ER --> NORM["normalize_row<br/>(app/core/normalize.py)"]
+    ER --> NORM["normalize_row<br/>(app/shared/normalize.py)"]
     NORM --> PROC["process_rows / replace_order<br/>(app/core/ingestion.py)"]
     PROC --> DBL["app/core/db/ (package)"]
     DBL --> PG[(Postgres, via pool)]

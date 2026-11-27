@@ -86,7 +86,7 @@ class TestListDeclarationsByProductionOrder:
     def test_lists_the_linked_declarations_by_id_and_empty_for_none(self, db_conn):
         from datetime import date
 
-        from app.core.models import ExtractedRow
+        from app.shared.models import ExtractedRow
 
         def order(number: str) -> int:
             return db.insert_order(db_conn, row=ExtractedRow(
@@ -362,7 +362,7 @@ def _stage_fixtures(db_conn) -> dict[str, int]:
     """One declaration per situation of the derived stage (7 rows, 5 stages)."""
     from datetime import date
 
-    from app.core.models import ExtractedRow
+    from app.shared.models import ExtractedRow
 
     order_id = db.insert_order(db_conn, row=ExtractedRow(
         order_number="9001", order_date=date(2026, 9, 1), requested_by="ANA",

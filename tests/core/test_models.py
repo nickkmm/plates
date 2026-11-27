@@ -1,6 +1,6 @@
-"""Tests for app.core.models -- ExtractedRow's before-validators.
+"""Tests for app.shared.models -- ExtractedRow's before-validators.
 
-These validators run BEFORE app.core.normalize ever sees the data (they only
+These validators run BEFORE app.shared.normalize ever sees the data (they only
 coerce/clean at the type level; the richer business normalization -- casing,
 canonical names, annulment inference -- is normalize.py's job and is tested
 separately in test_normalize.py).
@@ -14,7 +14,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.core.models import ExtractedRow, Extraction
+from app.shared.models import ExtractedRow, Extraction
 
 
 def make_row(**overrides: object) -> ExtractedRow:

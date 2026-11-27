@@ -27,8 +27,8 @@ from psycopg.rows import DictRow
 from pydantic import BaseModel
 
 from app.core import db
-from app.core.models import ExtractedRow
-from app.core.normalize import inventory_category, is_real_plate, normalize_row
+from app.shared.models import ExtractedRow
+from app.shared.normalize import inventory_category, is_real_plate, normalize_row
 
 
 class Summary(BaseModel):

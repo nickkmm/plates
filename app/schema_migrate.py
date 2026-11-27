@@ -32,7 +32,7 @@ is applied and recorded in `schema_migrations` inside the SAME transaction
 (so a file that fails partway through is never marked applied), and already-
 applied files/backfill steps are skipped on the next run. The customers/
 users backfill is plain Python (not a `.sql` file) because grouping
-requires app.core.normalize.normalize_requested_by -- it is tracked in the
+requires app.shared.normalize.normalize_requested_by -- it is tracked in the
 same `schema_migrations` table under its own synthetic version names, and its
 SQL is additionally written to be idempotent on its own (ON CONFLICT DO
 NOTHING / UPDATE ... WHERE customer_id IS NULL) as defense in depth.
@@ -53,7 +53,7 @@ import psycopg
 from psycopg.rows import DictRow
 
 from app.core import db
-from app.core.normalize import normalize_requested_by
+from app.shared.normalize import normalize_requested_by
 from app.web.auth import ROLE_ADMIN, load_roles, load_users
 
 _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")

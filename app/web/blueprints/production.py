@@ -36,11 +36,11 @@ from app.core.db.production import (
     STATUS_PENDING,
     STATUS_READY,
 )
-from app.core.normalize import inventory_category
 from app.core.production import advance_order, revert_order
+from app.shared.normalize import inventory_category
+from app.shared.uploads import send_stored_file
 from app.web.auth import has_permission, permission_required
 from app.web.blueprints.declarations import CARD_PHOTO_SIDES, FILE_KINDS
-from app.web.uploads import send_stored_file
 
 bp = Blueprint("production", __name__)
 

@@ -1,4 +1,4 @@
-"""Tests for app.web.uploads (no DB; writes only under tmp_path)."""
+"""Tests for app.shared.uploads (no DB; writes only under tmp_path)."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import re
 import pytest
 from werkzeug.datastructures import FileStorage
 
-from app.web import uploads
-from app.web.uploads import UploadError
+from app.shared import uploads
+from app.shared.uploads import UploadError
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 

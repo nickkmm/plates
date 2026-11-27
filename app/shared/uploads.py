@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from flask import abort, send_file
+from flask import Response, abort, send_file
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_SIGNATURE_BYTES = 200 * 1024
@@ -118,7 +118,7 @@ def resolve_upload_path(name: str) -> Path:
     return uploads_dir() / name
 
 
-def send_stored_file(stored_name: str | None, mimetype: str | None):
+def send_stored_file(stored_name: str | None, mimetype: str | None) -> Response:
     """Serve an upload by its stored name (never a client-supplied path):
     inline, `nosniff`, `no-store`; 404 when there is none or it is gone.
     `mimetype=None` means a photo, typed by the stored extension."""

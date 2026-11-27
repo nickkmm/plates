@@ -42,7 +42,7 @@ import psycopg.errors
 from flask import Blueprint, Response, current_app, make_response, render_template, request
 from werkzeug.exceptions import RequestEntityTooLarge
 
-from app.core import db, normalize
+from app.core import db
 from app.core.declarations import (
     ACTING_AS_GESTOR,
     DATA_POLICY_PARAGRAPH_1,
@@ -60,9 +60,10 @@ from app.core.declarations import (
     submit_declaration,
     validate_declaration,
 )
+from app.shared import normalize
+from app.shared.uploads import UploadError, resolve_upload_path, save_photo, save_signature_png
 from app.web import antispam
 from app.web.csrf import csrf
-from app.web.uploads import UploadError, resolve_upload_path, save_photo, save_signature_png
 
 bp = Blueprint("public_declaration", __name__)
 

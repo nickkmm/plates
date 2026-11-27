@@ -2,7 +2,7 @@
 
 The data layer is app/core/db/declarations.py; this module decides what a
 submitted declaration does. Takes an open `conn` and never commits/rolls back
-(same contract as app/core/db/__init__.py).
+(same contract as app/shared/db.py).
 
 **Model**: a declaration has ONE declarant (the person who signs, once, for
 everything declared) and 1..MAX_CARDS ownership cards ("tarjetas de
@@ -81,7 +81,7 @@ from app.core.db.declarations import (
     STATUS_PENDING_REVIEW,
     STATUS_REJECTED,
 )
-from app.core.normalize import (
+from app.shared.normalize import (
     ACTING_AS,
     DECLARATION_REASONS,
     DOCUMENT_RELATIONS,
@@ -94,7 +94,7 @@ from app.core.normalize import (
     normalize_requested_by,
     validate_plate,
 )
-from app.core.timezones import utc_now
+from app.shared.timezones import utc_now
 
 # Re-exported so callers of the logic layer need only this module.
 PLATE_MADE_RECENTLY = FLAG_PLATE_MADE_RECENTLY

@@ -1,8 +1,8 @@
-"""Tests for app.core.normalize -- pure functions, no DB.
+"""Tests for app.shared.normalize -- pure functions, no DB.
 
 Highest-value module in the suite: normalization/annulment-detection bugs
 here silently corrupt inventory numbers or merge distinct customers. See the
-module docstring in app/core/normalize.py for the business rules being
+module docstring in app/shared/normalize.py for the business rules being
 tested.
 """
 
@@ -12,8 +12,8 @@ from datetime import date
 
 import pytest
 
-from app.core.models import ExtractedRow
-from app.core.normalize import (
+from app.shared.models import ExtractedRow
+from app.shared.normalize import (
     _CITY_SPECIFIC_TYPES,
     _PLATE_DESC,
     CUSTOMER_TYPES,
@@ -677,11 +677,11 @@ class TestNormalizeChoice:
 class TestMaxPlatesPerCard:
     @pytest.mark.parametrize("plate_type", ["CARRO PARTICULAR", "CARRO PÚBLICO"])
     def test_cars_have_front_and_rear_plates(self, plate_type):
-        from app.core.normalize import max_plates_per_card
+        from app.shared.normalize import max_plates_per_card
         assert max_plates_per_card(plate_type) == 2
 
     @pytest.mark.parametrize("plate_type", [
         "MOTO PARTICULAR", "MOTO CARRO PARTICULAR", "MOTO CARRO PÚBLICO", "REMOLQUE", "ORNAMENTAL", None, "XYZ"])
     def test_every_other_type_has_one(self, plate_type):
-        from app.core.normalize import max_plates_per_card
+        from app.shared.normalize import max_plates_per_card
         assert max_plates_per_card(plate_type) == 1

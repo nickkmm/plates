@@ -331,7 +331,7 @@ plate_number, plate_to, city, is_voided, ...)`. Output:
   because a blank was produced.
 - **Quantity unit — must be settled before task 3.** The code counts
   physical plates in `plates.quantity`: `max_plates_per_card` gives 2 for
-  cars (`app/core/normalize.py:147-149`) and declaration orders copy
+  cars (`app/shared/normalize.py:147-149`) and declaration orders copy
   `plate_quantity` into `quantity` (`ingest.py:465`). But NT-3874 shows
   quantity `1.00` for "1P PARTICULAR" (one car sale, RC-2-652 = one unit at
   130 000). Check the stored `quantity` of the CEU215 order (NT 3874) in
@@ -528,7 +528,7 @@ Built after the transfer is live. Common parts first.
 document per order and kind (`UNIQUE (order_id, kind) WHERE status <> 'error'`)
 until abonos are designed. On success also fill
 `production_orders.receipt_type`/`receipt_number` as staff do today
-(`RECEIPT_TYPES`, `app/core/normalize.py:224`): receipt → `RECIBO` +
+(`RECEIPT_TYPES`, `app/shared/normalize.py:224`): receipt → `RECIBO` +
 `RC-2-<n>`; invoice → `FACTURA` + `FV-3-<n>`.
 
 Once a document is `sent`: lock price, quantity, payment method, transfer

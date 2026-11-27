@@ -10,7 +10,7 @@ ValueError; role_permissions_permission_fkey (a FK to permissions(code)) also
 enforces them in the DB. These functions don't protect system roles; that
 guard belongs to the screen (app/core/user_admin.py and the users blueprint).
 
-See app/core/db/__init__.py for the module-wide connection/transaction
+See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.
 """
 

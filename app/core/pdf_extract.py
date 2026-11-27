@@ -39,8 +39,8 @@ from typing import IO, Any
 import pdfplumber
 from pydantic import BaseModel
 
-from app.core.models import ExtractedRow
-from app.core.normalize import PLATE_TYPES, clean_plate
+from app.shared.models import ExtractedRow
+from app.shared.normalize import PLATE_TYPES, clean_plate
 
 PdfSource = str | Path | bytes | bytearray | IO[bytes]
 
