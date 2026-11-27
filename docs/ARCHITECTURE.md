@@ -19,21 +19,21 @@ flowchart TD
     PDF -->|"pdfplumber.extract_tables() / openpyxl"| ER
     MIG --> ER
     ER --> NORM["normalize_row<br/>(app/shared/normalize.py)"]
-    NORM --> PROC["process_rows / replace_order<br/>(app/core/ingestion.py)"]
-    PROC --> DBL["app/core/db/ (package)"]
+    NORM --> PROC["process_rows / replace_order<br/>(app/orders/service.py)"]
+    PROC --> DBL["app/orders/repository/ (package)"]
     PROC --> DOM["app/customers/, app/pricing/,<br/>app/inventory/, app/production/ (repositories)"]
     DOM --> PG
     DBL --> PG[(Postgres, via pool)]
     PROC --> INV[recalc_inventory]
     INV --> DBL
 
-    WEB["app/web/blueprints/*.py<br/>(Flask routes)"] --> PROC
+    WEB["app/orders/routes/*.py, app/web/blueprints/*.py<br/>(Flask routes)"] --> PROC
     WEB --> DBL
     WEB --> DOM
 ```
 
-`app/core/ingestion.py` (renamed from `process.py`) and `app/core/db/`
-(split out of a single `db.py`) are the result of Phase 1d — an
+The ingestion module (now `app/orders/service.py`, first renamed from
+`process.py`) and `app/core/db/` (split out of a single `db.py`) are the result of Phase 1d — an
 architecture refactor by domain without adding an ORM, a DI framework or a
 repository layer, plus a real connection pool (`psycopg_pool`). Full
 details in [`CORE.md`](CORE.md).
@@ -49,17 +49,30 @@ The customers, pricing and inventory domains follow the same layout:
 `routes.py` (the blueprint) and their SQL (`app/customers/repository/`, a
 package with `customers.py` and `ownership_cards.py`;
 `app/pricing/repository.py`; `app/inventory/repository.py`). Other code may
-import them; they import `app/shared/`, `app/auth/` and, until those move,
-`app.core.db.plates` (customers) and `app.web.helpers` (routes). Their
+import them; they import `app/shared/`, `app/auth/` and, until phase 6,
+`app.web.helpers` (routes). Their
 templates stay in `app/web/templates/`.
 
 The production and cash summary domains add a `service.py` for their
 business rules: `app/production/` holds `routes.py`, `service.py` (the
 status transitions) and `repository.py` (the production-status SQL);
 `app/cash_summary/` holds `routes.py` and `service.py` (the aggregation and
-its PDF). Until the orders and declarations domains move, `app/production/`
-also imports `app.core.db` and `app.web.blueprints.declarations`, and the
-cash summary queries read `plates` and `production_orders` directly.
+its PDF). `app/production/` imports `app.orders` for the order data; until the
+declarations domain moves, it also imports `app.core.db` and
+`app.web.blueprints.declarations`, and the cash summary queries read
+`plates` and `production_orders` directly.
+
+The orders domain, `app/orders/`, holds the point of sale, records and
+duplicates review blueprints (`routes/ingest.py`, `routes/records.py`,
+`routes/review.py`), the ingestion pipeline (`service.py`), the pedido
+parsers (`pdf_extract.py`, `xlsx_extract.py`, `pedido_upload.py`) and the
+`production_orders`/`plates` SQL (`repository/`, a package with `orders.py`
+and `plates.py`). It imports `app/shared/`, `app/auth/`, `app/customers/`,
+`app/pricing/` and `app/inventory/`; until they move, `app.core.db` and
+`app.core.declarations` for the declarations data, and the routes import
+`app.web.helpers` until phase 6. Nothing in `app/customers/` imports it:
+`relink_plates`, which `update_customer` calls, lives in
+`app/customers/repository/ownership_cards.py`.
 
 This is what lets the historical Excel migration (`app/migrate.py`) reuse
 exactly the same normalization and duplicate detection that the web form

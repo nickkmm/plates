@@ -24,6 +24,13 @@ domain (`app/production/service.py`, `app/production/repository.py`) and
 the cash summary domain (`app/cash_summary/service.py`); their routes are in
 [`WEB.md`](WEB.md).
 
+It also covers the orders domain, `app/orders/`: the ingestion pipeline
+(`app/orders/service.py`), the pedido parsers (`app/orders/pdf_extract.py`,
+`app/orders/xlsx_extract.py`, `app/orders/pedido_upload.py`) and the
+`production_orders`/`plates` SQL (`app/orders/repository/`, a package with
+`orders.py` and `plates.py`). Its routes (`app/orders/routes/`: `ingest.py`,
+`records.py`, `review.py`) are in [`WEB.md`](WEB.md).
+
 ## Full ingestion pipeline
 
 ```mermaid
@@ -42,7 +49,7 @@ flowchart TD
 
 The whole pipeline runs in **a single transaction** per call: the
 caller opens `with db.get_conn() as conn:` and passes it explicitly to
-`ingestion.process_rows(conn, rows)` / `replace_order(conn, ...)` — a
+`service.process_rows(conn, rows)` / `replace_order(conn, ...)` — a
 failure midway rolls back both the inserts and any deletes (in the case of
 `replace_order`, see below). Before Phase 1d each of those functions opened
 its own connection separately (a single `POST /ingest` ran in several
@@ -52,7 +59,7 @@ transactions that were not atomic with respect to each other); see the
 ## `models.py` (`app/shared/models.py`)
 
 Pydantic schema for one ledger/order line, shared as-is by every ingestion
-entry point so that `ingestion.py` only has to handle one data shape.
+entry point so that `app/orders/service.py` only has to handle one data shape.
 
 - **`ExtractedRow`** — `order_number` (str, not int: there are values like
   `"NT 895"`), `order_date`, `requested_by`, `plate_type`, `city`,
@@ -119,7 +126,7 @@ Pure normalization, no database access — testable in isolation.
   sessions), not a generic algorithm — several near-duplicates are
   deliberately left unmerged, pending confirmation.
 
-## `pdf_extract.py`
+## `pdf_extract.py` (`app/orders/pdf_extract.py`)
 
 Parses INGSE's fixed-format "pedido" (order) PDF into the same
 `ExtractedRow` shape the manual form produces, so a person can upload a PDF
@@ -130,7 +137,7 @@ reaches `process_rows`.
 |---|---|
 | `PdfExtractError` | Exception with a Spanish message ("this is not a readable order") — never lets a bad PDF bring the app down with a 500. |
 | `ParsedLine` | One line of the plate table: `line_type` (`"placa"`/`"rango"`), `plate_type`, `plate_number`, `plate_to`, `quantity`, `city`. |
-| `ParsedPedido` | Header (`order_number`, `order_date`, `requested_by`) + `lines`; `.to_rows()` converts to `ExtractedRow`, warning in Spanish which header field is missing if it is incomplete — the plate lines are never held hostage by a bad header. **Phase 4** added 10 more fields, all raw text with no business interpretation (`customer_document_number`, `tracking_number`, `client_order_number`, `delivery_date`, `payment_date`, `dispatched_by`, `customer_phone`, `received_by`, `payment_method`, `notes`) — mapping vocabularies (`normalize_choice`) and deciding what is required is the job of `app/web/blueprints/ingest.py::_form_from_pedido`, not of this module. |
+| `ParsedPedido` | Header (`order_number`, `order_date`, `requested_by`) + `lines`; `.to_rows()` converts to `ExtractedRow`, warning in Spanish which header field is missing if it is incomplete — the plate lines are never held hostage by a bad header. **Phase 4** added 10 more fields, all raw text with no business interpretation (`customer_document_number`, `tracking_number`, `client_order_number`, `delivery_date`, `payment_date`, `dispatched_by`, `customer_phone`, `received_by`, `payment_method`, `notes`) — mapping vocabularies (`normalize_choice`) and deciding what is required is the job of `app/orders/routes/ingest.py::_form_from_pedido`, not of this module. |
 | `parse_order_date(value)` | Tries ISO, then numeric day-first (Colombian convention), then Spanish month names; returns `None` instead of guessing. |
 | `parse_pedido_pdf(source)` | Main parser: extracts tables from all pages, locates the `ITEM \| PLACA \| ...` header row, reads the fields above (`_find_header_value`), and parses the lines below up to the `TOTAL PEDIDO` row. |
 | `extract_rows_from_pdf(source)` | Shortcut: `parse_pedido_pdf(source).to_rows()` for non-interactive callers. The web flow uses `parse_pedido_pdf` directly so it can tolerate a partial header and let the person fill in what is missing. |
@@ -202,7 +209,9 @@ to text and passes them to `pdf_extract.parse_pedido_rows` (the same label logic
   the start of the footer block, but its *value* is not read) — `unit_price`
   always comes from the current rate (`plate_type_prices`), never from the PDF.
 
-## `ingestion.py` (formerly `process.py`, renamed in Phase 1d)
+## `service.py` (`app/orders/service.py`)
+
+Formerly `ingestion.py` in `app/core/` (and before Phase 1d, `process.py`).
 
 The single ingestion backend that all entry points converge on. Given a
 batch of `ExtractedRow`: normalizes, detects duplicates, groups by order,
@@ -211,7 +220,7 @@ inserts, recalculates inventory — all in one transaction.
 **Takes `conn` as an explicit first parameter** in its three public
 functions (`process_rows(conn, rows)`, `replace_order(conn, order_number,
 rows)`, `find_duplicate_plate_numbers(conn, rows)`) and never commits or
-rolls back — the same contract followed by everything in `app/core/db/` (see
+rolls back — the same contract followed by every repository (see
 below). Before Phase 1d each one opened its own `db.get_conn()`
 internally, so a single `POST /ingest` ran in 3-4 separate
 transactions (the duplicate check and the insert it is supposed to protect
@@ -298,15 +307,12 @@ concrete case this closes.
 
 ## `db/` (package — formerly a single flat `db.py`, split in Phase 1d)
 
-All the raw SQL (psycopg 3, no ORM) for `production_orders`, `plates` and
-`declarations`/`declaration_cards`, split by domain instead of a single
-556-line file:
+The raw SQL (psycopg 3, no ORM) for `declarations`/`declaration_cards`; the
+rest of the old 556-line file moved to the domain packages:
 
 | Module | What it contains |
 |---|---|
-| `db/__init__.py` | `get_conn()` re-exported from `app/shared/db.py` (see pool below) + explicit re-export of every public function of all the submodules — `db.insert_order(...)`, `db.update_plate(...)`, `db.get_declaration(...)`, etc. are still called exactly the same from outside the package. The customers, ownership cards, pricing, inventory and production-status SQL moved to their domain packages (see the table below) and is no longer re-exported here. |
-| `db/orders.py` | CRUD of `production_orders` + `OrderSummary` (typed dataclass, `class_row`) — the row shape shared by `recent_orders`/`find_orders_by_number`/`search_orders_by_number`. |
-| `db/plates.py` | CRUD of `plates`, including `distinct_cities` (grouped here for symmetry with `distinct_requested_by` in `orders.py`, although both read `plates`). |
+| `db/__init__.py` | `get_conn()` re-exported from `app/shared/db.py` (see pool below) + explicit re-export of every public function of all the submodules — `db.get_declaration(...)` etc. are still called exactly the same from outside the package. The orders, plates, customers, ownership cards, pricing, inventory and production-status SQL moved to their domain packages (see the table below) and is no longer re-exported here. |
 | `db/declarations.py` (Phase 3 declarations) | Read/write of `declarations` and `declaration_cards` — see details below. |
 
 The SQL for `users`, `user_roles`, `roles`, `role_permissions` and
@@ -314,21 +320,24 @@ The SQL for `users`, `user_roles`, `roles`, `role_permissions` and
 and `roles.py`, re-exported by its `__init__.py`), and is called as
 `repository.<function>(conn, ...)`; see the `app/auth/` sections below.
 
-The SQL for `customers`, `ownership_cards`, `plate_type_prices`,
+The SQL for `production_orders`, `plates`, `customers`, `ownership_cards`, `plate_type_prices`,
 `blank_preparations`, `inventory_categories`,
 `production_orders.production_status` and `production_order_events` lives in
-the customers, pricing, inventory and production domains (`app/customers/`,
-`app/pricing/`, `app/inventory/`, `app/production/`, each with its
-`routes.py`). Code outside a domain calls it through the module, as
-`customers_repository.<function>(conn, ...)`,
+the orders, customers, pricing, inventory and production domains (`app/orders/`,
+`app/customers/`, `app/pricing/`, `app/inventory/`, `app/production/`, each
+with its routes). Code outside a domain calls it through the module, as
+`orders_repository.<function>(conn, ...)`, `customers_repository.<function>(conn, ...)`,
 `pricing_repository.<function>(...)`, `inventory_repository.<function>(...)`
 and `production_repository.<function>(...)`; a domain's own `routes.py` and
 `service.py` call `repository.<function>(...)`.
-`app/customers/repository/` is a package (`customers.py` and
-`ownership_cards.py`, re-exported by its `__init__.py`).
+`app/orders/repository/` (`orders.py` and `plates.py`) and
+`app/customers/repository/` (`customers.py` and `ownership_cards.py`) are
+packages, each re-exported by its `__init__.py`.
 
 | Module | What it contains |
 |---|---|
+| `app/orders/repository/orders.py` | CRUD of `production_orders` + `OrderSummary` (typed dataclass, `class_row`) — the row shape shared by `recent_orders`/`find_orders_by_number`/`search_orders_by_number`. |
+| `app/orders/repository/plates.py` | CRUD of `plates`, including `distinct_cities` (grouped here for symmetry with `distinct_requested_by` in `orders.py`, although both read `plates`). |
 | `app/customers/repository/customers.py` (Phase 2) | CRUD of `customers` — see details below. |
 | `app/customers/repository/ownership_cards.py` (Phase 2 declarations) | CRUD of `ownership_cards` (ownership card) and `find_card_conflicts` — see details below. |
 | `app/pricing/repository.py` (Phase 2) | CRUD of `plate_type_prices` — see details below. |
@@ -348,7 +357,7 @@ always the owner of the transaction (`with db.get_conn() as conn: ...`).
 This is deliberate (Phase 1d): passing `conn` explicitly instead of hiding it
 behind an interface keeps visible in the signature who controls the
 commit, which is precisely the point that a real bug (several functions of
-`ingestion.py` each opening its own connection, see below) brought
+`app/orders/service.py` (then `ingestion.py`) each opening its own connection, see below) brought
 to light.
 
 **Connection pool (Phase 1d)**: the pool lives in `app/shared/db.py`
@@ -367,22 +376,21 @@ own pool on its first request (if `--preload` is ever added, that
 reasoning breaks and the pool construction must move to a
 `post_fork` hook).
 
-**Writes — orders/plates**
+**Writes — orders/plates** (`app/orders/repository/`)
 
 | Function | What it does |
 |---|---|
 | `insert_order(conn, *, row, customer_id, created_by)` | Inserts `production_orders` from the full `ExtractedRow` (Phase 2 — like `insert_plate`, instead of listing each POS field as a loose kwarg) + `customer_id`/`created_by`, both required (no default) so every caller chooses explicitly. `row.plate_type`/etc. are ignored (irrelevant for the header). |
 | `update_order(conn, order_id, *, ..., customer_id=_UNSET, receipt_type=None, ...)` | Edits the header + the 10 POS fields. `customer_id` uses a private sentinel `_UNSET` (not `None`) as default — passing it explicitly (an int, or `None` to really clear it) changes it; omitting it leaves it untouched. This is deliberate: if the default meant "set `NULL`", any Registro save that does not yet resolve a customer would wipe it by accident. |
 | `delete_order` | Deletes plates first (there is no `ON DELETE CASCADE` on the FK), then the order. |
-| `insert_plate` | Inserts a plate with its `is_possible_duplicate` flag (+ `unit_price`/`reason`/`vehicle_brand`, Phase 2/3). It also sets `ownership_card_id`: it does not come from the row, it is computed from the order's customer type (`_card_id_for`, see `resolve_card_id_for_plate`). |
-| `relink_plates(conn, *, order_id=None, customer_id=None)` | Recomputes `plates.ownership_card_id` for all plates of an order or of all orders of a customer (exactly one parameter). Called by `update_order` (if `customer_id` is passed) and `update_customer`, because changing the customer or their type changes which plates can have a card. |
+| `insert_plate` | Inserts a plate with its `is_possible_duplicate` flag (+ `unit_price`/`reason`/`vehicle_brand`, Phase 2/3). It also sets `ownership_card_id`: it does not come from the row, it is computed from the order's customer type (`customers_repository.card_id_for_order_plate`, see `resolve_card_id_for_plate`). |
 | `update_plate(plate_id, ..., plate_type)` | Narrow edit used by the duplicate review queue — always clears `is_possible_duplicate` (editing = reviewed). Applies the `unit_price` re-snapshot rule (see below), because it also allows changing `plate_type`. Recomputes `ownership_card_id` (cleared if the plate becomes annulled). |
 | `update_plate_full(plate_id, ..., plate_type, reason=None, vehicle_brand=None)` | Full edit from the Registro detail. **`is_batch_replacement` must be passed explicitly** — this way, correcting the `plate_number` of a replacement can also turn that flag off (a bug already fixed: before, it stayed marked as a replacement forever). `unit_price` is **not a parameter** — the re-snapshot rule below is the only path that sets it, never a direct caller. |
 | `resolve_plate` | Only clears `is_possible_duplicate` ("not a duplicate", the reviewer's action). |
 | `delete_plate` | Deletes the plate; if that leaves exactly **one** other row flagged with the same `plate_number`, it also clears its flag (there is nothing left to compare it with); if 2+ remain, it leaves them (still ambiguous). |
 
-**`unit_price` re-snapshot rule** (Phase 2, `db/plates.py::_resnapshot_unit_price`, shared by `update_plate`/`update_plate_full`): reads the plate's current `plate_type`/`unit_price` in the same cursor, before the `UPDATE` —
-if the `plate_type` **does not change**, the old `unit_price` is kept as is (regardless of whether `quantity` changes); if the `plate_type` **does change**, it takes `pricing_repository.current_prices(conn).get(new_type)` again (it can end up `None` if that type has no configured rate — never a silent `0`). New plate (`/ingest`, PDF, "+ agregar placa"): `ingestion.py::_snapshot_unit_price` applies the same principle but as a fallback — only if the row does not already carry its own `unit_price` (the `/ingest` form always sends one, pre-filled by JS but editable).
+**`unit_price` re-snapshot rule** (Phase 2, `app/orders/repository/plates.py::_resnapshot_unit_price`, shared by `update_plate`/`update_plate_full`): reads the plate's current `plate_type`/`unit_price` in the same cursor, before the `UPDATE` —
+if the `plate_type` **does not change**, the old `unit_price` is kept as is (regardless of whether `quantity` changes); if the `plate_type` **does change**, it takes `pricing_repository.current_prices(conn).get(new_type)` again (it can end up `None` if that type has no configured rate — never a silent `0`). New plate (`/ingest`, PDF, "+ agregar placa"): `app/orders/service.py::_snapshot_unit_price` applies the same principle but as a fallback — only if the row does not already carry its own `unit_price` (the `/ingest` form always sends one, pre-filled by JS but editable).
 
 **Writes — inventory** (`app/inventory/repository.py`)
 
@@ -408,7 +416,7 @@ if the `plate_type` **does not change**, the old `unit_price` is kept as is (reg
 
 | Function | What it does |
 |---|---|
-| `resolve_or_create_customer(conn, name, *, type=None, document_type=None, ...)` | Looks up by canonical `name` (`normalize_requested_by`); if it exists, `ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name, type = COALESCE(customers.type, EXCLUDED.type), ...` for each attribute — it never overwrites an attribute the customer ALREADY has, but it does fill in any that is still NULL (so the customers from the historical backfill, all with NULL attributes, fill themselves in through normal use instead of staying blank forever). The attributes of a genuinely new customer are written in the INSERT branch as usual. `ingestion.py` (`process_rows`/`replace_order`) and `record_save` call this function with the name only (everything `None`), so for them `COALESCE(existing, NULL) = existing` — a no-op, same as before; `app/web/blueprints/ingest.py` calls it with the attributes typed in the "cliente" fieldset. The attributes are `type`/`document_type`/`document_number`/`document_relation`/`phone`/`email` plus the person data `address`/`neighborhood`/`municipality` (also with `COALESCE`: never overwritten). |
+| `resolve_or_create_customer(conn, name, *, type=None, document_type=None, ...)` | Looks up by canonical `name` (`normalize_requested_by`); if it exists, `ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name, type = COALESCE(customers.type, EXCLUDED.type), ...` for each attribute — it never overwrites an attribute the customer ALREADY has, but it does fill in any that is still NULL (so the customers from the historical backfill, all with NULL attributes, fill themselves in through normal use instead of staying blank forever). The attributes of a genuinely new customer are written in the INSERT branch as usual. `app/orders/service.py` (`process_rows`/`replace_order`) and `record_save` call this function with the name only (everything `None`), so for them `COALESCE(existing, NULL) = existing` — a no-op, same as before; `app/orders/routes/ingest.py` calls it with the attributes typed in the "cliente" fieldset. The attributes are `type`/`document_type`/`document_number`/`document_relation`/`phone`/`email` plus the person data `address`/`neighborhood`/`municipality` (also with `COALESCE`: never overwritten). |
 | `get_customer(conn, customer_id)` / `get_customer_by_name(conn, name)` | Point lookups. |
 | `list_customers(conn)` | All customers, alphabetical — embedded whole as JSON in `ingest.html` (Phase 3) so the JS auto-fills the customer fieldset when a typed name matches, same pattern as `distinct_requested_by`/`distinct_cities` (this app has no AJAX endpoints); also used by the `/customers` list (Phase 6). |
 | `update_customer(conn, customer_id, *, name, type, document_type, ...)` | REAL overwrite, no `COALESCE` — unlike `resolve_or_create_customer`, this one does replace (or delete, if `None` is passed) an attribute the customer already had. It is the only function that can do so (including `address`/`neighborhood`/`municipality`; `transit_license` no longer exists in `customers`); it is used exclusively by `/customers` (Phase 6), the admin screen for manually correcting a mistyped value or completing one of the 191 customers from the historical backfill. No uniqueness pre-check on `name` — a rename that collides with another existing customer raises `psycopg.errors.UniqueViolation`, which the web route catches to show an error in Spanish instead of a 500. |
@@ -429,7 +437,15 @@ propagate as is (the DB is the source of truth). See
 | `list_ownership_cards_for_customer(conn, customer_id)` | A customer's cards, ordered by `id`. |
 | `reassign_ownership_card(conn, card_id, new_customer_id)` | Changes the card's owner (simple `UPDATE`; admin action of the review flow). |
 | `resolve_card_id_for_plate(conn, plate_number, customer_type, *, plate_to=None, is_voided=False, is_plate_annulled=False, is_batch_replacement=False)` | Read-only. Returns the `id` of the card a manufactured plate must be linked to (`plates.ownership_card_id`) or `None`. Never links if the customer is `EMPRESA`/`TRÁNSITO` (`CARD_LINK_EXCLUDED_CUSTOMER_TYPES`), if it is a range, replacement, annulled or has no real plate; with a `NULL` type it does try. Compares with `clean_plate(plate_number)`. |
+| `card_id_for_order_plate(cur, *, order_id, plate_number, plate_to, is_voided, is_plate_annulled, is_batch_replacement)` | Read-only, on the caller's cursor. Looks up the customer type of the plate's order and delegates to `resolve_card_id_for_plate`. Used by `insert_plate`, `update_plate`, `update_plate_full` and `relink_plates`. |
+| `relink_plates(conn, *, order_id=None, customer_id=None)` | Recomputes `plates.ownership_card_id` for all plates of an order or of all orders of a customer (exactly one parameter). Called by `update_order` (if `customer_id` is passed) and `update_customer` (`customers.py`), because changing the customer or their type changes which plates can have a card. |
 | `find_card_conflicts(conn, *, customer_id, transit_license, plate_number)` | Read-only. Returns `CardLookup(by_transit_license, by_plate_number, status)` with `status` in `new` / `same_card` / `other_owner` / `data_mismatch` (`CARD_STATUS_*` constants). The pure decision is in `classify_card_lookup`. |
+
+`card_id_for_order_plate` and `relink_plates` read and write the orders
+domain's `production_orders` and `plates` tables, but they live here so the
+dependency only points `app.orders` → `app.customers`: `update_customer` has
+to relink a customer's plates, and importing `app.orders` from
+`app.customers` would make a cycle. A `TODO(phase 4)` marks them.
 
 ### `db/declarations.py` (Phase 3 declarations)
 
@@ -456,7 +472,7 @@ Constants: `STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` and
 | `set_declaration_production_order(conn, declaration_id, production_order_id)` | Marks the declaration as served by an order (or `None` to clear it). It does not check the state: the caller does (`/ingest`). |
 | `list_declarations_by_production_order(conn, order_id)` | The declarations served by that order (`production_order_id`), ordered by `id`; `[]` if it has none. |
 
-`db/plates.py` adds `last_fabrication_date(conn, plate_number)`: read-only,
+`app/orders/repository/plates.py` adds `last_fabrication_date(conn, plate_number)`: read-only,
 the most recent `order_date` of a plate with that exact number, **ignoring**
 `is_voided` or `is_plate_annulled` plates; `None` if it was never manufactured.
 
@@ -655,7 +671,7 @@ values).
 
 | Function | What it does |
 |---|---|
-| `current_prices(conn) -> dict[str, Decimal]` | `{plate_type: unit_price}` only for the types that ALREADY have a row — a type with no configured rate simply does not appear (never a `0`). Consumed by `ingestion.py` (snapshot on insert) and `db/plates.py` (re-snapshot on edit). |
+| `current_prices(conn) -> dict[str, Decimal]` | `{plate_type: unit_price}` only for the types that ALREADY have a row — a type with no configured rate simply does not appear (never a `0`). Consumed by `app/orders/service.py` (snapshot on insert) and `app/orders/repository/plates.py` (re-snapshot on edit). |
 | `price_list(conn) -> list[PriceRow]` | One row for each `normalize.PLATE_TYPES`, in that order — a type with no rate appears anyway, with `unit_price=None` ("sin tarifa", no rate). Consumed by `/precios`. |
 | `set_price(conn, plate_type, unit_price, updated_by)` | Validates `plate_type` against `normalize.PLATE_TYPES` in Python (message in Spanish before reaching the real FK of Phase 1b) and does `INSERT ... ON CONFLICT (plate_type) DO UPDATE` — it works the same whether the row exists or not, because the table starts empty on purpose. |
 
