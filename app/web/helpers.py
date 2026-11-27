@@ -61,7 +61,7 @@ def _validate_order_header(*, requested_by: str, order_date: str) -> None:
 
 def customer_fields_from_form(form) -> dict[str, str | None]:
     """Customer attributes typed in a 'cliente' fieldset, keyed to match
-    db.resolve_or_create_customer's/db.update_customer's kwargs (name is
+    customers_repository.resolve_or_create_customer's/update_customer's kwargs (name is
     handled separately by each caller). Shared by /ingest (Fase 3's
     "cliente" fieldset) and /customers (the admin edit screen, Fase 6) --
     moved here rather than living in either blueprint once a second one

@@ -19,6 +19,9 @@ from urllib.parse import urlparse
 from psycopg.rows import tuple_row
 
 from app.core import db
+from app.customers import repository as customers_repository
+from app.inventory import repository as inventory_repository
+from app.pricing import repository as pricing_repository
 from tests.web._helpers import _insert_order, make_row
 
 
@@ -467,7 +470,7 @@ class TestRecordSaveRoute:
             assert cur.fetchone() == (True,)
 
     def test_recalculates_inventory_after_saving(self, authenticated_client, db_conn):
-        db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
+        inventory_repository.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
         order_id = _insert_order(db_conn, order_number="3009", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
@@ -565,7 +568,7 @@ class TestRecordSavePosFields:
         """B5: record_save may only re-point customer_id, never edit the
         customer's own stored data -- there is no form field for it at all."""
         with db.get_conn() as conn:
-            db.resolve_or_create_customer(conn, "PEDRO", type="EMPRESA", phone="555")
+            customers_repository.resolve_or_create_customer(conn, "PEDRO", type="EMPRESA", phone="555")
             conn.commit()
         order_id = _insert_order(db_conn, order_number="3101", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
@@ -578,7 +581,7 @@ class TestRecordSavePosFields:
         })
 
         with db.get_conn() as conn:
-            customer = db.get_customer_by_name(conn, "PEDRO")
+            customer = customers_repository.get_customer_by_name(conn, "PEDRO")
         assert customer is not None
         assert customer.type == "EMPRESA"
         assert customer.phone == "555"
@@ -667,7 +670,7 @@ class TestRecordSavePosFields:
     ):
         order_id = _insert_order(db_conn, order_number="3105", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
+        pricing_repository.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
         db_conn.commit()
 
         authenticated_client.post(f"/records/{order_id}/save", data={
@@ -708,7 +711,7 @@ class TestRecordsDeleteRoute:
         plates left after the delete (i.e. the stale-value quirk is specific
         to a category dropping to zero plates, not recalc being broken
         outright)."""
-        db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
+        inventory_repository.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
         keep_order = _insert_order(db_conn, order_number="2801", order_date=date(2026, 1, 1),
                                       requested_by="PEDRO")
@@ -720,7 +723,7 @@ class TestRecordsDeleteRoute:
         db.insert_plate(db_conn, order_id=delete_order,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD201", quantity=8),
                          is_possible_duplicate=False)
-        db.recalc_inventory(db_conn)
+        inventory_repository.recalc_inventory(db_conn)
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
             assert cur.fetchone() == (11,)  # sanity check before deletion
@@ -739,9 +742,9 @@ class TestRecordOwnershipCardLink:
     page shows the linked licence."""
 
     def _setup(self, db_conn, number="SAV900"):
-        owner = db.resolve_or_create_customer(db_conn, "TITULAR")
-        card_id = db.create_ownership_card(db_conn, owner, transit_license="LIC-WEB",
-                                           plate_number="CRD123")
+        owner = customers_repository.resolve_or_create_customer(db_conn, "TITULAR")
+        card_id = customers_repository.create_ownership_card(db_conn, owner, transit_license="LIC-WEB",
+                                                             plate_number="CRD123")
         order_id = _insert_order(db_conn, order_number="3900", order_date=date(2026, 1, 1),
                                  requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id,

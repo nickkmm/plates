@@ -2,9 +2,9 @@
 
 Pure web layer: every business rule for this table (which plate_type values
 are valid, the "sin tarifa" default, the ON CONFLICT upsert) already lives in
-app/core/db/pricing.py (Fase 2) -- this module only parses/validates the
-POSTed price and calls db.price_list/db.set_price, never touching SQL or
-normalize.PLATE_TYPES directly.
+app/pricing/repository.py (Fase 2) -- this module only parses/validates the
+POSTed price and calls repository.price_list/repository.set_price, never
+touching SQL or normalize.PLATE_TYPES directly.
 
 @permission_required("pricing.manage"), seeded for admin only -- the plan is
 explicit that 'point_of_sale' edits orders/payments, not tariffs, so it must
@@ -18,7 +18,8 @@ from decimal import Decimal, InvalidOperation
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
 from app.auth.decorators import permission_required
-from app.core import db
+from app.pricing import repository
+from app.shared import db
 
 bp = Blueprint("pricing", __name__)
 
@@ -48,7 +49,7 @@ def _parse_unit_price(raw: str | None) -> Decimal:
 @permission_required("pricing.manage")
 def precios():
     with db.get_conn() as conn:
-        rows = db.price_list(conn)
+        rows = repository.price_list(conn)
     return render_template("pricing.html", rows=rows)
 
 
@@ -58,14 +59,14 @@ def precios_update(plate_type: str):
     try:
         unit_price = _parse_unit_price(request.form.get("unit_price"))
         with db.get_conn() as conn:
-            # db.set_price re-validates plate_type against normalize.PLATE_TYPES
+            # repository.set_price re-validates plate_type against normalize.PLATE_TYPES
             # itself and raises the same kind of Spanish ValueError -- caught
             # below, so a tampered/unknown value in the URL re-renders the form
             # instead of a raw traceback.
-            db.set_price(conn, plate_type, unit_price, updated_by=session["user"])
+            repository.set_price(conn, plate_type, unit_price, updated_by=session["user"])
             conn.commit()
     except ValueError as e:
         with db.get_conn() as conn:
-            rows = db.price_list(conn)
+            rows = repository.price_list(conn)
         return render_template("pricing.html", rows=rows, error=str(e)), 400
     return redirect(url_for("pricing.precios"))

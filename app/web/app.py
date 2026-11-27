@@ -11,13 +11,8 @@ one module per domain:
                       POST /records/<id>/save, POST /records/search-pdf,
                       POST /records/delete
   review.py        -- GET /review, POST /review/update|resolve|delete
-  inventory.py     -- GET /inventory, POST /inventory/alistado
-  pricing.py       -- GET /precios, POST /precios/<plate_type> (admin-only
-                      tariff editor, Fase 5a)
   cash_summary.py  -- GET /cuadre, GET /cuadre/pdf (daily cash-reconciliation
                       report, Fase 5b)
-  customers.py     -- GET /customers, GET/POST /customers/<id> (admin-only
-                      customer master-data editor, Fase 6)
   declarations.py  -- GET /declaraciones, GET /declaraciones/<id>[/file/<kind>],
                       POST /declaraciones/<id>/approve|reject (review of the
                       sworn declarations from the public form)
@@ -31,6 +26,12 @@ and in app/auth/:
                       GET/POST /usuarios/<id>, POST /usuarios/<id>/password
                       (admin-only login account management)
   routes.py        -- GET/POST /login, POST /logout
+and in each domain package's routes.py:
+  app/customers/   -- GET /customers, GET/POST /customers/<id> (admin-only
+                      customer master-data editor, Fase 6)
+  app/pricing/     -- GET /precios, POST /precios/<plate_type> (admin-only
+                      tariff editor, Fase 5a)
+  app/inventory/   -- GET /inventory, POST /inventory/alistado
 
 All routes except /login, /logout, /healthz and /declaracion require an
 active logged-in user, checked against the database on every request. Each
@@ -64,13 +65,13 @@ from app.auth import decorators as auth
 from app.auth.admin_routes import bp as users_bp
 from app.auth.decorators import authenticated
 from app.auth.routes import bp as auth_routes_bp
+from app.customers.routes import bp as customers_bp
+from app.inventory.routes import bp as inventory_bp
+from app.pricing.routes import bp as pricing_bp
 from app.shared.timezones import format_bogota
 from app.web.blueprints.cash_summary import bp as cash_summary_bp
-from app.web.blueprints.customers import bp as customers_bp
 from app.web.blueprints.declarations import bp as declarations_bp
 from app.web.blueprints.ingest import bp as ingest_bp
-from app.web.blueprints.inventory import bp as inventory_bp
-from app.web.blueprints.pricing import bp as pricing_bp
 from app.web.blueprints.production import PRODUCTION_STATUS_LABELS
 from app.web.blueprints.production import bp as production_bp
 from app.web.blueprints.public_declaration import bp as public_declaration_bp

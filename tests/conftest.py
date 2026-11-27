@@ -267,7 +267,7 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
     `plates_test` database -- unacceptable, since nothing must survive past
     this fixture's teardown. But `conn.commit()`/`conn.rollback()` are called
     explicitly, pervasively, by both real app code (`records.py`, `review.py`,
-    `pricing.py`, `inventory.py`) and ~100 existing test call sites -- so
+    `app/pricing/routes.py`, `app/inventory/routes.py`) and ~100 existing test call sites -- so
     they can't just be disabled; they have to keep meaning "durably keep what
     I've done so far" / "discard what I've done since the last checkpoint",
     just scoped to a SAVEPOINT inside the outer (never-committed) transaction
@@ -320,8 +320,8 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
     truncating it (mirroring init.sql/0002_reference_integrity.sql, which
     seed it the same way) -- since Fase 1b, blank_preparations.category is a
     real FK to this table, so any row must already exist before the first
-    `db.insert_blank_preparation()` in a test, exactly like on a real
-    from-birth database (`db.recalc_inventory()` only creates the row
+    `inventory_repository.insert_blank_preparation()` in a test, exactly like on a real
+    from-birth database (`inventory_repository.recalc_inventory()` only creates the row
     afterwards, too late for a non-deferred FK on an insert that comes
     first). `plate_types` (the other Fase 1b reference table) is NOT in
     TABLES/truncated here on purpose -- it's static and never touched by

@@ -29,6 +29,7 @@ import pytest
 from app.auth import repository
 from app.core import db
 from app.core.declarations import MAX_CARDS, DeclarationInput, SubmitResult, approve_declaration
+from app.customers import repository as customers_repository
 from app.web import antispam
 from app.web.app import app as flask_app
 from app.web.blueprints import public_declaration as pd
@@ -716,7 +717,7 @@ class TestEndToEnd:
         assert row["status"] == "pending_review" and row["review_flags"] == []
         assert row["submitter_ip"] == "7.7.7.7"
         # Nothing is created until the point of sale approves the declaration.
-        assert db.get_customer_by_name(db_conn, "Maria Lopez") is None
+        assert customers_repository.get_customer_by_name(db_conn, "Maria Lopez") is None
         assert _count(db_conn, "customers") == 0 and _count(db_conn, "ownership_cards") == 0
         assert _suffixes(enabled).count(".png") == 1
         # the cédula and the card photos reach the database, each file once
@@ -729,9 +730,9 @@ class TestEndToEnd:
         assert None not in photos and len(set(photos)) == 4 and set(photos) <= stored
         # ... and approving it afterwards creates the customer and the card.
         _approve(db_conn, row["id"])
-        customer = db.get_customer_by_name(db_conn, "Maria Lopez")
+        customer = customers_repository.get_customer_by_name(db_conn, "Maria Lopez")
         assert customer is not None and customer.type == "CLIENTE"
-        assert len(db.list_ownership_cards_for_customer(db_conn, customer.id)) == 1
+        assert len(customers_repository.list_ownership_cards_for_customer(db_conn, customer.id)) == 1
 
     def test_a_name_with_digits_is_rejected_before_anything_is_stored(self, client, enabled, db_conn):
         resp = post(client, _form(declarant_name="Maria Jose Prueba E2E"))
@@ -746,12 +747,12 @@ class TestEndToEnd:
         resp = post(client, _two_cards_form(acting_as="POSEEDOR"))
         assert resp.status_code == 200
         assert _count(db_conn, "declarations") == 1
-        assert db.get_customer_by_name(db_conn, "Maria Lopez") is None   # pending: nothing created
+        assert customers_repository.get_customer_by_name(db_conn, "Maria Lopez") is None   # pending: nothing created
         assert _count(db_conn, "ownership_cards") == 0
         _approve(db_conn, _only_declaration_id(db_conn))
-        customer = db.get_customer_by_name(db_conn, "Maria Lopez")
+        customer = customers_repository.get_customer_by_name(db_conn, "Maria Lopez")
         assert customer is not None and customer.type == "CLIENTE" and customer.document_relation == "POSEEDOR"
-        cards = db.list_ownership_cards_for_customer(db_conn, customer.id)
+        cards = customers_repository.list_ownership_cards_for_customer(db_conn, customer.id)
         assert sorted(c.plate_number for c in cards) == ["ABC123", "DEF45G"]
         assert _count(db_conn, "customers") == 1
         assert _suffixes(enabled).count(".png") == 1  # one signature for the whole declaration
@@ -760,15 +761,15 @@ class TestEndToEnd:
         resp = post(client, _two_cards_form(acting_as="GESTOR", declarant_name="Juan Gestor"))
         assert resp.status_code == 400
         assert "solo para personas que declaran por sí mismas" in resp.get_data(as_text=True)
-        assert db.get_customer_by_name(db_conn, "Juan Gestor") is None
+        assert customers_repository.get_customer_by_name(db_conn, "Juan Gestor") is None
         assert _count(db_conn, "declarations") == 0 and _files(enabled) == []
 
     def test_owner_fields_are_never_read(self, client, enabled, db_conn):
         post(client, _form(_card(0), card_0_owner_name="Otro Dueno", card_0_owner_relation="POSEEDOR"))
-        assert db.get_customer_by_name(db_conn, "Otro Dueno") is None
+        assert customers_repository.get_customer_by_name(db_conn, "Otro Dueno") is None
         _approve(db_conn, _only_declaration_id(db_conn))
-        assert db.get_customer_by_name(db_conn, "Otro Dueno") is None
-        owner = db.get_customer_by_name(db_conn, "Maria Lopez")
+        assert customers_repository.get_customer_by_name(db_conn, "Otro Dueno") is None
+        owner = customers_repository.get_customer_by_name(db_conn, "Maria Lopez")
         assert owner is not None and owner.document_relation == "DUEÑO"  # PROPIETARIO
 
     def test_loss_card_is_accepted_without_any_file(self, client, enabled, db_conn):

@@ -1,4 +1,4 @@
-"""Integration tests for app/web/blueprints/inventory.py -- GET /inventory
+"""Integration tests for app/inventory/routes.py -- GET /inventory
 (material cards + ornamental counter) and POST /inventory/alistado
 (records a blank-plate preparation, recalculates inventory, and
 redirects).
@@ -15,18 +15,19 @@ from urllib.parse import urlparse
 from psycopg.rows import tuple_row
 
 from app.core import db
+from app.inventory import repository as inventory_repository
 from tests.web._helpers import _insert_order, make_row
 
 
 class TestInventoryRoute:
     def test_renders_material_cards_and_ornamental_counter(self, authenticated_client, db_conn):
-        db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
+        inventory_repository.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=50, prepared_by=None)
         order_id = _insert_order(db_conn, order_number="2500", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
         db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="ORNAMENTAL", quantity=3),
                          is_possible_duplicate=False)
-        db.recalc_inventory(db_conn)
+        inventory_repository.recalc_inventory(db_conn)
         db_conn.commit()
 
         resp = authenticated_client.get("/inventory")

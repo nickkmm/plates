@@ -203,7 +203,7 @@ Since **Phase 1b**, the other three relationships that previously existed only
   from `init.sql`/the migration**, instead of starting empty as before
   Phase 1b: if it did not already have the 3 rows, the very first
   ALISTAMIENTO (blank preparation) row on a freshly created volume would fail
-  against this FK, because `recalc_inventory()` (in `app/core/db/`) only
+  against this FK, because `recalc_inventory()` (in `app/inventory/repository.py`) only
   creates those rows *after* inserting into `blank_preparations`, not before.
 - `recalc_inventory()` still aggregates `prepared`/`consumed` by the text of
   `category`/`plate_type` over `blank_preparations`/`plates` — that did not
@@ -260,7 +260,7 @@ first index outside a PK/UNIQUE — see quirks for both.
 | `unit_price` | NUMERIC(12,2) | nullable | Snapshot of the price at the moment the plate is saved/edited, taken from `plate_type_prices` but editable — not a live reference to the rate (the exact re-snapshot rule, including the 3 editing cases, lives in `app/core/db/plates.py::_resnapshot_unit_price`, see [`CORE.md`](CORE.md)). `NULL` means "no rate captured" — `/cuadre` excludes it from the total and lists it as a warning, never treats it as `0`. |
 | `reason` | TEXT | nullable | A vehicle/plate datum, not an order one. Expected value: `normalize.REASONS` (`DETERIORO`/`PÉRDIDA`/`OTROS`). Before Phase 1c, this column was called `motivo`. |
 | `vehicle_brand` | TEXT | nullable | A vehicle datum, always entered manually (it is not printed on the order PDF). Before Phase 1c, `marca_vehiculo`. |
-| `ownership_card_id` | INTEGER | FK → `ownership_cards(id)`, nullable | *Added in migration `0008`.* Formal link between the manufactured plate and its **ownership card** (tarjeta de propiedad). It is **automatic and silent**: the app computes it on every insert and edit (`app/core/db/plates.py`, rule in `ownership_cards.resolve_card_id_for_plate`) by comparing `plates.plate_number` with `ownership_cards.plate_number`. It stays `NULL` if there is no card with that plate, if the order belongs to an `EMPRESA` or `TRÁNSITO` customer (they have no ownership card; it is not even attempted), if the plate is a range (`plate_to`), a replacement, is voided (`is_voided` / `is_plate_annulled`) or has no real plate number (`normalize.is_real_plate`). If the customer type is `NULL` it is attempted (it only links if a card with that exact plate exists). A `GESTOR` links plates of its customers' cards: the card is looked up by plate regardless of whose name it is in. It is also recomputed when the customer of an order or the type of a customer changes. Migration `0008` does a one-time, idempotent *backfill* of the already manufactured plates with the same rules (in production there were no cards, so it links nothing). A card created later does **not** link already saved plates backwards; they are linked when edited. |
+| `ownership_card_id` | INTEGER | FK → `ownership_cards(id)`, nullable | *Added in migration `0008`.* Formal link between the manufactured plate and its **ownership card** (tarjeta de propiedad). It is **automatic and silent**: the app computes it on every insert and edit (`app/core/db/plates.py`, rule in `app/customers/repository/ownership_cards.py::resolve_card_id_for_plate`) by comparing `plates.plate_number` with `ownership_cards.plate_number`. It stays `NULL` if there is no card with that plate, if the order belongs to an `EMPRESA` or `TRÁNSITO` customer (they have no ownership card; it is not even attempted), if the plate is a range (`plate_to`), a replacement, is voided (`is_voided` / `is_plate_annulled`) or has no real plate number (`normalize.is_real_plate`). If the customer type is `NULL` it is attempted (it only links if a card with that exact plate exists). A `GESTOR` links plates of its customers' cards: the card is looked up by plate regardless of whose name it is in. It is also recomputed when the customer of an order or the type of a customer changes. Migration `0008` does a one-time, idempotent *backfill* of the already manufactured plates with the same rules (in production there were no cards, so it links nothing). A card created later does **not** link already saved plates backwards; they are linked when edited. |
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 
 ### `customers`
@@ -307,7 +307,7 @@ this feature (see `app/schema_migrate.py::backfill_customers`, renamed from
 `schema_migrations` note below).
 
 Since **Phase 3**, `/ingest` resolves/creates a `customers` row for each saved
-order (`db.resolve_or_create_customer`, via
+order (`customers_repository.resolve_or_create_customer`, via
 `normalize.normalize_requested_by`) — if the typed name matches an existing
 one, the form's JS auto-fills the rest of its attributes from the full list of
 customers embedded in `ingest.html`; if it does not match, a new customer is
@@ -316,7 +316,7 @@ attribute is filled with `COALESCE(existing, new)` — it never overwrites a
 value the customer already has (this prevents an order with a mistyped datum
 from corrupting a correct one), but it does fill in any attribute that is
 still NULL the first time someone types it (see
-`app/core/db/customers.py::resolve_or_create_customer`, updated 2026-09-21
+`app/customers/repository/customers.py::resolve_or_create_customer`, updated 2026-09-21
 precisely so that the 191 customers from the historical backfill —all with
 NULL attributes, since the old spreadsheet never captured them— fill
 themselves in through normal use, instead of staying blank forever). Editing
@@ -520,7 +520,7 @@ them raises `psycopg.errors.UniqueViolation` / `ForeignKeyViolation`; the data
 layer does not pre-check (the DB constraint is the source of truth).
 
 To know beforehand what collides with a declaration,
-`db.find_card_conflicts(conn, customer_id=..., transit_license=..., plate_number=...)`
+`customers_repository.find_card_conflicts(conn, customer_id=..., transit_license=..., plate_number=...)`
 (read-only) classifies the triple (customer, license, plate) into one of these
 states, with this precedence:
 
@@ -531,7 +531,7 @@ states, with this precedence:
 | `other_owner` | License and plate are the **same** card, but its owner is not `customer_id` (or `customer_id` is `None`). |
 | `same_card` | Same card and the owner is `customer_id`. |
 
-`db.reassign_ownership_card(conn, card_id, new_customer_id)` is the deliberate
+`customers_repository.reassign_ownership_card(conn, card_id, new_customer_id)` is the deliberate
 change of owner (an administration action of the declaration review flow): a
 simple `UPDATE`.
 
@@ -729,7 +729,7 @@ to the same material). `plate_type_prices` is keyed by `plate_type` (7
 values) — the rate is billed by type of plate sold, not by inventory
 material. Confusing them would leave `ORNAMENTAL` unable to have its own price
 and would give `REMOLQUE` the rate of `CARRO PÚBLICO`. Price (money, by type)
-and inventory (quantities, by material) are separate loops in `app/core/db/`
+and inventory (quantities, by material) are separate loops in `app/pricing/` and `app/inventory/`
 and must stay separate. Since Phase 1b each namespace has its own real
 reference table (`plate_types` for the 7 types, `inventory_categories` for the
 3 materials) — two *distinct* tables, not a shared FK; keep not confusing
@@ -774,7 +774,7 @@ default to `"COLOMBIA"` if left blank.
 
 The original comment in `init.sql` suggests that `available` should be
 `initial_stock + prepared - consumed`, but in the real code
-(`app/core/db/inventory.py::inventory_view()`) it is just `prepared - consumed` —
+(`app/inventory/repository.py::inventory_view()`) it is just `prepared - consumed` —
 `initial_stock` is never read or written anywhere in the app. The historical
 baseline was instead incorporated as reconciled rows inside
 `blank_preparations` during the Excel migration

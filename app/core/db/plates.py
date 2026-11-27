@@ -1,6 +1,6 @@
 """plates reads/writes.
 
-`distinct_cities` lives here (not in inventory.py) even though it's a
+`distinct_cities` lives here (not in app/inventory/repository.py) even though it's a
 "distinct values for a dropdown" query in the same spirit as
 orders.distinct_requested_by -- it queries `plates`, not
 `inventory_categories`/`blank_preparations`, so it belongs with the rest of
@@ -20,8 +20,8 @@ from decimal import Decimal
 import psycopg
 from psycopg.rows import DictRow
 
-from app.core.db.ownership_cards import resolve_card_id_for_plate
-from app.core.db.pricing import current_prices
+from app.customers.repository.ownership_cards import resolve_card_id_for_plate
+from app.pricing.repository import current_prices
 from app.shared.models import ExtractedRow
 from app.shared.normalize import clean_plate
 

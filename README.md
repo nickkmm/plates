@@ -80,9 +80,11 @@ flowchart TD
 ```
 
 The app is a Flask application with one blueprint per domain in
-`app/web/blueprints/` and Jinja templates. Business rules live in `app/core/`
-as pure, strictly typed Python with no Flask dependency, and data access in
-`app/core/db/`, one module per table. Code every domain needs (the connection
+`app/web/blueprints/` (and in the domain packages `app/auth/`,
+`app/customers/`, `app/pricing/` and `app/inventory/`) and Jinja templates.
+Business rules live in `app/core/` as pure, strictly typed Python with no
+Flask dependency, and data access in `app/core/db/`, one module per table,
+and in each domain package's repository. Code every domain needs (the connection
 pool, normalization, timezones, input models, uploads) lives in `app/shared/`,
 which depends on no domain package. Data is stored in PostgreSQL 16; the
 schema is `init.sql` plus ordered migrations in `app/migrations/` applied by

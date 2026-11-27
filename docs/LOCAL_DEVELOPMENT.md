@@ -85,7 +85,7 @@ hand just like the `cargador.ingse.co` block). Locally, directly at
   fires (`authenticated_client`, etc.) operates on the same session/
   transaction, without needing real commits to see its own changes.
   `conn.commit()`/`conn.rollback()` (called both by the real code in
-  `records.py`/`review.py`/`pricing.py`/`inventory.py` and by ~100 test
+  `records.py`/`review.py`/`app/pricing/routes.py`/`app/inventory/routes.py` and by ~100 test
   sites) are reassigned to do `RELEASE SAVEPOINT` + `SAVEPOINT` /
   `ROLLBACK TO SAVEPOINT` on THAT savepoint instead of touching the real database —
   see the `clean_db` docstring in `tests/conftest.py` for the full detail

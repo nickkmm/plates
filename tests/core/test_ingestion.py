@@ -20,6 +20,9 @@ from psycopg.rows import tuple_row
 from app.auth import repository
 from app.core import db
 from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
+from app.customers import repository as customers_repository
+from app.inventory import repository as inventory_repository
+from app.pricing import repository as pricing_repository
 from app.shared.models import ExtractedRow
 
 
@@ -96,7 +99,7 @@ class TestNormalOrder:
 class TestCustomerResolution:
     """process_rows/replace_order resolve/create a customer per order group,
     keyed off the group's head row's requested_by (the same field/value
-    already used for order_date) -- see db.resolve_or_create_customer."""
+    already used for order_date) -- see customers_repository.resolve_or_create_customer."""
 
     def test_new_order_resolves_and_links_a_customer(self, db_conn):
         rows = [make_row(order_number="110", requested_by="PTO.V", plate_number="CUS100")]
@@ -156,7 +159,7 @@ class TestUnitPriceSnapshot:
     the CURRENT plate_type_prices tariff at insert time."""
 
     def test_row_with_no_unit_price_gets_the_current_tariff(self, db_conn):
-        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
+        pricing_repository.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
         process_rows(
             db_conn, [make_row(order_number="130", plate_number="PRC100", plate_type="CARRO PARTICULAR")]
         )
@@ -167,7 +170,7 @@ class TestUnitPriceSnapshot:
     def test_row_with_an_explicit_unit_price_is_kept_verbatim(self, db_conn):
         """A negotiated/edited price on the row must NOT be overridden by the
         suggested tariff, even if one is configured."""
-        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
+        pricing_repository.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
         process_rows(db_conn, [
             make_row(order_number="131", plate_number="PRC101", plate_type="CARRO PARTICULAR",
                       unit_price=Decimal("120000")),
@@ -185,8 +188,8 @@ class TestUnitPriceSnapshot:
             assert cur.fetchone() == (None,)
 
     def test_price_snapshot_is_per_plate_type(self, db_conn):
-        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
-        db.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
+        pricing_repository.set_price(db_conn, "CARRO PARTICULAR", Decimal("150000"), "admin")
+        pricing_repository.set_price(db_conn, "MOTO PARTICULAR", Decimal("90000"), "admin")
         process_rows(db_conn, [
             make_row(order_number="133", plate_number="PRC103", plate_type="CARRO PARTICULAR"),
             make_row(order_number="133", plate_number="PRC104", plate_type="MOTO PARTICULAR"),
@@ -197,7 +200,7 @@ class TestUnitPriceSnapshot:
 
 
 class TestInventoryRecalc:
-    """process_rows() always calls db.recalc_inventory() before committing;
+    """process_rows() always calls inventory_repository.recalc_inventory() before committing;
     these check its actual effect on inventory_categories.consumed rather
     than just that it runs without error."""
 
@@ -642,7 +645,7 @@ class TestReplaceOrder:
         """The exact scenario the whole feature exists to fix: the old
         reposición row's quantity must NOT still be counted alongside the new
         rows' quantities after the replace."""
-        db.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
+        inventory_repository.insert_blank_preparation(db_conn, prep_date=date(2026, 1, 1), category="CARRO PARTICULAR",
                                      quantity=100, prepared_by=None)
         old_id = _insert_order(db_conn, order_number="1040", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
@@ -650,7 +653,7 @@ class TestReplaceOrder:
                          row=make_row(order_number="1040", plate_type="CARRO PARTICULAR",
                                       is_batch_replacement=True, quantity=40),
                          is_possible_duplicate=False)
-        db.recalc_inventory(db_conn)
+        inventory_repository.recalc_inventory(db_conn)
         db_conn.commit()
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT consumed FROM inventory_categories WHERE category = 'CARRO PARTICULAR'")
@@ -745,7 +748,7 @@ class TestReplaceOrder:
                          is_possible_duplicate=False)
         db_conn.commit()
 
-        db.set_price(db_conn, "CARRO PARTICULAR", Decimal("175000"), "admin")
+        pricing_repository.set_price(db_conn, "CARRO PARTICULAR", Decimal("175000"), "admin")
         new_rows = [make_row(order_number="1072", plate_type="CARRO PARTICULAR", plate_number="REP102")]
         replace_order(db_conn, "1072", new_rows)
 
@@ -841,8 +844,8 @@ class TestOwnershipCardLink:
     ownership card, per the order's customer type."""
 
     def _card(self, db_conn, plate="LNK123"):
-        owner = db.resolve_or_create_customer(db_conn, "TITULAR")
-        return db.create_ownership_card(db_conn, owner, transit_license="LIC-LNK", plate_number=plate)
+        owner = customers_repository.resolve_or_create_customer(db_conn, "TITULAR")
+        return customers_repository.create_ownership_card(db_conn, owner, transit_license="LIC-LNK", plate_number=plate)
 
     def _link(self, db_conn, plate):
         with db_conn.cursor(row_factory=tuple_row) as cur:
@@ -855,14 +858,14 @@ class TestOwnershipCardLink:
 
     def test_process_rows_links_plate_of_a_cliente_order(self, db_conn):
         card_id = self._card(db_conn)
-        db.resolve_or_create_customer(db_conn, "JUAN")
+        customers_repository.resolve_or_create_customer(db_conn, "JUAN")
         self._classify(db_conn, "JUAN", "CLIENTE")
         process_rows(db_conn, [make_row(order_number="700", requested_by="JUAN", plate_number="LNK123")])
         assert self._link(db_conn, "LNK123") == card_id
 
     def test_process_rows_does_not_link_an_empresa_order(self, db_conn):
         self._card(db_conn)
-        db.resolve_or_create_customer(db_conn, "ACME")
+        customers_repository.resolve_or_create_customer(db_conn, "ACME")
         self._classify(db_conn, "ACME", "EMPRESA")
         process_rows(db_conn, [make_row(order_number="701", requested_by="ACME", plate_number="LNK123")])
         assert self._link(db_conn, "LNK123") is None
@@ -873,7 +876,7 @@ class TestOwnershipCardLink:
 
     def test_replace_order_links_the_recovered_plate(self, db_conn):
         card_id = self._card(db_conn)
-        db.resolve_or_create_customer(db_conn, "JUAN")
+        customers_repository.resolve_or_create_customer(db_conn, "JUAN")
         self._classify(db_conn, "JUAN", "GESTOR")
         old_id = _insert_order(db_conn, order_number="710", order_date=date(2026, 1, 1),
                                requested_by="JUAN")

@@ -70,7 +70,7 @@ class ExtractedRow(BaseModel):
         default=None, description="MOTIVO / FABRICADA POR — DETERIORO/PÉRDIDA/OTROS"
     )
     vehicle_brand: str | None = Field(default=None, description="MARCA VEHICULO/MOTO")
-    # Money: Decimal, never float (see app/core/db/pricing.py). The suggested
+    # Money: Decimal, never float (see app/pricing/repository.py). The suggested
     # plate_type_prices tariff pre-fills this client-side and it stays
     # editable (real prices vary by negotiated discount) -- whatever is set
     # here at insert time is what gets saved verbatim, never re-derived from

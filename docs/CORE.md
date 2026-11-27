@@ -17,6 +17,10 @@ rules (`app/auth/service.py`) and the `users`/`roles` SQL
 (`app/auth/repository/`). Its login, session check and routes are in
 [`WEB.md`](WEB.md).
 
+It also covers the SQL of the customers, pricing and inventory domains
+(`app/customers/repository/`, `app/pricing/repository.py`,
+`app/inventory/repository.py`); their routes are in [`WEB.md`](WEB.md).
+
 ## Full ingestion pipeline
 
 ```mermaid
@@ -230,9 +234,9 @@ concrete case this closes.
   Phase 2 it passed `plate_type` directly as `category`, a real bug,
   dead code in practice because the real `/inventory/alistado` flow
   did not go through here, fixed while at it), computes which plates already exist
-  live, takes a single snapshot of `db.current_prices(conn)` for the whole
+  live, takes a single snapshot of `pricing_repository.current_prices(conn)` for the whole
   batch, groups the plates by `order_number` (resolves/creates the group's
-  customer via `db.resolve_or_create_customer` and does one
+  customer via `customers_repository.resolve_or_create_customer` and does one
   `insert_order` per group, using the group's *head* row), inserts
   each plate (applying the price snapshot as a fallback only if the
   row does not already carry its own `unit_price`) setting `is_possible_duplicate`
@@ -292,24 +296,37 @@ concrete case this closes.
 ## `db/` (package — formerly a single flat `db.py`, split in Phase 1d)
 
 All the raw SQL (psycopg 3, no ORM) for `production_orders`, `plates`,
-`blank_preparations` and `inventory_categories`, split by domain instead
-of a single 556-line file:
+`declarations`/`declaration_cards` and `production_order_events`, split by
+domain instead of a single 556-line file:
 
 | Module | What it contains |
 |---|---|
-| `db/__init__.py` | `get_conn()` re-exported from `app/shared/db.py` (see pool below) + explicit re-export of every public function of all the submodules — `db.insert_order(...)`, `db.recalc_inventory(...)`, `db.resolve_or_create_customer(...)`, etc. are still called exactly the same from outside the package. |
+| `db/__init__.py` | `get_conn()` re-exported from `app/shared/db.py` (see pool below) + explicit re-export of every public function of all the submodules — `db.insert_order(...)`, `db.update_plate(...)`, `db.get_declaration(...)`, etc. are still called exactly the same from outside the package. The customers, ownership cards, pricing and inventory SQL moved to their domain packages (see the table below) and is no longer re-exported here. |
 | `db/orders.py` | CRUD of `production_orders` + `OrderSummary` (typed dataclass, `class_row`) — the row shape shared by `recent_orders`/`find_orders_by_number`/`search_orders_by_number`. |
 | `db/plates.py` | CRUD of `plates`, including `distinct_cities` (grouped here for symmetry with `distinct_requested_by` in `orders.py`, although both read `plates`). |
-| `db/inventory.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
-| `db/customers.py` (Phase 2) | CRUD of `customers` — see details below. |
-| `db/ownership_cards.py` (Phase 2 declarations) | CRUD of `ownership_cards` (ownership card) and `find_card_conflicts` — see details below. |
 | `db/declarations.py` (Phase 3 declarations) | Read/write of `declarations` and `declaration_cards` — see details below. |
-| `db/pricing.py` (Phase 2) | CRUD of `plate_type_prices` — see details below. |
 
 The SQL for `users`, `user_roles`, `roles`, `role_permissions` and
 `permissions` lives in the auth domain, `app/auth/repository/` (`users.py`
 and `roles.py`, re-exported by its `__init__.py`), and is called as
 `repository.<function>(conn, ...)`; see the `app/auth/` sections below.
+
+The SQL for `customers`, `ownership_cards`, `plate_type_prices`,
+`blank_preparations` and `inventory_categories` lives in the customers,
+pricing and inventory domains (`app/customers/`, `app/pricing/`,
+`app/inventory/`, each with its `routes.py`). Code outside a domain calls it
+through the module, as `customers_repository.<function>(conn, ...)`,
+`pricing_repository.<function>(...)` and `inventory_repository.<function>(...)`;
+a domain's own `routes.py` calls `repository.<function>(...)`.
+`app/customers/repository/` is a package (`customers.py` and
+`ownership_cards.py`, re-exported by its `__init__.py`).
+
+| Module | What it contains |
+|---|---|
+| `app/customers/repository/customers.py` (Phase 2) | CRUD of `customers` — see details below. |
+| `app/customers/repository/ownership_cards.py` (Phase 2 declarations) | CRUD of `ownership_cards` (ownership card) and `find_card_conflicts` — see details below. |
+| `app/pricing/repository.py` (Phase 2) | CRUD of `plate_type_prices` — see details below. |
+| `app/inventory/repository.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
 
 Connection config from environment variables (`DB_HOST` default `"db"` —
 **never use that default in Docker Compose**, see
@@ -358,9 +375,9 @@ reasoning breaks and the pool construction must move to a
 | `delete_plate` | Deletes the plate; if that leaves exactly **one** other row flagged with the same `plate_number`, it also clears its flag (there is nothing left to compare it with); if 2+ remain, it leaves them (still ambiguous). |
 
 **`unit_price` re-snapshot rule** (Phase 2, `db/plates.py::_resnapshot_unit_price`, shared by `update_plate`/`update_plate_full`): reads the plate's current `plate_type`/`unit_price` in the same cursor, before the `UPDATE` —
-if the `plate_type` **does not change**, the old `unit_price` is kept as is (regardless of whether `quantity` changes); if the `plate_type` **does change**, it takes `db.current_prices(conn).get(new_type)` again (it can end up `None` if that type has no configured rate — never a silent `0`). New plate (`/ingest`, PDF, "+ agregar placa"): `ingestion.py::_snapshot_unit_price` applies the same principle but as a fallback — only if the row does not already carry its own `unit_price` (the `/ingest` form always sends one, pre-filled by JS but editable).
+if the `plate_type` **does not change**, the old `unit_price` is kept as is (regardless of whether `quantity` changes); if the `plate_type` **does change**, it takes `pricing_repository.current_prices(conn).get(new_type)` again (it can end up `None` if that type has no configured rate — never a silent `0`). New plate (`/ingest`, PDF, "+ agregar placa"): `ingestion.py::_snapshot_unit_price` applies the same principle but as a fallback — only if the row does not already carry its own `unit_price` (the `/ingest` form always sends one, pre-filled by JS but editable).
 
-**Writes — inventory**
+**Writes — inventory** (`app/inventory/repository.py`)
 
 | Function | What it does |
 |---|---|
@@ -380,7 +397,7 @@ if the `plate_type` **does not change**, the old `unit_price` is kept as is (reg
 | `order_detail(conn, order_id)` | `(order, plates)` — the order comes with a `LEFT JOIN customers` (`customer_*` columns, `LEFT` because `customer_id` is nullable) to bring the attributes of the resolved customer in a single round trip; the plates include `unit_price`/`reason`/`vehicle_brand` (Phase 2/3). |
 | `review_rows` | Queue of plates with `is_possible_duplicate = true`. |
 
-### `db/customers.py` (Phase 2)
+### `app/customers/repository/customers.py` (Phase 2)
 
 | Function | What it does |
 |---|---|
@@ -389,7 +406,7 @@ if the `plate_type` **does not change**, the old `unit_price` is kept as is (reg
 | `list_customers(conn)` | All customers, alphabetical — embedded whole as JSON in `ingest.html` (Phase 3) so the JS auto-fills the customer fieldset when a typed name matches, same pattern as `distinct_requested_by`/`distinct_cities` (this app has no AJAX endpoints); also used by the `/customers` list (Phase 6). |
 | `update_customer(conn, customer_id, *, name, type, document_type, ...)` | REAL overwrite, no `COALESCE` — unlike `resolve_or_create_customer`, this one does replace (or delete, if `None` is passed) an attribute the customer already had. It is the only function that can do so (including `address`/`neighborhood`/`municipality`; `transit_license` no longer exists in `customers`); it is used exclusively by `/customers` (Phase 6), the admin screen for manually correcting a mistyped value or completing one of the 191 customers from the historical backfill. No uniqueness pre-check on `name` — a rename that collides with another existing customer raises `psycopg.errors.UniqueViolation`, which the web route catches to show an error in Spanish instead of a 500. |
 
-### `db/ownership_cards.py` (Phase 2 declarations)
+### `app/customers/repository/ownership_cards.py` (Phase 2 declarations)
 
 Normalizes inputs inside the layer: license with `strip` + uppercase,
 plate with `normalize.clean_plate`, free text with `strip` (empty →
@@ -622,7 +639,7 @@ tanto" (changed in the meantime) message. **No roles**: these functions take no 
 make each transition (production moves all steps, the point of sale
 can also mark `ready` → `delivered`) is decided by the web layer.
 
-### `db/pricing.py` (Phase 2)
+### `app/pricing/repository.py` (Phase 2)
 
 Suggested rates per plate type (`plate_type_prices`) — see
 [`DATABASE.md`](DATABASE.md) for the namespace warning

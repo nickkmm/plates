@@ -21,12 +21,15 @@ flowchart TD
     ER --> NORM["normalize_row<br/>(app/shared/normalize.py)"]
     NORM --> PROC["process_rows / replace_order<br/>(app/core/ingestion.py)"]
     PROC --> DBL["app/core/db/ (package)"]
+    PROC --> DOM["app/customers/, app/pricing/,<br/>app/inventory/ (repositories)"]
+    DOM --> PG
     DBL --> PG[(Postgres, via pool)]
     PROC --> INV[recalc_inventory]
     INV --> DBL
 
     WEB["app/web/blueprints/*.py<br/>(Flask routes)"] --> PROC
     WEB --> DBL
+    WEB --> DOM
 ```
 
 `app/core/ingestion.py` (renamed from `process.py`) and `app/core/db/`
@@ -40,6 +43,15 @@ roles admin screens and their SQL form the auth domain, `app/auth/` (its
 SQL in `app/auth/repository/`). Every blueprint imports
 `app.auth.decorators.permission_required`; `app/auth/` imports no other domain
 package, only `app/shared/` (and `app.web.navigation` for the landing page).
+
+The customers, pricing and inventory domains follow the same layout:
+`app/customers/`, `app/pricing/` and `app/inventory/` each hold their
+`routes.py` (the blueprint) and their SQL (`app/customers/repository/`, a
+package with `customers.py` and `ownership_cards.py`;
+`app/pricing/repository.py`; `app/inventory/repository.py`). Other code may
+import them; they import `app/shared/`, `app/auth/` and, until those move,
+`app.core.db.plates` (customers) and `app.web.helpers` (routes). Their
+templates stay in `app/web/templates/`.
 
 This is what lets the historical Excel migration (`app/migrate.py`) reuse
 exactly the same normalization and duplicate detection that the web form

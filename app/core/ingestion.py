@@ -27,6 +27,9 @@ from psycopg.rows import DictRow
 from pydantic import BaseModel
 
 from app.core import db
+from app.customers import repository as customers_repository
+from app.inventory import repository as inventory_repository
+from app.pricing import repository as pricing_repository
 from app.shared.models import ExtractedRow
 from app.shared.normalize import inventory_category, is_real_plate, normalize_row
 
@@ -96,7 +99,7 @@ def _count_row(summary: Summary, row: ExtractedRow, is_dup: bool) -> None:
 # human's second look -- generalizes the review-note check that used to
 # exist for requested_by alone. `requested_by` doubles as the "resolved to
 # the same customer" check: customer_id comes from
-# db.resolve_or_create_customer(head.requested_by), keyed off this exact
+# customers_repository.resolve_or_create_customer(head.requested_by), keyed off this exact
 # field, so rows agreeing here also resolve to one customer.
 # reason/vehicle_brand/unit_price are deliberately EXCLUDED -- those are
 # genuinely per-line (a vehicle brand belongs to one plate/vehicle, not the
@@ -136,7 +139,7 @@ def _snapshot_unit_price(row: ExtractedRow, prices: dict[str, Decimal]) -> Extra
     prices vary by negotiated discount), it's kept verbatim. Only a row with
     no unit_price at all (e.g. the historical Excel migration door, which
     never sets one) falls back to the CURRENT suggested tariff for its
-    plate_type, taken from `prices` (a single db.current_prices(conn)
+    plate_type, taken from `prices` (a single pricing_repository.current_prices(conn)
     snapshot shared by the whole batch, not re-queried per row). Stays None
     if that type has no configured tariff yet -- never a silent 0.
     """
@@ -207,7 +210,7 @@ def process_rows(
                 f"No se puede registrar alistamiento para el tipo '{r.plate_type}' "
                 "(no tiene material de inventario asociado)."
             )
-        db.insert_blank_preparation(
+        inventory_repository.insert_blank_preparation(
             conn,
             prep_date=r.order_date,
             category=category,
@@ -221,7 +224,7 @@ def process_rows(
     # One current-tariff snapshot for the whole batch (Fase 2) -- applied
     # per row below as a fallback only for rows with no unit_price of their
     # own (see _snapshot_unit_price).
-    prices = db.current_prices(conn)
+    prices = pricing_repository.current_prices(conn)
 
     # Group plate rows by order_number, preserving order.
     groups: dict[str, list[ExtractedRow]] = defaultdict(list)
@@ -230,7 +233,7 @@ def process_rows(
 
     for order_number, group in groups.items():
         head = group[0]
-        customer_id = db.resolve_or_create_customer(conn, head.requested_by)
+        customer_id = customers_repository.resolve_or_create_customer(conn, head.requested_by)
         order_id = db.insert_order(conn, row=head, customer_id=customer_id, created_by=created_by)
         summary.orders_inserted += 1
 
@@ -246,7 +249,7 @@ def process_rows(
             db.insert_plate(conn, order_id=order_id, row=priced, is_possible_duplicate=is_dup)
             _count_row(summary, priced, is_dup)
 
-    db.recalc_inventory(conn)
+    inventory_repository.recalc_inventory(conn)
 
     return summary
 
@@ -320,10 +323,10 @@ def replace_order(
     summary.orders_replaced = len(existing)
 
     already_present = db.existing_plate_numbers(conn, live_candidates)
-    prices = db.current_prices(conn)
+    prices = pricing_repository.current_prices(conn)
 
     head = normalized[0]
-    customer_id = db.resolve_or_create_customer(conn, head.requested_by)
+    customer_id = customers_repository.resolve_or_create_customer(conn, head.requested_by)
     order_id = db.insert_order(conn, row=head, customer_id=customer_id, created_by=created_by)
     summary.orders_inserted = 1
 
@@ -339,6 +342,6 @@ def replace_order(
         db.insert_plate(conn, order_id=order_id, row=priced, is_possible_duplicate=is_dup)
         _count_row(summary, priced, is_dup)
 
-    db.recalc_inventory(conn)
+    inventory_repository.recalc_inventory(conn)
 
     return summary

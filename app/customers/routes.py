@@ -3,7 +3,7 @@ attributes (Fase 6).
 
 Everywhere else in the app (ingestion.py, record_save, /ingest's own
 resolve_or_create_customer call) only ever resolves/creates a customer by
-name, or fills in a still-NULL attribute (db.resolve_or_create_customer's
+name, or fills in a still-NULL attribute (repository.resolve_or_create_customer's
 COALESCE, see its docstring) -- this is the one place a person can
 knowingly overwrite what's already stored, e.g. fixing a typo or filling
 in one of the 191 customers the pre-POS historical backfill left with
@@ -19,7 +19,8 @@ import psycopg
 from flask import Blueprint, redirect, render_template, request, url_for
 
 from app.auth.decorators import permission_required
-from app.core import db
+from app.customers import repository
+from app.shared import db
 from app.shared.normalize import (
     CUSTOMER_TYPES,
     DOCUMENT_RELATIONS,
@@ -36,7 +37,7 @@ bp = Blueprint("customers", __name__)
 def customers():
     query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
-        rows = db.list_customers(conn)
+        rows = repository.list_customers(conn)
     if query:
         needle = query.upper()
         rows = [c for c in rows if needle in c.name.upper()]
@@ -47,8 +48,8 @@ def customers():
 @permission_required("customers.manage")
 def customer_detail(customer_id: int):
     with db.get_conn() as conn:
-        customer = db.get_customer(conn, customer_id)
-        cards = db.list_ownership_cards_for_customer(conn, customer_id) if customer else []
+        customer = repository.get_customer(conn, customer_id)
+        cards = repository.list_ownership_cards_for_customer(conn, customer_id) if customer else []
     if customer is None:
         return redirect(url_for("customers.customers"))
     return render_template(
@@ -63,8 +64,8 @@ def customer_detail(customer_id: int):
 def customer_save(customer_id: int):
     def _rerender(error: str):
         with db.get_conn() as conn:
-            customer = db.get_customer(conn, customer_id)
-            cards = db.list_ownership_cards_for_customer(conn, customer_id)
+            customer = repository.get_customer(conn, customer_id)
+            cards = repository.list_ownership_cards_for_customer(conn, customer_id)
         return render_template(
             "customer_detail.html", customer=customer, cards=cards, error=error,
             customer_types=CUSTOMER_TYPES, document_types=DOCUMENT_TYPES,
@@ -78,10 +79,10 @@ def customer_save(customer_id: int):
 
     try:
         with db.get_conn() as conn:
-            existing = db.get_customer(conn, customer_id)
+            existing = repository.get_customer(conn, customer_id)
             if existing is None:
                 return redirect(url_for("customers.customers"))
-            db.update_customer(
+            repository.update_customer(
                 conn, customer_id, name=canonical, **customer_fields_from_form(request.form),
             )
             conn.commit()

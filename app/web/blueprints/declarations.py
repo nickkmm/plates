@@ -81,6 +81,7 @@ from app.core.db.declarations import (
     requires_notarization,
 )
 from app.core.declaration_pdf import build_declaration_pdf
+from app.customers import repository as customers_repository
 from app.shared.normalize import clean_plate, normalize_requested_by
 from app.shared.timezones import utc_now
 from app.shared.uploads import UploadError, resolve_upload_path, send_stored_file
@@ -187,8 +188,8 @@ def _summarize(cards: list[db.DeclarationCardRecord]) -> dict[str, Any]:
     }
 
 
-def _card_line(conn: psycopg.Connection[DictRow], card: db.OwnershipCardRecord) -> str:
-    owner = db.get_customer(conn, card.customer_id)
+def _card_line(conn: psycopg.Connection[DictRow], card: customers_repository.OwnershipCardRecord) -> str:
+    owner = customers_repository.get_customer(conn, card.customer_id)
     owner_name = owner.name if owner else f"cliente #{card.customer_id}"
     return (
         f"licencia {card.transit_license}, placa {card.plate_number}, "
@@ -237,8 +238,8 @@ def _flag_details(
                 title = "La tarjeta de propiedad ya existe a nombre de otro cliente"
             else:
                 title = "La licencia de tránsito y la placa no cuadran entre sí"
-            by_license = db.get_ownership_card_by_transit_license(conn, license_) if license_ else None
-            by_plate = db.get_ownership_card_by_plate_number(conn, plate) if plate else None
+            by_license = customers_repository.get_ownership_card_by_transit_license(conn, license_) if license_ else None
+            by_plate = customers_repository.get_ownership_card_by_plate_number(conn, plate) if plate else None
             if by_license is not None:
                 lines.append(f"Tarjeta existente por licencia: {_card_line(conn, by_license)}")
             else:
@@ -252,7 +253,7 @@ def _flag_details(
             title = "Un cliente existente tiene un tipo distinto al esperado"
             for person, expected, label in ((owner, "CLIENTE", "Propietario/poseedor"),
                                             (gestor, "GESTOR", "Gestor")):
-                existing = db.get_customer_by_name(conn, str(person.get("name") or "")) if person else None
+                existing = customers_repository.get_customer_by_name(conn, str(person.get("name") or "")) if person else None
                 if existing is not None and existing.type != expected:
                     lines.append(
                         f"{label} '{existing.name}' ya existe con tipo "
@@ -266,7 +267,7 @@ def _flag_details(
         elif flag == FLAG_CUSTOMER_DOCUMENT_MISMATCH:
             title = "Un cliente existente con el mismo nombre tiene otro documento"
             for person, label in ((owner, "Propietario/poseedor"), (gestor, "Gestor")):
-                existing = db.get_customer_by_name(conn, str(person.get("name") or "")) if person else None
+                existing = customers_repository.get_customer_by_name(conn, str(person.get("name") or "")) if person else None
                 if existing is not None and existing.document_number:
                     lines.append(
                         f"{label} '{existing.name}': documento guardado {existing.document_number}, "
@@ -295,7 +296,7 @@ def _render_detail(
         declaration = db.get_declaration(conn, declaration_id)
         if declaration is None:
             return redirect(url_for("declarations.declarations"))
-        gestor = db.get_customer(conn, declaration.gestor_id) if declaration.gestor_id else None
+        gestor = customers_repository.get_customer(conn, declaration.gestor_id) if declaration.gestor_id else None
         card_records = db.list_declaration_cards(conn, declaration_id)
         pending = declaration.status == STATUS_PENDING_REVIEW
         stage = declaration_stage(declaration, card_records)
@@ -319,9 +320,9 @@ def _render_detail(
                 # "Perdí mis placas": the client declared there are no used plates to photograph
                 "plates_lost": bool(submitted.get("plates_lost")) and not card.used_plates_photo_path,
                 "flag_details": _flag_details(conn, declaration, card, card_records) if pending else [],
-                "customer": db.get_customer(conn, card.customer_id) if card.customer_id else None,
+                "customer": customers_repository.get_customer(conn, card.customer_id) if card.customer_id else None,
                 "ownership_card": (
-                    db.get_ownership_card(conn, card.ownership_card_id) if card.ownership_card_id else None
+                    customers_repository.get_ownership_card(conn, card.ownership_card_id) if card.ownership_card_id else None
                 ),
                 "can_reassign": pending and FLAG_CARD_OTHER_OWNER in card.review_flags,
             })

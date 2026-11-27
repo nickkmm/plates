@@ -19,6 +19,7 @@ from psycopg.rows import tuple_row
 
 from app.auth import repository
 from app.core import db
+from app.customers import repository as customers_repository
 from tests.core.db._helpers import _insert_order, make_row
 
 
@@ -46,7 +47,7 @@ class TestInsertOrder:
         assert order_id is not None
 
     def test_stores_customer_id(self, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V")
         order_id = db.insert_order(
             db_conn, row=make_row(requested_by="PTO.V"), customer_id=customer_id, created_by=None,
         )
@@ -123,7 +124,7 @@ class TestUpdateOrder:
             assert cur.fetchone() == ("2001-B", date(2026, 2, 1), "JUAN")
 
     def test_omitting_customer_id_leaves_it_untouched(self, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V")
         order_id = db.insert_order(
             db_conn, row=make_row(requested_by="PTO.V"), customer_id=customer_id, created_by=None,
         )
@@ -136,7 +137,7 @@ class TestUpdateOrder:
     def test_explicit_customer_id_updates_it(self, db_conn):
         order_id = _insert_order(db_conn, order_number="2003", order_date=date(2026, 1, 1),
                                   requested_by="PEDRO")
-        new_customer_id = db.resolve_or_create_customer(db_conn, "MARIA")
+        new_customer_id = customers_repository.resolve_or_create_customer(db_conn, "MARIA")
         db.update_order(db_conn, order_id, order_number="2003", order_date=date(2026, 1, 1),
                         requested_by="MARIA", customer_id=new_customer_id)
         with db_conn.cursor(row_factory=tuple_row) as cur:
@@ -182,7 +183,7 @@ class TestUpdateOrder:
             )
 
     def test_explicit_none_clears_customer_id(self, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V")
         order_id = db.insert_order(
             db_conn, row=make_row(requested_by="PTO.V"), customer_id=customer_id, created_by=None,
         )
@@ -455,7 +456,7 @@ class TestOrderDetail:
         assert plates[0]["unit_price"] == Decimal("150000")
 
     def test_joins_the_resolved_customers_attributes(self, db_conn):
-        customer_id = db.resolve_or_create_customer(db_conn, "PTO.V")
+        customer_id = customers_repository.resolve_or_create_customer(db_conn, "PTO.V")
         with db_conn.cursor() as cur:
             cur.execute(
                 "UPDATE customers SET type = %s, phone = %s WHERE id = %s",
