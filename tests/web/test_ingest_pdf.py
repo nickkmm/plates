@@ -410,7 +410,7 @@ class TestExcelUpload:
         from datetime import date
 
         from app.core import db
-        from app.core.models import ExtractedRow
+        from app.shared.models import ExtractedRow
         db.insert_order(
             db_conn,
             row=ExtractedRow(order_number="9001", order_date=date(2026, 1, 1), requested_by="OTRO",

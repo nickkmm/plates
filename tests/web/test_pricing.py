@@ -18,7 +18,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app.core import db
-from app.core.normalize import PLATE_TYPES
+from app.shared.normalize import PLATE_TYPES
 
 PRECIOS_URL = "/precios"
 

@@ -37,9 +37,9 @@ from psycopg.types.json import Jsonb
 
 from app import schema_migrate
 from app.core import db
-from app.core.models import ExtractedRow
-from app.core.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
 from app.core.permissions import PERMISSIONS
+from app.shared.models import ExtractedRow
+from app.shared.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _INIT_SQL = (_REPO_ROOT / "init.sql").read_text(encoding="utf-8")

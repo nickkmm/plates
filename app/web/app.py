@@ -59,7 +59,7 @@ from flask import Flask, Response, make_response, redirect, render_template, req
 from flask_wtf.csrf import CSRFError
 from sentry_sdk.integrations.flask import FlaskIntegration
 
-from app.core.timezones import format_bogota
+from app.shared.timezones import format_bogota
 from app.web import auth
 from app.web.auth import authenticated
 from app.web.blueprints.auth_routes import bp as auth_routes_bp

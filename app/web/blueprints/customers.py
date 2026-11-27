@@ -19,7 +19,7 @@ import psycopg
 from flask import Blueprint, redirect, render_template, request, url_for
 
 from app.core import db
-from app.core.normalize import (
+from app.shared.normalize import (
     CUSTOMER_TYPES,
     DOCUMENT_RELATIONS,
     DOCUMENT_TYPES,

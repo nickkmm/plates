@@ -10,8 +10,8 @@ import pytest
 from psycopg.rows import tuple_row
 
 from app.core import db
-from app.core.models import ExtractedRow
 from app.core.production import advance_order, next_status, previous_status, revert_order
+from app.shared.models import ExtractedRow
 from tests.conftest import PRODUCCION_USERNAME, TEST_USERNAME
 
 _STALE = "El estado de la orden cambió mientras tanto. Revisa el estado actual e inténtalo de nuevo."

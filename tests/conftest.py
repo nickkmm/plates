@@ -140,7 +140,8 @@ from psycopg.rows import DictRow, tuple_row  # noqa: E402
 
 from app import schema_migrate  # noqa: E402
 from app.core import db  # noqa: E402
-from app.core.normalize import INVENTORY_CATEGORIES  # noqa: E402
+from app.shared import db as shared_db  # noqa: E402
+from app.shared.normalize import INVENTORY_CATEGORIES  # noqa: E402
 
 TABLES = (
     "plates", "production_orders", "blank_preparations", "inventory_categories",
@@ -251,9 +252,10 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
     available.
 
     **How the rollback works**: checks out ONE raw connection directly from
-    the pool (`db._get_pool()`, bypassing `db.get_conn()`'s own context
-    manager) and holds it for the WHOLE test. `app.core.db.get_conn` is
-    monkeypatched to always yield this SAME connection instead of checking
+    the pool (`app.shared.db._get_pool()`, bypassing `db.get_conn()`'s own
+    context manager) and holds it for the WHOLE test. `get_conn` is
+    monkeypatched, on both `app.core.db` (the re-export every call site uses)
+    and `app.shared.db` (where it is defined), to always yield this SAME connection instead of checking
     out a (possibly different) one from the pool -- this is what makes every
     `with db.get_conn() as conn:` call anywhere (test code AND, critically,
     every Flask route the test drives through `authenticated_client`/etc.)
@@ -294,7 +296,7 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
     that PUSHES a new savepoint on entry and pops it on exit (RELEASE on a
     clean exit, ROLLBACK TO + RELEASE on an exception) -- replicating the
     original pool's own "commit on success, rollback on exception" `with`
-    behavior (see `app/core/db/__init__.py::get_conn`), which
+    behavior (see `app/shared/db.py::get_conn`), which
     `tests/core/test_ingestion.py::TestAtomicity` depends on.
 
     **A real STACK of savepoints, not just one** -- `with db.get_conn()`
@@ -342,7 +344,7 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
             pytest.fail(reason + " and TEST_REQUIRE_DB=1", pytrace=False)
         pytest.skip(reason)
 
-    pool = db._get_pool()
+    pool = shared_db._get_pool()
     conn = pool.getconn()
     real_commit, real_rollback = conn.commit, conn.rollback
     # A STACK of savepoints, not just one: `with db.get_conn() as conn:`
@@ -433,6 +435,7 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
                 _execute(f"RELEASE SAVEPOINT {name}")
 
         monkeypatch.setattr(db, "get_conn", _shared_get_conn)
+        monkeypatch.setattr(shared_db, "get_conn", _shared_get_conn)
         yield
     finally:
         conn.commit, conn.rollback = real_commit, real_rollback

@@ -25,7 +25,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.core import db
-from app.core.models import ExtractedRow
+from app.shared.models import ExtractedRow
 from app.web.helpers import today_iso
 
 CUADRE_URL = "/cuadre"

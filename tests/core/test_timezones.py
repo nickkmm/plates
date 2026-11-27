@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from app.core.timezones import format_bogota, to_bogota, utc_now
+from app.shared.timezones import format_bogota, to_bogota, utc_now
 
 
 def test_naive_value_is_read_as_utc() -> None:

@@ -5,7 +5,7 @@ identifiers; the Spanish labels belong to the web layer), and every change
 is recorded as one `production_order_events` row. This module is only the
 data layer; the transition rules live in app/core/production.py.
 
-See app/core/db/__init__.py for the module-wide connection/transaction
+See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.
 """
 
@@ -19,7 +19,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import DictRow, class_row
 
-from app.core.normalize import clean_plate
+from app.shared.normalize import clean_plate
 
 # production_orders.production_status values, in the order an order moves
 # through them.

@@ -2,7 +2,7 @@
 2 moved login off the AUTH_USERS/AUTH_ROLES env vars, see auth.py's module
 docstring) and any future admin user-management screen.
 
-See app/core/db/__init__.py for the module-wide connection/transaction
+See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.
 """
 

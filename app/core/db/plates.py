@@ -7,7 +7,7 @@ orders.distinct_requested_by -- it queries `plates`, not
 this table's queries. Included here on purpose, by symmetry with
 orders.distinct_requested_by.
 
-See app/core/db/__init__.py for the module-wide connection/transaction
+See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.
 """
 
@@ -22,8 +22,8 @@ from psycopg.rows import DictRow
 
 from app.core.db.ownership_cards import resolve_card_id_for_plate
 from app.core.db.pricing import current_prices
-from app.core.models import ExtractedRow
-from app.core.normalize import clean_plate
+from app.shared.models import ExtractedRow
+from app.shared.normalize import clean_plate
 
 
 def existing_plate_numbers(conn: psycopg.Connection[DictRow], candidates: Iterable[str]) -> set[str]:

@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 
 from app.core import db
-from app.core.models import ExtractedRow
+from app.shared.models import ExtractedRow
 
 
 def make_row(**overrides: object) -> ExtractedRow:

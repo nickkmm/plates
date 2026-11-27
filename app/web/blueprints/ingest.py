@@ -12,8 +12,10 @@ from app.core import db
 from app.core.db.declarations import STATUS_APPROVED, STATUS_PENDING_REVIEW, requires_notarization
 from app.core.declarations import ACTING_AS_GESTOR
 from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
-from app.core.models import ExtractedRow
-from app.core.normalize import (
+from app.core.pdf_extract import ParsedPedido, PdfExtractError
+from app.core.pedido_upload import parse_uploaded_pedido
+from app.shared.models import ExtractedRow
+from app.shared.normalize import (
     _CITY_SPECIFIC_TYPES,
     CUSTOMER_TYPES,
     DOCUMENT_RELATIONS,
@@ -28,8 +30,6 @@ from app.core.normalize import (
     normalize_requested_by,
     validate_plate,
 )
-from app.core.pdf_extract import ParsedPedido, PdfExtractError
-from app.core.pedido_upload import parse_uploaded_pedido
 from app.web.auth import permission_required
 from app.web.helpers import (
     FORM_PLATE_TYPES,

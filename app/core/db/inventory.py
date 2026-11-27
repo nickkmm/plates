@@ -6,7 +6,7 @@ deliberate exception to "group by table") because they're an implementation
 detail of THIS page/feature (per-material inventory), not something any
 plates-related caller elsewhere needs.
 
-See app/core/db/__init__.py for the module-wide connection/transaction
+See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.
 """
 
@@ -19,7 +19,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import DictRow
 
-from app.core.normalize import INVENTORY_CATEGORIES, inventory_category
+from app.shared.normalize import INVENTORY_CATEGORIES, inventory_category
 
 
 def insert_blank_preparation(conn: psycopg.Connection[DictRow], *, prep_date: date | str | None, category: str,

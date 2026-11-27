@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from psycopg.rows import tuple_row
 
 from app.core import db
-from app.core.models import ExtractedRow
+from app.shared.models import ExtractedRow
 from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf, build_pedido_xlsx
 
 

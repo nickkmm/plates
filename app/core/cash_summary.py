@@ -10,7 +10,7 @@ file.
 
 **Transaction contract**: `build_cash_summary` takes an already-open `conn`
 and never calls commit()/rollback() -- same convention as every function in
-app/core/db/ (see app/core/db/__init__.py's module docstring), even though
+app/core/db/ (see app/shared/db.py's module docstring), even though
 this module lives outside that package.
 
 **Live-computed, not a saved snapshot**: no new table, no locking -- every

@@ -7,7 +7,7 @@ INDEPENDENT constraints (FK to customers, UNIQUE transit_license, UNIQUE
 plate_number) -- see docs/DATABASE.md.
 
 Inputs are normalized here, inside the layer: transit_license is stripped +
-uppercased, plate_number goes through app.core.normalize.clean_plate, and
+uppercased, plate_number goes through app.shared.normalize.clean_plate, and
 free-text fields are stripped with blank -> NULL.
 
 Constraint violations are NOT pre-checked: they surface as psycopg errors
@@ -16,7 +16,7 @@ source of truth", same as create_user/update_customer. find_card_conflicts is
 the read-only way to ask beforehand what a declared (customer, licence, plate)
 triple would collide with.
 
-See app/core/db/__init__.py for the module-wide connection/transaction
+See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.
 """
 
@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import psycopg
 from psycopg.rows import DictRow, class_row
 
-from app.core.normalize import clean_plate, is_real_plate
+from app.shared.normalize import clean_plate, is_real_plate
 
 # Customer types whose plates NEVER get an ownership_card_id: EMPRESA and
 # TRÁNSITO have no "tarjeta de propiedad" (their plates hang off the company

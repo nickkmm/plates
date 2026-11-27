@@ -14,7 +14,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from app.core import db
-from app.core.normalize import (
+from app.shared.normalize import (
     CUSTOMER_TYPES,
     DOCUMENT_RELATIONS,
     DOCUMENT_TYPES,

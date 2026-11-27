@@ -16,7 +16,7 @@ holds the whole declaration. Contract under test:
   with the real context staff need; approval is all-or-nothing and reassigning
   a card is chosen per card (`reassign_<declaration_card_id>`).
 - files are served only through a stored name resolved by
-  app.web.uploads.resolve_upload_path, with safe headers.
+  app.shared.uploads.resolve_upload_path, with safe headers.
 
 EVERY public declaration is stored as pending_review (flags or not); the
 point of sale approves it. So "approved" fixtures are built the real way:
@@ -43,8 +43,8 @@ import pytest
 
 from app.core import db
 from app.core import declarations as decl
-from app.core.models import ExtractedRow
-from app.core.timezones import utc_now
+from app.shared.models import ExtractedRow
+from app.shared.timezones import utc_now
 from tests.conftest import PUNTO_VENTA_USERNAME, TEST_USERNAME
 from tests.core.test_declarations import (
     TODAY,

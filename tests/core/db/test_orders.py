@@ -6,7 +6,7 @@ delete_order.
 Needs a real Postgres connection (see tests/conftest.py's
 `db_conn`/`clean_db`). Setup here calls db.py's own
 insert_order/insert_plate/insert_blank_preparation directly --
-deliberately bypassing app.core.ingestion and app.core.normalize -- so
+deliberately bypassing app.core.ingestion and app.shared.normalize -- so
 a failure in one of these tests points at db.py itself, not at
 normalization or the ingestion pipeline (covered elsewhere)."""
 

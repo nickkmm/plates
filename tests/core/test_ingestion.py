@@ -19,7 +19,7 @@ from psycopg.rows import tuple_row
 
 from app.core import db
 from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
-from app.core.models import ExtractedRow
+from app.shared.models import ExtractedRow
 
 
 def make_row(**overrides: object) -> ExtractedRow:

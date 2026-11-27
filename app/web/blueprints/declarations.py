@@ -79,10 +79,10 @@ from app.core.db.declarations import (
     requires_notarization,
 )
 from app.core.declaration_pdf import build_declaration_pdf
-from app.core.normalize import clean_plate, normalize_requested_by
-from app.core.timezones import utc_now
+from app.shared.normalize import clean_plate, normalize_requested_by
+from app.shared.timezones import utc_now
+from app.shared.uploads import UploadError, resolve_upload_path, send_stored_file
 from app.web.auth import permission_required
-from app.web.uploads import UploadError, resolve_upload_path, send_stored_file
 
 bp = Blueprint("declarations", __name__)
 

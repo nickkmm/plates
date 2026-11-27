@@ -14,7 +14,7 @@ is the ONLY complete copy of what was declared -- nothing was created in
 customers / ownership_cards. `declarations.review_flags` is the union of the
 cards' own `review_flags`.
 
-See app/core/db/__init__.py for the module-wide connection/transaction
+See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.
 """
 

@@ -18,7 +18,7 @@ import re
 import unicodedata
 from typing import TypeGuard
 
-from app.core.models import ExtractedRow
+from app.shared.models import ExtractedRow
 
 # Curated requested_by normalization, confirmed manually with the user (the same
 # decisions used to clean the first ledger; see data/normalize.py). Maps known

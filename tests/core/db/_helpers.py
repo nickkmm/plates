@@ -2,7 +2,7 @@
 tests/core/test_db.py (Fase 1d step 10 test-file split). Plain functions,
 not fixtures -- import them explicitly. These call db.py's own
 insert_order/insert_plate for setup -- deliberately bypassing
-app.core.ingestion and app.core.normalize -- so a failure in a test that
+app.core.ingestion and app.shared.normalize -- so a failure in a test that
 uses them points at db.py itself, not at normalization or the ingestion
 pipeline (covered elsewhere)."""
 
@@ -13,7 +13,7 @@ from datetime import date
 from psycopg.rows import tuple_row
 
 from app.core import db
-from app.core.models import ExtractedRow
+from app.shared.models import ExtractedRow
 
 
 def make_row(**overrides: object) -> ExtractedRow:

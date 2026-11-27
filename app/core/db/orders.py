@@ -1,6 +1,6 @@
 """production_orders reads/writes, and the shared order+plates summary shape.
 
-See app/core/db/__init__.py for the module-wide connection/transaction
+See app/shared/db.py for the module-wide connection/transaction
 contract that applies to every function here.
 """
 
@@ -14,7 +14,7 @@ from psycopg import sql
 from psycopg.rows import DictRow, class_row
 
 from app.core.db.plates import relink_plates
-from app.core.models import ExtractedRow
+from app.shared.models import ExtractedRow
 
 
 @dataclass

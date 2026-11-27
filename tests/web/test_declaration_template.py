@@ -20,7 +20,7 @@ from app.core.declarations import (
     MARKETING_STATEMENT,
     MAX_CARDS,
 )
-from app.core.normalize import DOCUMENT_TYPES, PLATE_TYPES, max_plates_per_card
+from app.shared.normalize import DOCUMENT_TYPES, PLATE_TYPES, max_plates_per_card
 from app.web.app import app as flask_app
 
 VEHICLE_TYPES = [t for t in PLATE_TYPES if t != "ORNAMENTAL"]

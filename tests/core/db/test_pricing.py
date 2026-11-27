@@ -10,7 +10,7 @@ import pytest
 from psycopg.rows import tuple_row
 
 from app.core import db
-from app.core.normalize import PLATE_TYPES
+from app.shared.normalize import PLATE_TYPES
 
 
 class TestCurrentPrices:

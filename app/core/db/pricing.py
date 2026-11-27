@@ -7,7 +7,7 @@ would leave ORNAMENTAL unable to have a price and give REMOLQUE the price of
 CARRO PÚBLICO. Every function here operates on the plate_type namespace only.
 
 plate_type_prices starts EMPTY on purpose (not seeded in init.sql) -- a type
-with no row yet is "sin tarifa", never a silent 0. See app/core/db/__init__.py
+with no row yet is "sin tarifa", never a silent 0. See app/shared/db.py
 for the module-wide connection/transaction contract that applies here.
 """
 
@@ -20,7 +20,7 @@ from decimal import Decimal
 import psycopg
 from psycopg.rows import DictRow
 
-from app.core.normalize import PLATE_TYPES
+from app.shared.normalize import PLATE_TYPES
 
 
 @dataclass

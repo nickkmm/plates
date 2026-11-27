@@ -4,7 +4,7 @@ section (/usuarios/roles). No Flask.
 Each function returns None when the input is valid, or the first failing
 rule's Spanish message. Takes an open `conn` where it needs the database and
 never writes, commits or rolls back (same contract as
-app/core/db/__init__.py): the web layer does the writes.
+app/shared/db.py): the web layer does the writes.
 
 **Who may lock whom out**: an admin can't deactivate their own account nor
 drop their own admin role, and no change may leave the app without an
