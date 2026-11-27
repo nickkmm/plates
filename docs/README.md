@@ -24,6 +24,10 @@ it is not repeated here.
 | [`WEB.md`](WEB.md) | `app/web/`: routes, roles/permissions, templates, complete flows |
 | [`PRODUCTION.md`](PRODUCTION.md) | Production screen: an order's flow through to delivery, states, permissions and routes |
 | [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md) | Local infra gotchas, testing, environment variables |
+| [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) | Proposal: JWT auth, JSON API + Next.js front end, back end organized by domain |
+| [`FRONTEND.md`](FRONTEND.md) | Proposal: front-end architecture, UX patterns per screen, visual identity; clickable prototypes in `prototypes/` |
+| [`CUSTOMER_PORTAL.md`](CUSTOMER_PORTAL.md) | Plan: customer portal where recurring customers build and send their orders (phase 7) |
+| [`SIIGO_INTEGRATION.md`](SIIGO_INTEGRATION.md) | Plan: inventory transfers and billing in Siigo from plates (phase 8, built last) |
 
 ## System overview
 
