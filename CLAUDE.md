@@ -94,7 +94,9 @@ plates is the internal plate-production and point-of-sale app for INGSE
   `pedido_upload.py`) and the orders and plates SQL (`repository/`).
 - CSRF: every `method="post"` form and every JS request that changes data
   must carry the CSRF token (`csrf_token()` field or `X-CSRFToken` header);
-  see `docs/WEB.md`, "CSRF protection".
+  see `docs/WEB.md`, "CSRF protection". `/api` requests are exempt from the
+  token and must send `X-Requested-With: XMLHttpRequest` instead; see
+  `docs/WEB.md`, "JSON API (`/api`)".
 - `app/shared/`: code every domain needs (connection pool, normalize,
   timezones, models, uploads); depends on no domain package.
 - `app/declarations/`: the sworn declarations: staff screens (`routes.py`),

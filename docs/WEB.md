@@ -38,6 +38,10 @@ in `app/web/templates/` as well.
 | GET | `/healthz` | `app.py` | Liveness probe | — | — | open |
 | GET/POST | `/login` | `app/auth/routes.py` | Login (queries `users`, Phase 2) | `auth.authenticate` | `login.html` | open |
 | POST | `/logout` | `app/auth/routes.py` | Closes the session (POST only: a GET responds 405 and closes nothing) | — | (redirect) | open |
+| POST | `/api/auth/login` | `app/auth/api.py` | JSON login: sets the `access_token` and `refresh_token` cookies (see "JSON API (`/api`)") | `auth.authenticate`, `refresh_tokens.issue`, `issue_access_token` | (JSON) | open |
+| POST | `/api/auth/refresh` | `app/auth/api.py` | Rotates the refresh token and reissues both cookies with the user's current permissions | `refresh_tokens.rotate`, `repository.get_user_by_id` | (JSON) | open (refresh cookie) |
+| POST | `/api/auth/logout` | `app/auth/api.py` | Revokes the refresh token and clears both cookies; 204 | `refresh_tokens.revoke` | — | open |
+| GET | `/api/auth/me` | `app/auth/api.py` | The user and permissions of the access token, without reading the database | `decode_access_token` | (JSON) | access cookie (401 without it) |
 | GET/POST | `/declaracion` | `app/declarations/public_routes.py` | Public sworn-declaration form (QR at the counter), only for people who declare for themselves (PROPIETARIO / POSEEDOR; a `GESTOR` sent by hand is rejected with 400; the endpoint for gestores is planned). POST: honeypot, signed token, Turnstile, per-IP limit (20/hour; customers share the shop's wifi IP), reads 1 to 30 ownership cards (`card_<i>_*`) with a single declarant and a single signature, saves the signature and the **mandatory photos** (the declarant's ID card and the ownership card, front and back of each, and the photo of the used plate(s) of each card, for both deterioration and loss, unless the customer ticks «Perdí mis placas» ("I lost my plates") on that card (`card_<i>_plates_lost`; then that photo is neither requested nor saved and the declaration detail says so); JPG/PNG/WebP detected by content, max. 5 MB each, the browser shrinks them before sending; the body of this POST allows up to 40 MB) in `UPLOADS_DIR`, validates and saves the declaration always as `pending_review` («Por revisar», "To review") **without creating anything** (customer and ownership cards are created when the point of sale approves it). Responds **503** (`declaration_unavailable.html`) while `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (or `TURNSTILE_BYPASS`) are not set. The declarant's name cannot contain digits (same rule as "Solicitado por" ("Requested by") in `/ingest`, so staff can create the order afterwards): the browser warns (`pattern`) and the server rejects it with 400. The success page is identical for every declaration (with or without alerts): it never reveals status, alerts or the previous owner | `declarations.validate_declaration`, `submit_declaration`, `declarations_repository.count_recent_by_ip` | `declaration.html`, `declaration_received.html`, `declaration_unavailable.html` | **no login** (the only public route that writes) |
 | GET | `/ingest` | `ingest.py` | "Registrar" ("Register") form — full capture of a POS order (Phase 3). With `?declaration_id=N` (the button in `/declaraciones`) it arrives **pre-filled from an approved declaration not yet attended** (`production_order_id` NULL), just like the PDF: **it saves nothing**. Header: today's date, order no. and payment method empty (staff decide those), customer = the declarant (the gestor if a gestor acted; otherwise, the customer linked to the cards) with all their data. One `placa` line per ownership card, in order: the card's plate type (empty if not recognized), plate, quantity, reason, brand and value = current rate for the type (empty if none); the city is the card's «matriculado en» ("registered in") (uppercased); if the card does not have it, it stays empty and a notice asks for it for `CARRO PARTICULAR`/`CARRO PÚBLICO` lines. Nonexistent or malformed id → 404; pending, rejected, already attended or **approved with some `PÉRDIDA` card whose notarial authentication has not yet been marked as received** → the normal form with a Spanish error (if already attended, it says with which order and links to its detail; `DETERIORO`-only declarations are never blocked this way) | `orders_repository.distinct_requested_by/cities`, `pricing_repository.current_prices`, `customers_repository.list_customers`, `declarations_repository.get_declaration`, `declarations_repository.list_declaration_cards`, `customers_repository.get_customer` | `ingest.html` | `@permission_required("orders.capture")` |
 | POST | `/ingest` | `ingest.py` | Saves order+plates (resolves/creates customer, snapshots prices); handles the duplicate order/plate notices and the opt-in "Reemplazar" ("Replace"). **The city is mandatory on every line** (except "Orden anulada" ("Voided order")): the browser requires it (`required`) and the server rejects a line without a city with "Línea N: elegí la ciudad…" ("Line N: choose the city…") and saves nothing. Only `CARRO PARTICULAR` / `CARRO PÚBLICO` depend on a city (left blank so it is chosen); for the other types the form suggests `COLOMBIA` (editable). If it carries the hidden field `declaration_id`, the server **re-validates** the declaration (exists, approved, not attended and, if it has a `PÉRDIDA` card, with the notarial authentication received; otherwise it saves nothing and returns the form as is with the error); the plates of its cards are **not blocked** as "already exists" (the case is replacing a lost or deteriorated plate; typing the same plate twice in the submission still blocks) and, in the **same transaction** as the save (normal path and "Reemplazar"), the declaration is marked attended by the created order (`declarations_repository.set_declaration_production_order`). The hidden field travels in all re-renders (duplicate order/plate notices, errors). Without `declaration_id` the behavior does not change | `service.process_rows`, `service.replace_order`, `service.find_duplicate_plate_numbers`, `customers_repository.resolve_or_create_customer`, `orders_repository.find_orders_by_number`, `declarations_repository.set_declaration_production_order` | `ingest.html` | `@permission_required("orders.capture")` |
@@ -183,7 +187,8 @@ every plate that already existed), so it appears in `/review` and in the summary
   the session token; without it the response is 400 with `csrf_error.html`. See
   "CSRF protection".
 - Every 404 (an unknown URL or an `abort(404)`) answers `not_found.html` with
-  status 404 and `Cache-Control: no-store`.
+  status 404 and `Cache-Control: no-store`. Under `/api/` it answers the
+  JSON error `not_found` instead (see "JSON API (`/api`)").
 - Anti open-redirect guard on the login's `?next=`: only relative paths of the
   same origin.
 
@@ -216,16 +221,84 @@ route runs, so nothing changes.
   as long as the session (12 hours for staff, the browser session
   for anonymous visitors).
 - `/logout` is POST only: no route changes data with a GET.
+- The JSON API blueprint (`app/auth/api.py`) is exempt from the token
+  (`csrf.exempt(auth_api_bp)` in `app.py`): every POST, PUT, PATCH or DELETE
+  under `/api/` must send `X-Requested-With: XMLHttpRequest` instead, which a
+  cross-site form cannot set (see "JSON API (`/api`)"). The Jinja routes keep
+  the token.
 - Tests: the `client` fixture in `tests/web/conftest.py` (and `_fresh_client`
   in `tests/web/test_users.py`) turns CSRF off (`WTF_CSRF_ENABLED=False`) only
   for those tests and restores the value at the end;
   `tests/web/test_csrf.py` tests it turned on, including a walk through
   `app/web/templates/*.html` that requires `csrf_token()` in every POST form.
 
+## JSON API (`/api`)
+
+The JSON API lives under `/api`. Its shared plumbing is `app/shared/api.py`
+(`init_api(app)`, called from `app.py`); the auth endpoints are the
+`auth_api` blueprint in `app/auth/api.py`, with their Pydantic models in
+`app/auth/schemas.py`. It uses the JWT access tokens of
+`app/shared/tokens.py` and the refresh tokens of `app/auth/refresh_tokens.py`
+(see [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md), "Decisions"). It never touches
+the Flask session: the Jinja pages still log in through `/login`.
+
+| Method | Path | Body | Answers |
+|---|---|---|---|
+| POST | `/api/auth/login` | `{"username": str, "password": str}` (the username is stripped, as in `/login`) | **200** `{"user": {"id", "username", "roles"}, "permissions": [...]}` (effective permissions, sorted) and sets both cookies; **400** `invalid_body` (not a JSON object, or a missing or non-string field); **401** `invalid_credentials` "Usuario o contraseña incorrectos.", the same bytes for an unknown user, a wrong password and an inactive user, with no cookie. Logs `login: user=... roles=...` like `/login` |
+| POST | `/api/auth/refresh` | — (reads the `refresh_token` cookie) | **200** with the login body, built from the user's **current** roles and permissions, and both cookies reissued (the refresh token is rotated); **401** `not_authenticated` and both cookies cleared for a missing cookie, an unknown, expired or reused token (reuse revokes the whole family) or a user who no longer exists or is inactive (all their refresh tokens are revoked) |
+| POST | `/api/auth/logout` | — | **204**, empty body: revokes the `refresh_token` cookie's token if there is one (an unknown one is a no-op) and clears both cookies. Needs no access token |
+| GET | `/api/auth/me` | — (reads the `access_token` cookie) | **200** `{"user": {"id", "username"}, "permissions": [...]}` from the token's claims, with no database read (so no roles: the token carries none); **401** `not_authenticated` for a missing, invalid or expired token |
+
+Every `/api/auth` response carries `Cache-Control: no-store`.
+
+**Cookies** (set by login and refresh; cleared by setting them to expire
+right away with the same name, path and attributes):
+
+| Cookie | Value | Attributes |
+|---|---|---|
+| `access_token` | the JWT (`issue_access_token`, claims `sub`, `username`, `perms`, `iat`, `exp`) | `HttpOnly`, `SameSite=Strict`, `Max-Age=300` (`ACCESS_TOKEN_LIFETIME`), `Path=/` |
+| `refresh_token` | the raw opaque refresh token (only its hash is stored) | `HttpOnly`, `SameSite=Strict`, `Max-Age=2592000` (`REFRESH_TOKEN_LIFETIME`), `Path=/api/auth` (logout must receive it to revoke it) |
+
+Both carry `Secure` when `COOKIE_SECURE` is on, the same flag as the session
+cookie (`app.py` reads it once into `app.config["COOKIE_SECURE"]`).
+
+**Errors.** Every error under `/api/` answers JSON, never HTML or the
+`abort()` description: `{"error": {"code": "...", "message": "..."}}`, with a
+fixed English `code`, a Spanish `message` and `Cache-Control: no-store`
+(`error_response` and the `ErrorDetail`/`ErrorResponse` models). The HTTP
+codes map to `bad_request` (400), `not_authenticated` (401), `forbidden`
+(403), `not_found` (404), `method_not_allowed` (405, with `Allow`),
+`conflict` (409), `rate_limited` (429, nothing raises it yet) and
+`internal_error` (500, registered on `InternalServerError`, so Flask's
+exception logging and Sentry still see the error). The endpoints add
+`invalid_body`, `invalid_credentials` and `missing_requested_with`. Outside
+`/api/` every error keeps its usual response (the 404 page, the CSRF page,
+Werkzeug's defaults).
+
+**`X-Requested-With`.** Every POST, PUT, PATCH or DELETE under `/api/`
+(login, refresh and logout included) without `X-Requested-With:
+XMLHttpRequest` answers **403** `missing_requested_with` before the view
+runs. A cross-site form can't set that header, so together with
+`SameSite=Strict` it replaces the Flask-WTF token, from which the API
+blueprint is exempt (see "CSRF protection"). GET is not checked.
+
+**Revocation.** In `/usuarios` (`app/auth/admin_routes.py`), changing a
+user's set of roles, deactivating them or resetting their password revokes
+all their refresh tokens in the same transaction as the change, so their next
+`/api/auth/refresh` answers 401; their access token lasts at most 5 more
+minutes. Saving the form unchanged, or reactivating a user, revokes nothing.
+Editing a role's permissions doesn't revoke either: holders get the new
+permissions at their next refresh.
+
+Tests: `tests/api/` (its `client` fixture keeps CSRF on, to prove the
+exemption).
+
 ## Public routes
 
-Only these routes respond without a session: `/login`, `/logout`, `/healthz` and
-`/declaracion` (plus `/static`). `tests/web/test_public_routes.py` walks
+Only these routes respond without a session: `/login`, `/logout`, `/healthz`,
+`/declaracion` (plus `/static`) and the JSON auth routes `/api/auth/login`,
+`/api/auth/refresh` and `/api/auth/logout` (`/api/auth/me` answers 401
+without an access token). `tests/web/test_public_routes.py` walks
 `app.url_map` and fails if any other route answers 200 to an
 anonymous request; adding a public route requires editing its list on purpose.
 
