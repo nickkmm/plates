@@ -58,6 +58,7 @@ module = [
     "app.shared.*",
     "app.auth.service",
     "app.auth.permissions",
+    "app.auth.refresh_tokens",
     "app.auth.repository",
     "app.auth.repository.*",
     "app.customers.repository",

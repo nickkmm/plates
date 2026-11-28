@@ -1,8 +1,9 @@
 """Shared pytest configuration and fixtures.
 
-CRITICAL ORDERING: ``app.web.app`` reads ``SECRET_KEY`` from the environment
-at MODULE IMPORT TIME (not inside a factory function) and raises
-``RuntimeError`` if it's unset. ``app.auth.decorators`` reads ``AUTH_USERS`` lazily
+CRITICAL ORDERING: ``app.web.app`` reads ``SECRET_KEY`` and ``JWT_SECRET``
+from the environment at MODULE IMPORT TIME (not inside a factory function) and
+raises ``RuntimeError`` if either is unset (``app.shared.tokens`` also reads
+``JWT_SECRET`` on every call, so it is forced to a fixed test value below). ``app.auth.decorators`` reads ``AUTH_USERS`` lazily
 (inside functions), but we set both here together, up front, so that ANY test
 module importing ``app.web.app`` or ``app.auth.decorators`` -- directly or
 transitively -- never races the module-level check. Because pytest always
@@ -60,6 +61,9 @@ PUNTO_VENTA_PASSWORD = "puntoventapass123"
 _PUNTO_VENTA_PASSWORD_HASH = generate_password_hash(PUNTO_VENTA_PASSWORD)
 
 os.environ["SECRET_KEY"] = "test-secret-key-do-not-use-in-production"
+# The access-token key (app/shared/tokens.py), deliberately different from
+# SECRET_KEY: the two must never be interchangeable.
+os.environ["JWT_SECRET"] = "test-jwt-secret-do-not-use-in-production-0123456789abcdef0123456789abcdef"
 # Still set for app.schema_migrate.backfill_users's own tests (see module
 # docstring above) -- NOT read by the live login flow anymore.
 os.environ["AUTH_USERS"] = (
@@ -144,7 +148,7 @@ from app.shared.normalize import INVENTORY_CATEGORIES  # noqa: E402
 
 TABLES = (
     "plates", "production_orders", "blank_preparations", "inventory_categories",
-    "customers", "users", "user_roles", "plate_type_prices",
+    "customers", "users", "user_roles", "plate_type_prices", "refresh_tokens",
 )
 _SCHEMA_PATH = os.path.join(_REPO_ROOT, "init.sql")
 

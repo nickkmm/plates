@@ -206,6 +206,22 @@ CREATE TABLE user_roles (
 );
 CREATE INDEX user_roles_role_idx ON user_roles (role);
 
+-- Opaque refresh tokens of the JWT authentication, stored only as their
+-- SHA-256 hash (see app/migrations/0019_refresh_tokens.sql and
+-- docs/DATABASE.md). A rotation keeps the family_id; reusing a revoked token
+-- revokes its whole family.
+CREATE TABLE refresh_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    family_id UUID NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    revoked_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT now()
+);
+CREATE INDEX refresh_tokens_user_id_idx ON refresh_tokens (user_id);
+CREATE INDEX refresh_tokens_family_id_idx ON refresh_tokens (family_id);
+
 -- Colombian "tarjeta de propiedad", identified by its "licencia de tránsito"
 -- (see app/migrations/0006_ownership_cards.sql and docs/DATABASE.md). Three
 -- independent constraints, no composite key: the FK (one customer may own
@@ -331,7 +347,8 @@ INSERT INTO schema_migrations (version) VALUES
     ('0015_roles_and_permissions.sql'),
     ('0016_production_status.sql'),
     ('0017_permissions.sql'),
-    ('0018_user_roles.sql');
+    ('0018_user_roles.sql'),
+    ('0019_refresh_tokens.sql');
 
 -- New production_orders columns for the full sale order (POS), all nullable
 -- and additive -- no CHECK constraints, consistent with the rest of this

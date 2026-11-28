@@ -108,6 +108,15 @@ if not SECRET_KEY:
         'python -c "import secrets; print(secrets.token_hex(32))"'
     )
 app.secret_key = SECRET_KEY
+
+# Access-token signing key (JWT, HS256): dedicated, never SECRET_KEY. The
+# token module in app/shared reads it on every call; it is required here so
+# the app refuses to start without it. Generate one the same way as SECRET_KEY.
+if not os.environ.get("JWT_SECRET"):
+    raise RuntimeError(
+        "JWT_SECRET env var is required. Generate one with: "
+        'python -c "import secrets; print(secrets.token_hex(32))"'
+    )
 csrf.init_app(app)
 
 app.register_blueprint(auth_routes_bp)
