@@ -35,7 +35,7 @@ Status: **proposal**, not started. Nothing in this document is implemented yet.
 | Access token | JWT, **5 minutes**, signed HS256 with a dedicated secret. Claims: `sub` (user id), `username`, `perms` (effective permission codes), `iat`, `exp`. The API checks permissions from the token without touching the database. |
 | Refresh token | Random opaque value, 30 days, **stored hashed** in a new `refresh_tokens` table and **rotated** on every use (reuse of an old token revokes the whole family). |
 | Revocation | Deactivating a user, changing their roles or changing their password deletes their refresh tokens. The change takes effect within 5 minutes at most (the access token's lifetime). Logout deletes the refresh token. |
-| Token storage in the browser | **`httpOnly` + `Secure` cookies**, never `localStorage`. Access cookie on path `/api`; refresh cookie only on path `/api/auth/refresh`. |
+| Token storage in the browser | **`httpOnly` + `Secure` cookies**, never `localStorage`. Refresh cookie on path `/api/auth`, not just `/api/auth/refresh`: logout must receive it to revoke it, and one cookie is simpler than two. Access cookie on path `/` during the migration (the Jinja pages will read it too) and narrowed to `/api` in phase 6. |
 | CSRF | Same-origin deployment + `SameSite=Strict` cookies, and every state-changing API request must send a custom header (`X-Requested-With`), which a cross-site form cannot set. Flask-WTF goes away once no Jinja form is left. |
 | Passwords | Unchanged: werkzeug pbkdf2 hashes in `users.password_hash`. Nobody resets a password. |
 | File storage | Uploaded files (declaration PDFs, signatures, ownership-card photos) move from the server disk (`/srv/uploads`) to an **S3-compatible bucket served by MinIO in its own container on the same VPS** (phase 5). The bucket is private; downloads go through the API's permission check. |
@@ -283,7 +283,8 @@ different set of files.
 ### Phase 6: cleanup
 
 Remove Jinja templates, `navigation.py`, Flask-WTF, the session
-configuration and any HTML-only helper.
+configuration and any HTML-only helper. Narrow the `access_token` cookie's
+path from `/` to `/api`.
 
 ### Phase 7: customer portal (new feature)
 

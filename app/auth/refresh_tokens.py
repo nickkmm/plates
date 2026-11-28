@@ -14,7 +14,8 @@ revoked and the caller gets None.
 first transaction, then sees a revoked token and triggers reuse detection.
 
 Every function takes an open `conn` and never commits or rolls back (see
-app/shared/db.py). No route uses this module yet.
+app/shared/db.py). The JSON auth API (app/auth/api.py) issues, rotates and
+revokes them; the /usuarios screen (app/auth/admin_routes.py) revokes a user's.
 """
 
 from __future__ import annotations

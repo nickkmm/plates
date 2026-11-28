@@ -11,7 +11,18 @@ import re
 
 from app.web.app import app as flask_app
 
-PUBLIC_RULES = {"/login", "/logout", "/healthz", "/declaracion", "/static/<path:filename>"}
+PUBLIC_RULES = {
+    "/login",
+    "/logout",
+    "/healthz",
+    "/declaracion",
+    "/static/<path:filename>",
+    # The JSON auth API (app/auth/api.py): public by design, like /login and
+    # /logout. /api/auth/me is not: it refuses an anonymous request with 401.
+    "/api/auth/login",
+    "/api/auth/refresh",
+    "/api/auth/logout",
+}
 REFUSED = (302, 401, 403)
 
 
