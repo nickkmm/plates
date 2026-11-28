@@ -152,8 +152,8 @@ class TestJinjaLogin:
         resp = log_in(client, *test_credentials)
         assert resp.status_code == 302
         cookies = _set_cookies(resp)
-        assert {"HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/"} <= _attributes(cookies["access_token"])
-        assert {"HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/api/auth"} <= _attributes(
+        assert {"HttpOnly", "SameSite=Lax", "Max-Age=2592000", "Path=/"} <= _attributes(cookies["access_token"])
+        assert {"HttpOnly", "SameSite=Lax", "Max-Age=2592000", "Path=/api/auth"} <= _attributes(
             cookies["refresh_token"]
         )
         with client.session_transaction() as sess:

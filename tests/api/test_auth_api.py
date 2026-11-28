@@ -2,7 +2,7 @@
 `/api` plumbing (app/shared/api.py).
 
 The contract under test:
-- Login sets the httpOnly, SameSite=Strict `access_token` (path /, a JWT that
+- Login sets the httpOnly, SameSite=Lax `access_token` (path /, a JWT that
   expires after 5 min in a 30-day cookie) and `refresh_token` (path
   /api/auth, 30 days) cookies, Secure when
   COOKIE_SECURE is on; its three failures are byte-identical 401s with no cookie.
@@ -117,9 +117,9 @@ class TestLogin:
         assert body["permissions"] == sorted(PERMISSION_CODES)
 
         cookies = _set_cookies(resp)
-        assert {"HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/"} <= _attributes(cookies["access_token"])
+        assert {"HttpOnly", "SameSite=Lax", "Max-Age=2592000", "Path=/"} <= _attributes(cookies["access_token"])
         _assert_access_lifetime(cookies["access_token"])
-        assert {"HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/api/auth"} <= _attributes(
+        assert {"HttpOnly", "SameSite=Lax", "Max-Age=2592000", "Path=/api/auth"} <= _attributes(
             cookies["refresh_token"]
         )
         assert "login: user=testuser roles=admin" in "\n".join(r.getMessage() for r in caplog.records)
@@ -236,10 +236,10 @@ class TestRefresh:
         new_refresh = _cookie_value(cookies["refresh_token"])
         assert new_refresh and new_refresh != old_refresh
         assert _cookie_value(cookies["access_token"])
-        assert {"HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/api/auth"} <= _attributes(
+        assert {"HttpOnly", "SameSite=Lax", "Max-Age=2592000", "Path=/api/auth"} <= _attributes(
             cookies["refresh_token"]
         )
-        assert {"HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/"} <= _attributes(cookies["access_token"])
+        assert {"HttpOnly", "SameSite=Lax", "Max-Age=2592000", "Path=/"} <= _attributes(cookies["access_token"])
         _assert_access_lifetime(cookies["access_token"])
 
         client.set_cookie("refresh_token", old_refresh, path="/api/auth")

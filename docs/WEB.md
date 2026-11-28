@@ -148,9 +148,11 @@ every plate that already existed), so it appears in `/review` and in the summary
     lifetime), at the next refresh, instead of on the next request. A role
     change, a deactivation or a password reset in `/usuarios` also revokes
     the user's refresh tokens, so that refresh sends them to `/login`.
-  - Arriving from an external link (for example WhatsApp) shows `/login`
-    even for a signed-in user: `SameSite=Strict` cookies aren't sent on a
-    cross-site navigation.
+  - Arriving from an external link (for example WhatsApp) keeps a
+    signed-in user signed in: the token cookies are `SameSite=Lax`, so the
+    browser sends them on a top-level GET navigation from another site (an
+    expired access token goes through `/api/auth/refresh/continue` as
+    usual). It never sends them on a cross-site POST, `fetch` or iframe.
 - **Login** — `app/auth/login.py` holds the sign-in code that the Jinja
   `/login` and `/logout` and the JSON `/api/auth/*` share: `authenticate`
   queries `users` (via `app/auth/repository/users.py`) on every login;
@@ -296,8 +298,8 @@ right away with the same name, path and attributes):
 
 | Cookie | Value | Attributes |
 |---|---|---|
-| `access_token` | the JWT (`issue_access_token`, claims `sub`, `username`, `perms`, `iat`, `exp`); the JWT itself expires after `ACCESS_TOKEN_LIFETIME` (5 minutes, its `exp`) | `HttpOnly`, `SameSite=Strict`, `Max-Age=2592000` (`REFRESH_TOKEN_LIFETIME`, so a page still receives an expired token and can tell a refresh may work), `Path=/` |
-| `refresh_token` | the raw opaque refresh token (only its hash is stored) | `HttpOnly`, `SameSite=Strict`, `Max-Age=2592000` (`REFRESH_TOKEN_LIFETIME`), `Path=/api/auth` (logout must receive it to revoke it) |
+| `access_token` | the JWT (`issue_access_token`, claims `sub`, `username`, `perms`, `iat`, `exp`); the JWT itself expires after `ACCESS_TOKEN_LIFETIME` (5 minutes, its `exp`) | `HttpOnly`, `SameSite=Lax`, `Max-Age=2592000` (`REFRESH_TOKEN_LIFETIME`, so a page still receives an expired token and can tell a refresh may work), `Path=/` |
+| `refresh_token` | the raw opaque refresh token (only its hash is stored) | `HttpOnly`, `SameSite=Lax`, `Max-Age=2592000` (`REFRESH_TOKEN_LIFETIME`), `Path=/api/auth` (logout must receive it to revoke it) |
 
 Both carry `Secure` when `COOKIE_SECURE` is on, the same flag as the session
 cookie (`app.py` reads it once into `app.config["COOKIE_SECURE"]`).
@@ -319,8 +321,13 @@ Werkzeug's defaults).
 (login, refresh and logout included) without `X-Requested-With:
 XMLHttpRequest` answers **403** `missing_requested_with` before the view
 runs. A cross-site form can't set that header, so together with
-`SameSite=Strict` it replaces the Flask-WTF token, from which the API
-blueprint is exempt (see "CSRF protection"). GET is not checked.
+`SameSite=Lax` (no cookie on a cross-site POST) it replaces the Flask-WTF
+token, from which the API blueprint is exempt (see "CSRF protection"). GET
+is not checked. With `Lax`, a cross-site link does carry the cookies to the
+two Jinja-only GET endpoints: `/api/auth/refresh/continue` only rotates the
+tokens and redirects on-site, and `/api/auth/logout/continue` can sign the
+user out (nothing worse), the accepted cost of staying signed in from
+external links.
 
 **Revocation.** In `/usuarios` (`app/auth/admin_routes.py`), changing a
 user's set of roles, deactivating them or resetting their password revokes

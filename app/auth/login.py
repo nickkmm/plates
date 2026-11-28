@@ -4,7 +4,7 @@
 `authenticate` checks a username and password against the `users` table.
 `sign_in` and `refresh` return the user, their effective permissions (the
 union over their roles, app/auth/permissions.py) and a raw refresh token;
-`set_token_cookies` turns that into the two httpOnly, SameSite=Strict
+`set_token_cookies` turns that into the two httpOnly, SameSite=Lax
 cookies (Secure when COOKIE_SECURE is on): `access_token`, the 5-minute JWT
 of app/shared/tokens.py on path `/`, and `refresh_token`, the opaque token
 of app/auth/refresh_tokens.py on path `/api/auth`. Both cookies live
@@ -188,13 +188,13 @@ def sign_out(raw: str) -> None:
 def _set_cookie(response: Response, name: str, value: str, *, path: str) -> None:
     response.set_cookie(
         name, value, max_age=int(REFRESH_TOKEN_LIFETIME.total_seconds()), path=path, httponly=True,
-        samesite="Strict", secure=current_app.config["COOKIE_SECURE"],
+        samesite="Lax", secure=current_app.config["COOKIE_SECURE"],
     )
 
 
 def _delete_cookie(response: Response, name: str, path: str) -> None:
     response.delete_cookie(
-        name, path=path, httponly=True, samesite="Strict", secure=current_app.config["COOKIE_SECURE"],
+        name, path=path, httponly=True, samesite="Lax", secure=current_app.config["COOKIE_SECURE"],
     )
 
 

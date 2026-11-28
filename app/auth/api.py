@@ -1,6 +1,6 @@
 """/api/auth -- the JSON auth API: login, refresh, logout and me.
 
-Login sets two httpOnly, SameSite=Strict cookies (Secure when COOKIE_SECURE
+Login sets two httpOnly, SameSite=Lax cookies (Secure when COOKIE_SECURE
 is on, app/auth/login.py): `access_token`, the 5-minute JWT of
 app/shared/tokens.py on path `/`, and `refresh_token`, the opaque 30-day
 token of app/auth/refresh_tokens.py on path `/api/auth` (logout must receive
