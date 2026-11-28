@@ -6,17 +6,17 @@ container uses, plus DB_HOST/DB_PORT for where to reach it):
     POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
     DB_POOL_MIN_SIZE (default 1), DB_POOL_MAX_SIZE (default 5)
 
-Connections are opened with row_factory=dict_row, so every SELECT in app/core/db/
+Connections are opened with row_factory=dict_row, so every SELECT in the repositories
 comes back as a dict keyed by column name (or list of such dicts) -- never a plain
 positional tuple.
 
-**Transaction contract**: every function in app/core/db/ receives an already-
+**Transaction contract**: every repository function receives an already-
 open connection (`conn`) and never calls commit()/rollback() itself -- whoever
 calls it is the one that opened the connection (`with db.get_conn() as conn:
 ...`) and is responsible for its transaction. This is deliberate: passing
 `conn` explicitly, instead of hiding it behind an interface, keeps visible in
 every function's signature who actually owns the commit -- see
-docs/CORE.md's "Contrato de transacción" for the real bug (several functions
+docs/DOMAINS.md's "Contrato de transacción" for the real bug (several functions
 in app/orders/service.py each opening their own connection) that made this
 worth writing down instead of leaving implicit.
 
@@ -25,7 +25,7 @@ generator wrapping a lazily-built `psycopg_pool.ConnectionPool`, not a bare
 `psycopg.connect()` per call. The pool is built on the FIRST real call to
 `get_conn()`, never at import time -- tests/conftest.py imports this module
 unconditionally, including when POSTGRES_PASSWORD isn't set (to run
-app/core's pure-logic tests with zero DB dependency), so building the pool at
+the pure-logic tests with zero DB dependency), so building the pool at
 import time would break that. `_conninfo_kwargs()` is split out as a pure
 function purely so it can be tested without mocking psycopg.connect or
 spinning up a real pool (see tests/core/db/test_connection.py::TestConninfoKwargs).
@@ -41,8 +41,9 @@ lazily on its own first request -- no `post_fork` hook needed. If `--preload`
 is ever added to the Dockerfile, this reasoning breaks and pool construction
 needs to move into a gunicorn `post_fork` hook instead.
 
-app/core/db/__init__.py re-exports `get_conn`, so existing call sites
-(`db.get_conn()` through `from app.core import db`) keep working unchanged.
+Callers import this module (`from app.shared import db`) and call
+`db.get_conn()` through it, so tests/conftest.py's patch of `get_conn` here
+reaches every call site.
 """
 
 from __future__ import annotations

@@ -4,9 +4,9 @@ production_orders.production_status and production_order_events
 (repository.py).
 
 Dependency rule: other code may import app.production. app.production imports
-app.shared, app.auth and app.orders (the orders data); until they move, it
-also imports app.core.db (the declarations data) and app.web.blueprints.declarations (the
-declaration-file constants), and routes.py imports app.web.helpers where it
+app.shared, app.auth, app.orders (the orders data) and app.declarations
+(the declarations data and the declaration-file constants of its routes),
+and routes.py imports app.web.helpers where it
 needs it until phase 6 of docs/MIGRATION_PLAN.md. Stdlib and third-party
 libraries are always fine.
 """

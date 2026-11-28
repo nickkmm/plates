@@ -7,7 +7,7 @@ and the legal statements are the ones shown on the public form
 (app/web/templates/declaration.html, "legal" block): the constants below are a
 copy of that text, kept in sync by tests/core/test_declaration_pdf.py (drift
 guard). The personal-data authorization (section 7) is NOT copied: it reads
-the same constants as the form (app/core/declarations.py), and it is printed
+the same constants as the form (app/declarations/service.py), and it is printed
 only when the declarant accepted it (`accepted_data_policy_at`), so older
 declarations keep their layout, with "7. FIRMA". Section numbers match the
 form, because its clause 4(b) refers to "la sección 3".
@@ -44,8 +44,8 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from app.core.db.declarations import DeclarationCardRecord, DeclarationRecord
-from app.core.declarations import (
+from app.declarations.repository import DeclarationCardRecord, DeclarationRecord
+from app.declarations.service import (
     DATA_POLICY_PARAGRAPH_1,
     DATA_POLICY_PARAGRAPH_2,
     DATA_POLICY_TITLE,

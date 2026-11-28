@@ -79,7 +79,7 @@ hand just like the `cargador.ingse.co` block). Locally, directly at
   seeds the 3 test identities once at the start, inside a
   `SAVEPOINT` that is never really released until the end of the test — there
   a real `ROLLBACK` happens, so no test leaves a trace in the physical
-  `plates_test` regardless of whether it passed or failed. `app.core.db.get_conn` is
+  `plates_test` regardless of whether it passed or failed. `app.shared.db.get_conn` is
   patched (via `monkeypatch`) to always return that SAME connection
   instead of taking a new one from the pool — so any HTTP request the test
   fires (`authenticated_client`, etc.) operates on the same session/
@@ -121,5 +121,5 @@ hand just like the `cargador.ingse.co` block). Locally, directly at
 | `SENTRY_DSN` | `app/web/app.py` | Optional — if not set, Sentry is not even initialized (local dev and tests never send anything). |
 | `UPLOADS_DIR` | `app/shared/uploads.py` | Folder where the authenticated PDFs, the signatures and the ID card and vehicle registration photos from the public form are stored. Default `/srv/uploads`; in Compose it is the `plates_uploads` volume. **The volume is NOT covered by `pg_dump` backups**: it must be backed up separately. Tests use a temporary folder. |
 | `TURNSTILE_SITE_KEY` | public form | Public Cloudflare Turnstile key (shown in the widget). In local development the test keys that Cloudflare publishes work. |
-| `TURNSTILE_SECRET_KEY` | `app/web/antispam.py` | Secret key to verify the token on the server. If missing (and there is no bypass), verification **fails closed**: the submission is rejected. In production it must be added to the `ENV_FILE_B64` secret. |
-| `TURNSTILE_BYPASS` | `app/web/antispam.py` | `1`/`true` skips the Turnstile verification without calling the network. Only for development and tests; leave empty in production. Without bypass and without both keys (`TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`), `/declaracion` responds 503 "El formulario no está disponible por ahora" (the form is not available right now): to try the form locally export `TURNSTILE_BYPASS=1`. |
+| `TURNSTILE_SECRET_KEY` | `app/declarations/antispam.py` | Secret key to verify the token on the server. If missing (and there is no bypass), verification **fails closed**: the submission is rejected. In production it must be added to the `ENV_FILE_B64` secret. |
+| `TURNSTILE_BYPASS` | `app/declarations/antispam.py` | `1`/`true` skips the Turnstile verification without calling the network. Only for development and tests; leave empty in production. Without bypass and without both keys (`TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY`), `/declaracion` responds 503 "El formulario no está disponible por ahora" (the form is not available right now): to try the form locally export `TURNSTILE_BYPASS=1`. |

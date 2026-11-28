@@ -79,16 +79,19 @@ flowchart TD
     F -->|"Customer picks up"| E["Entregada"]
 ```
 
-The app is a Flask application with one blueprint per domain in
-`app/web/blueprints/` (and in the domain packages `app/auth/`,
-`app/customers/`, `app/pricing/`, `app/inventory/`, `app/production/`,
-`app/cash_summary/` and `app/orders/`) and Jinja templates. `app/orders/`
+The app is a Flask application with one blueprint per domain, each in its
+domain package (`app/auth/`, `app/customers/`, `app/pricing/`,
+`app/inventory/`, `app/production/`, `app/cash_summary/`, `app/orders/` and
+`app/declarations/`), and Jinja templates. `app/orders/`
 holds the point of sale, records and review blueprints (`routes/`), the
 ingestion pipeline (`service.py`), the pedido parsers and the orders and
-plates SQL (`repository/`).
-Business rules live in `app/core/` as pure, strictly typed Python with no
-Flask dependency, and data access in `app/core/db/`, one module per table,
-and in each domain package's repository. Code every domain needs (the connection
+plates SQL (`repository/`). `app/declarations/` holds the staff review
+screens (`routes.py`), the public form (`public_routes.py`, `antispam.py`),
+the submission and review rules (`service.py`), the PDF (`pdf.py`) and the
+declarations SQL (`repository.py`).
+Business rules live in each domain's `service.py` as pure, strictly typed
+Python with no Flask dependency, and data access in each domain package's
+repository. Code every domain needs (the connection
 pool, normalization, timezones, input models, uploads) lives in `app/shared/`,
 which depends on no domain package. Data is stored in PostgreSQL 16; the
 schema is `init.sql` plus ordered migrations in `app/migrations/` applied by
@@ -112,7 +115,7 @@ and PDFs kept in a dedicated uploads volume.
 
 - **ruff** for linting and import order (`pyproject.toml`).
 - **mypy** over `app` and `tests`, with `disallow_untyped_defs` on
-  `app/core` and `app/shared`.
+  `app/shared`, the domain services and every domain's SQL.
 - **pytest** against a real PostgreSQL database (no mocks of the database),
   each test in a transaction that is rolled back.
 - **Coverage** reported in CI with `pytest-cov`.
@@ -172,7 +175,8 @@ Technical reference, starting at [`docs/README.md`](docs/README.md):
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): components, deployment and
   the CI/CD pipeline
 - [`docs/DATABASE.md`](docs/DATABASE.md): full schema and ER diagram
-- [`docs/CORE.md`](docs/CORE.md): business logic in `app/core/`
+- [`docs/DOMAINS.md`](docs/DOMAINS.md): business rules and SQL of the domain
+  packages and `app/shared/`
 - [`docs/WEB.md`](docs/WEB.md): routes, roles and permissions, templates
 - [`docs/PRODUCTION.md`](docs/PRODUCTION.md): the production screen and
   order statuses

@@ -13,7 +13,7 @@ from html import escape
 import pytest
 from flask import render_template
 
-from app.core.declarations import (
+from app.declarations.service import (
     DATA_POLICY_PARAGRAPH_1,
     DATA_POLICY_PARAGRAPH_2_PARTS,
     DATA_POLICY_TITLE,

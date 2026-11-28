@@ -6,9 +6,9 @@ from __future__ import annotations
 from flask import Blueprint, redirect, render_template, request, url_for
 
 from app.auth.decorators import permission_required
-from app.core import db
 from app.inventory import repository as inventory_repository
 from app.orders import repository as orders_repository
+from app.shared import db
 
 bp = Blueprint("review", __name__)
 

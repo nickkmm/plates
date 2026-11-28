@@ -8,9 +8,9 @@ price" rule), so per ARCHITECTURE_AND_POS_PLAN.md's "Fase 5b" section it gets
 its own service module instead of living directly in a repository module.
 
 **Transaction contract**: `build_cash_summary` takes an already-open `conn`
-and never calls commit()/rollback() -- same convention as every function in
-app/core/db/ (see app/shared/db.py's module docstring), even though
-this module lives outside that package.
+and never calls commit()/rollback() -- same convention as every repository
+function (see app/shared/db.py's module docstring), even though this module
+is not a repository.
 
 **Live-computed, not a saved snapshot**: no new table, no locking -- every
 call just runs a query over [desde, hasta]. See the plan's "Cuadre de caja"

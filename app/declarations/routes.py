@@ -10,7 +10,7 @@ reads what was declared, sees per card the real context behind each flag
 the declaration as a whole.
 
 Each declaration shows ONE status badge, its derived stage
-(db.declaration_stage): Por revisar / Falta autenticación / Lista para pedido /
+(repository.declaration_stage): Por revisar / Falta autenticación / Lista para pedido /
 Atendida / Rechazada. The list's tabs (`?stage=`) filter by that stage.
 
 Access: EVERY route is @permission_required("declarations.review") (seeded
@@ -60,9 +60,11 @@ from psycopg.rows import DictRow
 
 from app.auth import repository
 from app.auth.decorators import permission_required
-from app.core import db
-from app.core import declarations as decl
-from app.core.db.declarations import (
+from app.customers import repository as customers_repository
+from app.declarations import repository as declarations_repository
+from app.declarations import service as decl
+from app.declarations.pdf import build_declaration_pdf
+from app.declarations.repository import (
     FLAG_CARD_DATA_MISMATCH,
     FLAG_CARD_OTHER_OWNER,
     FLAG_CUSTOMER_DOCUMENT_MISMATCH,
@@ -80,17 +82,16 @@ from app.core.db.declarations import (
     declaration_stage,
     requires_notarization,
 )
-from app.core.declaration_pdf import build_declaration_pdf
-from app.customers import repository as customers_repository
 from app.orders import repository as orders_repository
 from app.production import repository as production_repository
+from app.shared import db
 from app.shared.normalize import clean_plate, normalize_requested_by
 from app.shared.timezones import utc_now
 from app.shared.uploads import UploadError, resolve_upload_path, send_stored_file
 
 bp = Blueprint("declarations", __name__)
 
-# The single status badge of a declaration (see db.declaration_stage).
+# The single status badge of a declaration (see repository.declaration_stage).
 STAGE_LABELS = {
     STAGE_TO_REVIEW: "Por revisar",
     STAGE_AWAITING_NOTARIZATION: "Falta autenticación",
@@ -98,7 +99,7 @@ STAGE_LABELS = {
     STAGE_ATTENDED: "Atendida",
     STAGE_REJECTED: "Rechazada",
 }
-# Stage tabs: (query value, label, db.list_declarations(stage=...)). "all" = no
+# Stage tabs: (query value, label, declarations_repository.list_declarations(stage=...)). "all" = no
 # stage filter; the default tab is the first one (the work queue).
 STAGE_FILTERS = (
     (STAGE_TO_REVIEW, "Por revisar", STAGE_TO_REVIEW),
@@ -108,7 +109,7 @@ STAGE_FILTERS = (
     (STAGE_REJECTED, "Rechazadas", STAGE_REJECTED),
     ("all", "Todas", None),
 )
-# Reason filter: (query value, label, db.list_declarations(reason=...)). Any
+# Reason filter: (query value, label, declarations_repository.list_declarations(reason=...)). Any
 # card of the declaration having that reason matches.
 REASON_FILTERS = (
     ("all", "Todos", None),
@@ -144,7 +145,7 @@ def _fmt_date(value: date) -> str:
     return value.strftime("%d/%m/%Y")
 
 
-def _declarant(declaration: db.DeclarationRecord) -> dict[str, Any]:
+def _declarant(declaration: declarations_repository.DeclarationRecord) -> dict[str, Any]:
     return declaration.submitted_data.get("declarant") or {}
 
 
@@ -163,7 +164,7 @@ def _reason_filter(raw: str | None) -> str:
     return key if key in {value for value, _, _ in REASON_FILTERS} else "all"
 
 
-def _reasons_text(cards: list[db.DeclarationCardRecord]) -> str:
+def _reasons_text(cards: list[declarations_repository.DeclarationCardRecord]) -> str:
     """"2 pérdida · 1 deterioro": cards per reason, PÉRDIDA first (it is the
     one that needs the notary)."""
     counts: dict[str, int] = {}
@@ -173,7 +174,7 @@ def _reasons_text(cards: list[db.DeclarationCardRecord]) -> str:
     return " · ".join(f"{count} {reason.lower()}" for reason, count in ordered)
 
 
-def _summarize(cards: list[db.DeclarationCardRecord]) -> dict[str, Any]:
+def _summarize(cards: list[declarations_repository.DeclarationCardRecord]) -> dict[str, Any]:
     """What the list shows for a declaration's cards: counts, total plates, a
     compact "ABC123 · DEF45G +3" and the reasons ("2 pérdida · 1 deterioro")."""
     plates = [card.plate_number for card in cards]
@@ -204,8 +205,8 @@ def _name_key(person: dict[str, Any]) -> str:
 
 
 def _flag_details(
-    conn: psycopg.Connection[DictRow], declaration: db.DeclarationRecord,
-    card: db.DeclarationCardRecord, cards: list[db.DeclarationCardRecord],
+    conn: psycopg.Connection[DictRow], declaration: declarations_repository.DeclarationRecord,
+    card: declarations_repository.DeclarationCardRecord, cards: list[declarations_repository.DeclarationCardRecord],
 ) -> list[dict[str, Any]]:
     """One explanation per flag of ONE card, with the real context staff need.
 
@@ -295,11 +296,11 @@ def _render_detail(
     declaration_id: int, *, error: str | None = None, reassign_ids: frozenset[int] = frozenset(),
 ):
     with db.get_conn() as conn:
-        declaration = db.get_declaration(conn, declaration_id)
+        declaration = declarations_repository.get_declaration(conn, declaration_id)
         if declaration is None:
             return redirect(url_for("declarations.declarations"))
         gestor = customers_repository.get_customer(conn, declaration.gestor_id) if declaration.gestor_id else None
-        card_records = db.list_declaration_cards(conn, declaration_id)
+        card_records = declarations_repository.list_declaration_cards(conn, declaration_id)
         pending = declaration.status == STATUS_PENDING_REVIEW
         stage = declaration_stage(declaration, card_records)
         attended_order: dict[str, Any] | None = None
@@ -353,12 +354,12 @@ def declarations():
     reason_filter = _reason_filter(request.args.get("reason"))
     query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
-        records = db.list_declarations(
+        records = declarations_repository.list_declarations(
             conn, stage=stage_values[stage_filter], query=query or None,
             reason=reason_values[reason_filter],
         )
-        pending_count = len(db.list_declarations(conn, stage=STAGE_TO_REVIEW))
-        cards_by_declaration = db.list_cards_for_declarations(conn, [d.id for d in records])
+        pending_count = len(declarations_repository.list_declarations(conn, stage=STAGE_TO_REVIEW))
+        cards_by_declaration = declarations_repository.list_cards_for_declarations(conn, [d.id for d in records])
         production_statuses = production_repository.production_statuses_for_orders(
             conn, {d.production_order_id for d in records if d.production_order_id is not None},
         )
@@ -394,7 +395,7 @@ def declaration_file(declaration_id: int, kind: str):
         abort(404)
     attribute, mimetype = spec
     with db.get_conn() as conn:
-        declaration = db.get_declaration(conn, declaration_id)
+        declaration = declarations_repository.get_declaration(conn, declaration_id)
     if declaration is None:
         abort(404)
     return send_stored_file(getattr(declaration, attribute), mimetype)
@@ -409,7 +410,7 @@ def declaration_card_photo(declaration_id: int, card_id: int, side: str):
     if attribute is None:
         abort(404)
     with db.get_conn() as conn:
-        cards = db.list_declaration_cards(conn, declaration_id)
+        cards = declarations_repository.list_declaration_cards(conn, declaration_id)
     card = next((c for c in cards if c.id == card_id), None)
     if card is None:
         abort(404)
@@ -417,7 +418,7 @@ def declaration_card_photo(declaration_id: int, card_id: int, side: str):
 
 
 def _photo_entries(
-    declaration: db.DeclarationRecord, cards: list[db.DeclarationCardRecord],
+    declaration: declarations_repository.DeclarationRecord, cards: list[declarations_repository.DeclarationCardRecord],
 ) -> list[tuple[str, str]]:
     """(file name inside the ZIP, stored name) of every photo of a declaration,
     in reading order: the cédula, then each card (front, back, used plates)."""
@@ -442,8 +443,8 @@ def declaration_photos_zip(declaration_id: int):
     Stored names are resolved with resolve_upload_path; a photo whose file is
     gone is skipped; 404 when there is nothing to download."""
     with db.get_conn() as conn:
-        declaration = db.get_declaration(conn, declaration_id)
-        cards = db.list_declaration_cards(conn, declaration_id) if declaration else []
+        declaration = declarations_repository.get_declaration(conn, declaration_id)
+        cards = declarations_repository.list_declaration_cards(conn, declaration_id) if declaration else []
     if declaration is None:
         abort(404)
     buffer = io.BytesIO()
@@ -486,7 +487,7 @@ def _decide(declaration_id: int, decision: str):
     with the message (400, nothing changed); success -> commit + redirect."""
     user_id = session["user_id"]
     with db.get_conn() as conn:
-        if db.get_declaration(conn, declaration_id) is None:
+        if declarations_repository.get_declaration(conn, declaration_id) is None:
             return redirect(url_for("declarations.declarations"))
     note = (request.form.get("note") or "").strip()
     reassign_ids = _reassign_ids_from_form() if decision == "approve" else frozenset()
@@ -520,7 +521,7 @@ def declaration_reject(declaration_id: int):
     return _decide(declaration_id, "reject")
 
 
-def _read_signature(declaration: db.DeclarationRecord) -> bytes | None:
+def _read_signature(declaration: declarations_repository.DeclarationRecord) -> bytes | None:
     """The declarant's signature PNG, read the same safe way as the file
     download (stored name -> resolve_upload_path); None when there is none or
     the file is missing/unreadable."""
@@ -540,8 +541,8 @@ def declaration_pdf(declaration_id: int):
     APPROVED declaration; it is mandatory (notarization) only with a PÉRDIDA
     card, for DETERIORO it is an optional extra."""
     with db.get_conn() as conn:
-        declaration = db.get_declaration(conn, declaration_id)
-        cards = db.list_declaration_cards(conn, declaration_id) if declaration else []
+        declaration = declarations_repository.get_declaration(conn, declaration_id)
+        cards = declarations_repository.list_declaration_cards(conn, declaration_id) if declaration else []
     if declaration is None:
         abort(404, "La declaración no existe.")
     if declaration.status != STATUS_APPROVED:
@@ -566,17 +567,17 @@ def _set_notarized(declaration_id: int, *, received: bool):
     user_id = session["user_id"]
     error = None
     with db.get_conn() as conn:
-        declaration = db.get_declaration(conn, declaration_id)
+        declaration = declarations_repository.get_declaration(conn, declaration_id)
         if declaration is None:
             return redirect(url_for("declarations.declarations"))
-        cards = db.list_declaration_cards(conn, declaration_id)
+        cards = declarations_repository.list_declaration_cards(conn, declaration_id)
         if declaration.status != STATUS_APPROVED or not requires_notarization(cards):
             error = "Solo las declaraciones aprobadas con tarjetas por pérdida requieren autenticación notarial."
         elif not received and declaration.production_order_id is not None:
             error = "No se puede deshacer: esta declaración ya fue atendida por un pedido."
         elif received != (declaration.notarized_received_at is not None):
             # Marking twice keeps the first stamp (who/when it really arrived).
-            db.set_declaration_notarized_received(
+            declarations_repository.set_declaration_notarized_received(
                 conn, declaration_id, received_by=user_id, received=received,
             )
             conn.commit()

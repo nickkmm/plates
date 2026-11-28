@@ -1,4 +1,4 @@
-"""Tests for app/core/declarations.py: validation (pure) and the submission /
+"""Tests for app/declarations/service.py: validation (pure) and the submission /
 review rules (need Postgres, see tests/conftest.py's `db_conn`).
 
 A declaration has ONE declarant and 1..MAX_CARDS ownership cards; the rules
@@ -20,10 +20,10 @@ from datetime import date
 import pytest
 
 from app.auth import repository
-from app.core import db
-from app.core import declarations as decl
-from app.core.declarations import DeclarationInput, OwnershipCardInput, PersonInput
 from app.customers import repository as customers_repository
+from app.declarations import repository as declarations_repository
+from app.declarations import service as decl
+from app.declarations.service import DeclarationInput, OwnershipCardInput, PersonInput
 from app.orders import repository as orders_repository
 from tests.conftest import TEST_USERNAME
 from tests.core.db._helpers import _insert_order, make_row
@@ -103,8 +103,8 @@ def _existing_client(db_conn, name: str = "MARIA LOPEZ", type_: str | None = "CL
     return customers_repository.resolve_or_create_customer(db_conn, name, type=type_, phone="PREVIO")
 
 
-def _cards_of(db_conn, declaration_id: int) -> list[db.DeclarationCardRecord]:
-    return db.list_declaration_cards(db_conn, declaration_id)
+def _cards_of(db_conn, declaration_id: int) -> list[declarations_repository.DeclarationCardRecord]:
+    return declarations_repository.list_declaration_cards(db_conn, declaration_id)
 
 
 # ---------------------------------------------------------------- validation
@@ -336,7 +336,7 @@ def _submit_pending(db_conn, inp: DeclarationInput | None = None, *,
     result = decl.submit_declaration(db_conn, inp or _input(), today=today)
     assert result.status == "pending_review"
     assert result.flags == (flags or [])
-    record = db.get_declaration(db_conn, result.declaration_id)
+    record = declarations_repository.get_declaration(db_conn, result.declaration_id)
     assert record is not None
     assert record.status == "pending_review"
     assert record.review_flags == (flags or [])
@@ -350,9 +350,9 @@ def _submit_pending(db_conn, inp: DeclarationInput | None = None, *,
     return result.declaration_id
 
 
-def _approve(db_conn, declaration_id: int, **kw) -> db.DeclarationRecord:
+def _approve(db_conn, declaration_id: int, **kw) -> declarations_repository.DeclarationRecord:
     decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn), **kw)
-    record = db.get_declaration(db_conn, declaration_id)
+    record = declarations_repository.get_declaration(db_conn, declaration_id)
     assert record is not None and record.status == "approved"
     return record
 
@@ -360,7 +360,7 @@ def _approve(db_conn, declaration_id: int, **kw) -> db.DeclarationRecord:
 class TestSubmitThenApprove:
     def test_clean_declaration_is_pending_with_no_flags_and_creates_nothing(self, db_conn):
         declaration_id = _submit_pending(db_conn)
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record.status == "pending_review"
         assert record.review_flags == []
         assert _count(db_conn, "customers") == 0
@@ -400,7 +400,7 @@ class TestSubmitThenApprove:
         declaration_id = _submit_pending(db_conn)
         reviewer = _reviewer_id(db_conn)
         decl.approve_declaration(db_conn, declaration_id, reviewer)
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert (record.status, record.reviewed_by, record.review_note) == ("approved", reviewer, None)
         assert record.reviewed_at is not None
 
@@ -424,7 +424,7 @@ class TestSubmitThenApprove:
         inp = _input(cards=[_card(), _card(plate_number="DEF456", transit_license="L2", reason="PÉRDIDA",
                                            plate_quantity=2)])
         declaration_id = _submit_pending(db_conn, inp)
-        data = db.get_declaration(db_conn, declaration_id).submitted_data
+        data = declarations_repository.get_declaration(db_conn, declaration_id).submitted_data
         assert set(data) == {"acting_as", "declarant", "cards", "raw"}
         assert data["acting_as"] == "PROPIETARIO"
         assert data["declarant"]["name"] == "MARIA LOPEZ"
@@ -437,7 +437,7 @@ class TestSubmitThenApprove:
 
     def test_raw_is_omitted_when_the_caller_gave_none(self, db_conn):
         declaration_id = _submit_pending(db_conn, _input(submitted_data={}))
-        assert "raw" not in db.get_declaration(db_conn, declaration_id).submitted_data
+        assert "raw" not in declarations_repository.get_declaration(db_conn, declaration_id).submitted_data
 
     def test_poseedor_maps_to_document_relation(self, db_conn):
         declaration_id = _submit_pending(db_conn, _input(acting_as="POSEEDOR"))
@@ -576,7 +576,7 @@ class TestSubmitThenApprove:
         customers_before = _count(db_conn, "customers")
         with pytest.raises(ValueError, match="EMPRESA"):
             decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert (record.status, record.reviewed_by) == ("pending_review", None)
         assert record.review_flags == []
         assert _count(db_conn, "customers") == customers_before
@@ -590,7 +590,7 @@ class TestSubmitThenApprove:
         card_id = customers_repository.create_ownership_card(db_conn, other, transit_license="LIC-001", plate_number="ABC123")
         with pytest.raises(ValueError, match="otro cliente"):
             decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
-        assert db.get_declaration(db_conn, declaration_id).status == "pending_review"
+        assert declarations_repository.get_declaration(db_conn, declaration_id).status == "pending_review"
         assert customers_repository.get_ownership_card(db_conn, card_id).customer_id == other
         assert _count(db_conn, "customers") == 1   # only PEDRO RUIZ
         assert _count(db_conn, "ownership_cards") == 1
@@ -602,21 +602,21 @@ class TestSubmitThenApprove:
 class TestDataPolicyStored:
     def test_yes_is_stored_with_the_acceptance_time(self, db_conn):
         declaration_id = _submit_pending(db_conn, _input(accepts_marketing=True))
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record is not None
         assert record.accepts_marketing is True
         assert record.accepted_data_policy_at is not None
 
     def test_no_is_stored_as_false_not_null(self, db_conn):
         declaration_id = _submit_pending(db_conn, _input(accepts_marketing=False))
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record is not None
         assert record.accepts_marketing is False
 
     def test_not_accepted_leaves_both_columns_null(self, db_conn):
         declaration_id = _submit_pending(
             db_conn, _input(accepted_data_policy=False, accepts_marketing=None))
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record is not None
         assert record.accepted_data_policy_at is None and record.accepts_marketing is None
 
@@ -625,7 +625,7 @@ class TestSubmitPending:
     def _assert_nothing_created(self, db_conn, result, flags):
         assert result.status == "pending_review"
         assert sorted(result.flags) == sorted(flags)
-        record = db.get_declaration(db_conn, result.declaration_id)
+        record = declarations_repository.get_declaration(db_conn, result.declaration_id)
         assert record is not None
         assert record.status == "pending_review"
         assert sorted(record.review_flags) == sorted(flags)
@@ -726,7 +726,7 @@ class TestSubmitPending:
         _fabricate(db_conn, "ABC123", date(2026, 9, 1))
         inp = _input(cards=[_card(reason="PÉRDIDA")])
         result = decl.submit_declaration(db_conn, inp, today=TODAY)
-        record = db.get_declaration(db_conn, result.declaration_id)
+        record = declarations_repository.get_declaration(db_conn, result.declaration_id)
         assert (record.declarant_signature_path, record.notarized_pdf_path) == ("sig.png", None)
         assert _cards_of(db_conn, result.declaration_id)[0].reason == "PÉRDIDA"
 
@@ -743,7 +743,7 @@ class TestSubmitPending:
         assert (result.status, result.flags) == ("pending_review", [decl.PLATE_MADE_RECENTLY])
         assert _count(db_conn, "customers") == 0
         assert _count(db_conn, "ownership_cards") == 0
-        record = db.get_declaration(db_conn, result.declaration_id)
+        record = declarations_repository.get_declaration(db_conn, result.declaration_id)
         assert record.review_flags == [decl.PLATE_MADE_RECENTLY]
         assert record.gestor_id is None
         rows = _cards_of(db_conn, result.declaration_id)
@@ -762,7 +762,7 @@ class TestSubmitPending:
         assert [r.review_flags for r in rows] == [
             [], [decl.PLATE_MADE_RECENTLY], [decl.CARD_OTHER_OWNER], []]
         assert result.flags == [decl.PLATE_MADE_RECENTLY, decl.CARD_OTHER_OWNER]
-        record = db.get_declaration(db_conn, result.declaration_id)
+        record = declarations_repository.get_declaration(db_conn, result.declaration_id)
         assert record.review_flags == result.flags
 
     def test_the_same_flag_on_two_cards_appears_once_in_the_union(self, db_conn):
@@ -821,7 +821,7 @@ class TestApprove:
         declaration_id = _pending(db_conn)
         reviewer = _reviewer_id(db_conn)
         decl.approve_declaration(db_conn, declaration_id, reviewer, note="todo bien")
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record.status == "approved"
         assert (record.reviewed_by, record.review_note) == (reviewer, "todo bien")
         assert record.reviewed_at is not None
@@ -839,7 +839,7 @@ class TestApprove:
                  _gcard("GHI789", "L3")]
         declaration_id = _pending(db_conn, _gestor_input(cards=cards))
         decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record.status == "approved"
         assert customers_repository.get_customer(db_conn, record.gestor_id).type == "GESTOR"
         rows = _cards_of(db_conn, declaration_id)
@@ -857,7 +857,7 @@ class TestApprove:
         assert client.type == "CLIENTE"
         assert client.phone == "PREVIO"           # nothing else touched
         assert customers_repository.get_customer(db_conn, gestor_id).type == "GESTOR"
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert _cards_of(db_conn, declaration_id)[0].customer_id == client_id
         assert record.gestor_id == gestor_id
 
@@ -866,7 +866,7 @@ class TestApprove:
         declaration_id = _pending(db_conn)
         with pytest.raises(ValueError, match="EMPRESA"):
             decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
-        assert db.get_declaration(db_conn, declaration_id).status == "pending_review"
+        assert declarations_repository.get_declaration(db_conn, declaration_id).status == "pending_review"
         assert _count(db_conn, "ownership_cards") == 0
 
     def test_different_gestor_type_raises(self, db_conn):
@@ -889,7 +889,7 @@ class TestApprove:
         with pytest.raises(ValueError, match="otro cliente"):
             decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
         assert customers_repository.get_ownership_card(db_conn, card_id).customer_id == other
-        assert db.get_declaration(db_conn, declaration_id).status == "pending_review"
+        assert declarations_repository.get_declaration(db_conn, declaration_id).status == "pending_review"
 
     def test_reassign_moves_the_card(self, db_conn):
         other = _existing_client(db_conn, "PEDRO RUIZ")
@@ -935,7 +935,7 @@ class TestApprove:
             decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
         assert _count(db_conn, "customers") == customers_before
         assert _count(db_conn, "ownership_cards") == 1
-        assert db.get_declaration(db_conn, declaration_id).status == "pending_review"
+        assert declarations_repository.get_declaration(db_conn, declaration_id).status == "pending_review"
         assert all(r.customer_id is None for r in _cards_of(db_conn, declaration_id))
 
     def test_unknown_reassign_id_raises_before_writing(self, db_conn):
@@ -999,7 +999,7 @@ class TestReject:
         declaration_id = _pending(db_conn)
         reviewer = _reviewer_id(db_conn)
         decl.reject_declaration(db_conn, declaration_id, reviewer, "  datos falsos ")
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record.status == "rejected"
         assert (record.reviewed_by, record.review_note) == (reviewer, "datos falsos")
         assert record.reviewed_at is not None
@@ -1017,7 +1017,7 @@ class TestReject:
     def test_rejects_a_clean_declaration_too_and_creates_nothing(self, db_conn):
         declaration_id = _submit_pending(db_conn)
         decl.reject_declaration(db_conn, declaration_id, _reviewer_id(db_conn), "no")
-        assert db.get_declaration(db_conn, declaration_id).status == "rejected"
+        assert declarations_repository.get_declaration(db_conn, declaration_id).status == "rejected"
         assert _count(db_conn, "customers") == 0
         assert _count(db_conn, "ownership_cards") == 0
 

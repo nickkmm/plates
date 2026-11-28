@@ -6,7 +6,6 @@ from __future__ import annotations
 from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
 
 from app.auth.decorators import permission_required
-from app.core import db
 from app.customers import repository as customers_repository
 from app.inventory import repository as inventory_repository
 from app.orders import repository as orders_repository
@@ -15,6 +14,7 @@ from app.orders.pedido_upload import parse_uploaded_pedido
 from app.orders.service import find_duplicate_plate_numbers
 from app.pricing import repository as pricing_repository
 from app.production import repository as production_repository
+from app.shared import db
 from app.shared.models import ExtractedRow
 from app.shared.normalize import (
     PAYMENT_METHODS,
@@ -244,7 +244,7 @@ def record_save(order_id):
                         )
                     # Route this through ingestion.py's own duplicate-detection helper
                     # instead of querying orders_repository.existing_plate_numbers directly -- no SQL
-                    # query or business rule should live outside app/core/ (docs/CORE.md),
+                    # query or business rule should live in a route (docs/DOMAINS.md),
                     # and duplicating the is_real_plate/is_voided filter inline here risked
                     # drifting from process_rows'/replace_order's actual definition of
                     # "possible duplicate".

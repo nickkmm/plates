@@ -21,11 +21,11 @@ holds the whole declaration. Contract under test:
 EVERY public declaration is stored as pending_review (flags or not); the
 point of sale approves it. So "approved" fixtures are built the real way:
 submit_declaration, then approve_declaration (see _submit_approved). Each
-declaration shows ONE status badge, its derived stage (db.declaration_stage),
+declaration shows ONE status badge, its derived stage (declarations_repository.declaration_stage),
 and the list filters by it (`?stage=`).
 
 Pending declarations are built through the real
-app.core.declarations.submit_declaration so the conflicts are real. No test
+app.declarations.service.submit_declaration so the conflicts are real. No test
 here expects a DB error, so no rollback gymnastics are needed (see
 tests/conftest.py's clean_db docstring).
 """
@@ -42,10 +42,11 @@ from datetime import date, datetime
 import pytest
 
 from app.auth import repository
-from app.core import db
-from app.core import declarations as decl
 from app.customers import repository as customers_repository
+from app.declarations import repository as declarations_repository
+from app.declarations import service as decl
 from app.orders import repository as orders_repository
+from app.shared import db
 from app.shared.models import ExtractedRow
 from app.shared.timezones import utc_now
 from tests.conftest import PUNTO_VENTA_USERNAME, TEST_USERNAME
@@ -101,13 +102,13 @@ def _three_cards_one_flagged(db_conn) -> int:
         _gcard("GHI789", "L3", plate_quantity=1),
     ]
     declaration_id = _submit(db_conn, _gestor_input(cards=cards))
-    record = db.get_declaration(db_conn, declaration_id)
+    record = declarations_repository.get_declaration(db_conn, declaration_id)
     assert record is not None and record.status == "pending_review"
     return declaration_id
 
 
 def _status(db_conn, declaration_id: int) -> str:
-    record = db.get_declaration(db_conn, declaration_id)
+    record = declarations_repository.get_declaration(db_conn, declaration_id)
     assert record is not None
     return record.status
 
@@ -139,7 +140,7 @@ def _approved(db_conn, name: str = "ANA APROBADA", plate: str = "AAA111") -> int
 def _unflagged_pending(db_conn) -> int:
     """A clean declaration: pending_review with NO review flags."""
     declaration_id = _submit(db_conn)
-    record = db.get_declaration(db_conn, declaration_id)
+    record = declarations_repository.get_declaration(db_conn, declaration_id)
     assert record is not None and record.status == "pending_review" and record.review_flags == []
     return declaration_id
 
@@ -153,7 +154,7 @@ def _stage_badges(html: str) -> list[str]:
 
 def _attend(db_conn, declaration_id: int, order_number: str = "7001") -> int:
     order_id = _make_order(db_conn, order_number)
-    db.set_declaration_production_order(db_conn, declaration_id, order_id)
+    declarations_repository.set_declaration_production_order(db_conn, declaration_id, order_id)
     return order_id
 
 
@@ -270,13 +271,13 @@ class TestList:
         _pending_recent(db_conn)
         _three_cards_one_flagged(db_conn)
         calls: list[int] = []
-        real = db.list_cards_for_declarations
+        real = declarations_repository.list_cards_for_declarations
 
         def spy(conn, ids):
             calls.append(len(list(ids)))
             return real(conn, ids)
 
-        monkeypatch.setattr(db, "list_cards_for_declarations", spy)
+        monkeypatch.setattr(declarations_repository, "list_cards_for_declarations", spy)
         authenticated_client.get(f"{LIST_URL}?stage=all")
         assert calls == [2]
 
@@ -437,7 +438,7 @@ class TestDetail:
             section = _section(html, number)
             assert f"/customers/{row.customer_id}" in section
             assert f"placa {row.plate_number}" in section
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record is not None and record.gestor_id is not None
         assert f"/customers/{record.gestor_id}" in html
         assert "/approve" not in html and "/reject" not in html
@@ -519,7 +520,7 @@ def _with_photos(db_conn, uploads) -> tuple[int, int, dict[str, str]]:
         id_front_file=names["id_front"], id_back_file=names["id_back"],
     )
     declaration_id = _submit_approved(db_conn, inp)
-    (card,) = db.list_declaration_cards(db_conn, declaration_id)
+    (card,) = declarations_repository.list_declaration_cards(db_conn, declaration_id)
     return declaration_id, card.id, names
 
 
@@ -555,7 +556,7 @@ class TestPhotos:
             cur.execute("UPDATE declarations SET declarant_id_front_path = NULL, declarant_id_back_path = NULL")
             cur.execute("UPDATE declaration_cards SET card_front_path = NULL, card_back_path = NULL, "
                         "used_plates_photo_path = NULL")
-        (card,) = db.list_declaration_cards(db_conn, declaration_id)
+        (card,) = declarations_repository.list_declaration_cards(db_conn, declaration_id)
         assert authenticated_client.get(f"{_detail(declaration_id)}/file/id_front").status_code == 404
         assert authenticated_client.get(f"{_detail(declaration_id)}/cards/{card.id}/photo/back").status_code == 404
         html = authenticated_client.get(_detail(declaration_id)).data.decode()
@@ -742,7 +743,7 @@ class TestApprove:
         resp = authenticated_client.post(f"{_detail(declaration_id)}/approve", data={"note": "ok, confirmado"})
         assert resp.status_code == 302
         assert resp.headers["Location"].endswith(_detail(declaration_id))
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record is not None
         assert record.status == "approved"
         assert record.review_note == "ok, confirmado"
@@ -804,7 +805,7 @@ class TestApprove:
         moved = customers_repository.get_ownership_card(db_conn, done[1].ownership_card_id)
         assert moved is not None and moved.customer_id == done[1].customer_id
         assert customers_repository.get_customer(db_conn, done[1].customer_id).name == "LUIS PEREZ"  # type: ignore[union-attr]
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record is not None and record.gestor_id is not None
 
     def test_without_the_card_checkbox_nothing_is_approved_all_or_nothing(self, authenticated_client, db_conn):
@@ -886,7 +887,7 @@ class TestReject:
         declaration_id = _three_cards_one_flagged(db_conn)
         resp = authenticated_client.post(f"{_detail(declaration_id)}/reject", data={"note": "datos falsos"})
         assert resp.status_code == 302
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record is not None
         assert record.status == "rejected" and record.review_note == "datos falsos"
         assert record.gestor_id is None
@@ -1001,7 +1002,7 @@ class TestStageFilter:
         _attend(db_conn, attended)                                                    # attended
         _loss_approved(db_conn, name="LUISA PERDIDA", plate="LLL111")                 # awaiting_notarization
         notarized = _loss_approved(db_conn, name="NORA NOTARIADA", plate="NNN333")
-        db.set_declaration_notarized_received(db_conn, notarized, received_by=None)   # ready
+        declarations_repository.set_declaration_notarized_received(db_conn, notarized, received_by=None)   # ready
         rejected = _pending_recent(db_conn)                                           # MARIA LOPEZ
         decl.reject_declaration(db_conn, rejected, 1, "no")
         _three_cards_one_flagged(db_conn)                                             # GESTORIA SUR: to_review
@@ -1086,7 +1087,7 @@ class TestRoles:
         data = {f"reassign_{rows[1].id}": "on", "note": "revisado en mostrador"}
         resp = punto_venta_client.post(f"{_detail(pending_id)}/approve", data=data)
         assert resp.status_code == 302
-        record = db.get_declaration(db_conn, pending_id)
+        record = declarations_repository.get_declaration(db_conn, pending_id)
         assert record is not None and record.status == "approved"
         pos_user = repository.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
         assert pos_user is not None and record.reviewed_by == pos_user.id
@@ -1097,7 +1098,7 @@ class TestRoles:
         pending_id = _three_cards_one_flagged(db_conn)
         resp = punto_venta_client.post(f"{_detail(pending_id)}/reject", data={"note": "datos falsos"})
         assert resp.status_code == 302
-        record = db.get_declaration(db_conn, pending_id)
+        record = declarations_repository.get_declaration(db_conn, pending_id)
         assert record is not None and record.status == "rejected"
         pos_user = repository.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
         assert pos_user is not None and record.reviewed_by == pos_user.id
@@ -1105,12 +1106,12 @@ class TestRoles:
     def test_point_of_sale_marks_notarized_received_and_undoes_it(self, punto_venta_client, db_conn, declaration_id):
         resp = punto_venta_client.post(f"{_detail(declaration_id)}/notarized")
         assert resp.status_code == 302
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         pos_user = repository.get_user_by_username(db_conn, PUNTO_VENTA_USERNAME)
         assert record is not None and pos_user is not None
         assert record.notarized_received_at is not None and record.notarized_received_by == pos_user.id
         assert punto_venta_client.post(f"{_detail(declaration_id)}/notarized/undo").status_code == 302
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record is not None and record.notarized_received_at is None
 
     def test_production_gets_403_on_the_new_actions(self, produccion_client, db_conn, declaration_id):
@@ -1118,7 +1119,7 @@ class TestRoles:
         assert produccion_client.get(f"{base}/pdf").status_code == 403
         assert produccion_client.post(f"{base}/notarized").status_code == 403
         assert produccion_client.post(f"{base}/notarized/undo").status_code == 403
-        record = db.get_declaration(db_conn, declaration_id)
+        record = declarations_repository.get_declaration(db_conn, declaration_id)
         assert record is not None and record.notarized_received_at is None
 
     def test_admin_can_do_everything(self, authenticated_client, declaration_id):
@@ -1151,8 +1152,8 @@ def _loss_approved(db_conn, name: str = "LUISA PERDIDA", plate: str = "LLL111", 
     ))
 
 
-def _record(db_conn, declaration_id: int) -> db.DeclarationRecord:
-    record = db.get_declaration(db_conn, declaration_id)
+def _record(db_conn, declaration_id: int) -> declarations_repository.DeclarationRecord:
+    record = declarations_repository.get_declaration(db_conn, declaration_id)
     assert record is not None
     return record
 
@@ -1222,7 +1223,7 @@ class TestNotarizationList:
     def test_one_badge_tells_the_notarization_state_of_loss_declarations(self, authenticated_client, db_conn):
         _loss_approved(db_conn)
         done = _loss_approved(db_conn, name="BETO AUTENTICADO", plate="BBB222")
-        db.set_declaration_notarized_received(db_conn, done, received_by=None)
+        declarations_repository.set_declaration_notarized_received(db_conn, done, received_by=None)
         _approved(db_conn)
         html = authenticated_client.get(f"{LIST_URL}?stage=all").data.decode()
         rows = html[html.index("<tbody>"):].split("<tr>")
@@ -1250,7 +1251,7 @@ class TestPdf:
                              "signature_png": signature_png, "issued_at": issued_at})
             return b"%PDF-1.4 generated"
 
-        monkeypatch.setattr("app.web.blueprints.declarations.build_declaration_pdf", fake)
+        monkeypatch.setattr("app.declarations.routes.build_declaration_pdf", fake)
         return recorded
 
     @pytest.mark.parametrize("client_fixture", ["authenticated_client", "punto_venta_client"])
@@ -1387,7 +1388,7 @@ class TestNotarizationDetail:
 
     def test_attended_declaration_hides_the_undo(self, authenticated_client, db_conn):
         declaration_id = _loss_approved(db_conn)
-        db.set_declaration_notarized_received(db_conn, declaration_id, received_by=None)
+        declarations_repository.set_declaration_notarized_received(db_conn, declaration_id, received_by=None)
         _attend(db_conn, declaration_id)
         html = authenticated_client.get(_detail(declaration_id)).data.decode()
         assert "Autenticación recibida" in html and "/notarized/undo" not in html

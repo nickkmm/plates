@@ -1,12 +1,12 @@
-"""Tests for app.web.antispam (no DB, no network)."""
+"""Tests for app.declarations.antispam (no DB, no network)."""
 
 from __future__ import annotations
 
 import pytest
 from flask import Flask, request
 
-from app.web import antispam
-from app.web.antispam import TokenCheck
+from app.declarations import antispam
+from app.declarations.antispam import TokenCheck
 
 SECRET = "unit-test-secret"
 

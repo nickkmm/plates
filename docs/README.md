@@ -20,7 +20,7 @@ it is not repeated here.
 |---|---|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Components, deployment (Docker/networks), CI/CD pipeline |
 | [`DATABASE.md`](DATABASE.md) | Full schema, ER diagram, columns, data quirks |
-| [`CORE.md`](CORE.md) | `app/core/`, `app/shared/`, the rules and SQL of `app/auth/` and the SQL of `app/customers/`, `app/pricing/`, `app/inventory/`, and the ingestion pipeline, parsers and SQL of `app/orders/`: connection pool, normalization, PDF extraction, ingestion pipeline, permissions, users and roles |
+| [`DOMAINS.md`](DOMAINS.md) | `app/shared/`, the rules and SQL of `app/auth/` and the SQL of `app/customers/`, `app/pricing/`, `app/inventory/`, the ingestion pipeline, parsers and SQL of `app/orders/`, and the service, PDF and SQL of `app/declarations/`: connection pool, normalization, PDF extraction, ingestion pipeline, permissions, users and roles |
 | [`WEB.md`](WEB.md) | `app/web/` and the routes of `app/auth/`, `app/customers/`, `app/pricing/`, `app/inventory/`, `app/orders/`: routes, login, roles/permissions, templates, complete flows |
 | [`PRODUCTION.md`](PRODUCTION.md) | Production screen: an order's flow through to delivery, states, permissions and routes |
 | [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md) | Local infra gotchas, testing, environment variables |

@@ -42,8 +42,9 @@ import psycopg.errors
 from flask import Blueprint, Response, current_app, make_response, render_template, request
 from werkzeug.exceptions import RequestEntityTooLarge
 
-from app.core import db
-from app.core.declarations import (
+from app.declarations import antispam
+from app.declarations import repository as declarations_repository
+from app.declarations.service import (
     ACTING_AS_GESTOR,
     DATA_POLICY_PARAGRAPH_1,
     DATA_POLICY_PARAGRAPH_2_PARTS,
@@ -60,9 +61,8 @@ from app.core.declarations import (
     submit_declaration,
     validate_declaration,
 )
-from app.shared import normalize
+from app.shared import db, normalize
 from app.shared.uploads import UploadError, resolve_upload_path, save_photo, save_signature_png
-from app.web import antispam
 from app.web.csrf import csrf
 
 bp = Blueprint("public_declaration", __name__)
@@ -331,7 +331,7 @@ def declaration_submit() -> Response:
 
     # d. per-IP rate limit, counted in Postgres (2 gunicorn workers).
     with db.get_conn() as conn:
-        recent = db.count_recent_by_ip(conn, ip, since=datetime.now() - timedelta(hours=1))
+        recent = declarations_repository.count_recent_by_ip(conn, ip, since=datetime.now() - timedelta(hours=1))
     if antispam.is_rate_limited(recent, MAX_SUBMISSIONS_PER_IP_PER_HOUR):
         current_app.logger.info("declaration rate limited ip=%s", ip)
         return _render_form(429, form=sticky, errors=[_ERR_RATE_LIMIT])

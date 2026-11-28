@@ -27,13 +27,13 @@ import psycopg.errors
 import pytest
 
 from app.auth import repository
-from app.core import db
-from app.core.declarations import MAX_CARDS, DeclarationInput, SubmitResult, approve_declaration
 from app.customers import repository as customers_repository
+from app.declarations import antispam
+from app.declarations import public_routes as pd
+from app.declarations import repository as declarations_repository
+from app.declarations.service import MAX_CARDS, DeclarationInput, SubmitResult, approve_declaration
 from app.orders import repository as orders_repository
-from app.web import antispam
 from app.web.app import app as flask_app
-from app.web.blueprints import public_declaration as pd
 from tests.conftest import TEST_USERNAME
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -300,7 +300,7 @@ class TestAntispam:
         assert len(stub.submitted) == 1
 
     def test_rate_limit(self, client, stub, monkeypatch):
-        monkeypatch.setattr(pd.db, "count_recent_by_ip", lambda conn, ip, since: (
+        monkeypatch.setattr(pd.declarations_repository, "count_recent_by_ip", lambda conn, ip, since: (
             pd.MAX_SUBMISSIONS_PER_IP_PER_HOUR if ip == "9.9.9.9" else 0
         ))
         resp = post(client, _form(), ip="9.9.9.9")
@@ -311,9 +311,9 @@ class TestAntispam:
 
     def test_limit_is_twenty_per_hour_per_ip(self, client, stub, monkeypatch):
         assert pd.MAX_SUBMISSIONS_PER_IP_PER_HOUR == 20
-        monkeypatch.setattr(pd.db, "count_recent_by_ip", lambda conn, ip, since: 19)
+        monkeypatch.setattr(pd.declarations_repository, "count_recent_by_ip", lambda conn, ip, since: 19)
         assert post(client, _form(), ip="9.9.9.9").status_code == 200  # the 20th is still allowed
-        monkeypatch.setattr(pd.db, "count_recent_by_ip", lambda conn, ip, since: 20)
+        monkeypatch.setattr(pd.declarations_repository, "count_recent_by_ip", lambda conn, ip, since: 20)
         assert post(client, _form(), ip="9.9.9.9").status_code == 429  # the 21st is not
 
     def test_success_page_has_the_generic_notarization_line(self, client, stub):
@@ -892,7 +892,7 @@ class TestPhotosReachTheStaffView:
         html = authenticated_client.get(f"/declaraciones/{declaration_id}").get_data(as_text=True)
         assert f"/declaraciones/{declaration_id}/file/id_front" in html
         assert f"/declaraciones/{declaration_id}/file/id_back" in html
-        for card in db.list_declaration_cards(db_conn, declaration_id):
+        for card in declarations_repository.list_declaration_cards(db_conn, declaration_id):
             for side in ("front", "back"):
                 url = f"/declaraciones/{declaration_id}/cards/{card.id}/photo/{side}"
                 assert url in html

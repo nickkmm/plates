@@ -97,8 +97,10 @@ plates is the internal plate-production and point-of-sale app for INGSE
   see `docs/WEB.md`, "CSRF protection".
 - `app/shared/`: code every domain needs (connection pool, normalize,
   timezones, models, uploads); depends on no domain package.
-- `app/core/`: business logic (pure, strictly typed) and `app/core/db/` (one
-  module per table).
+- `app/declarations/`: the sworn declarations: staff screens (`routes.py`),
+  public form (`public_routes.py`) and its anti-spam (`antispam.py`), the
+  submission and review rules (`service.py`), the PDF (`pdf.py`) and the SQL
+  (`repository.py`). Every blueprint now lives in its domain package.
 - Schema: `init.sql` plus ordered migrations in `app/migrations/*.sql`, applied
   by `python -m app.schema_migrate` (run automatically on deploy). A schema
   change is a new migration file, never an edit to an applied one, and updates

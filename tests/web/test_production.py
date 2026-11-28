@@ -21,7 +21,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.core import db
+from app.declarations import repository as declarations_repository
 from app.orders import repository as orders_repository
 from app.production import repository as production_repository
 from tests.core.test_declarations import _count
@@ -196,7 +196,7 @@ class TestDetailAndPhotos:
     ):
         declaration_id, _card_id, _names = _with_photos(db_conn, uploads)
         order_id = _order(db_conn)
-        db.set_declaration_production_order(db_conn, declaration_id, order_id)
+        declarations_repository.set_declaration_production_order(db_conn, declaration_id, order_id)
         resp = produccion_client.get(_detail(order_id))
         assert resp.status_code == 200
         html = resp.data.decode()
@@ -219,8 +219,8 @@ class TestDetailAndPhotos:
         other_id, other_card_id, _ = _with_photos(db_conn, uploads)
         order_id = _order(db_conn, "8001")
         other_order_id = _order(db_conn, "8002", "XYZ987")
-        db.set_declaration_production_order(db_conn, declaration_id, order_id)
-        db.set_declaration_production_order(db_conn, other_id, other_order_id)
+        declarations_repository.set_declaration_production_order(db_conn, declaration_id, order_id)
+        declarations_repository.set_declaration_production_order(db_conn, other_id, other_order_id)
         base = f"{_detail(order_id)}/declarations/{declaration_id}"
 
         for url in (f"{base}/file/id_front", f"{base}/cards/{card_id}/photo/front"):
@@ -240,7 +240,7 @@ class TestDetailAndPhotos:
     def test_a_missing_photo_file_is_404(self, produccion_client, db_conn, uploads):
         declaration_id, _, names = _with_photos(db_conn, uploads)
         order_id = _order(db_conn)
-        db.set_declaration_production_order(db_conn, declaration_id, order_id)
+        declarations_repository.set_declaration_production_order(db_conn, declaration_id, order_id)
         (uploads / names["id_front"]).unlink()
         url = f"{_detail(order_id)}/declarations/{declaration_id}/file/id_front"
         assert produccion_client.get(url).status_code == 404

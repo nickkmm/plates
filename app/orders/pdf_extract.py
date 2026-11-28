@@ -285,7 +285,7 @@ class ParsedPedido(BaseModel):
 
     The Fase 4 fields below (customer_document_number through notes) are raw
     text straight off the PDF -- no business-rule interpretation (vocabulary
-    matching, "is this required") happens here, that's app.web.blueprints.
+    matching, "is this required") happens here, that's app.orders.routes.
     ingest._form_from_pedido's job when it maps this onto the /ingest header
     dict. payment_method in particular is passed through UNNORMALIZED: the
     caller runs it through normalize.normalize_choice and decides whether an

@@ -27,10 +27,10 @@ import pytest
 from psycopg.rows import tuple_row
 
 from app.auth import repository
-from app.core import db
 from app.customers import repository as customers_repository
 from app.orders import repository as orders_repository
 from app.pricing import repository as pricing_repository
+from app.shared import db
 from app.web.app import app as flask_app
 from tests.conftest import TEST_PASSWORD, TEST_USERNAME
 from tests.pdf_fixtures import build_pedido_pdf

@@ -189,7 +189,7 @@ Next.js. By phase 8 that migration is complete, so:
 ### 4.2 Siigo client (`client.py`)
 
 - Stdlib `urllib` only (no `requests`), same pattern as
-  `app/web/antispam.py:98`: one module-level `_request(method, path, body,
+  `app/declarations/antispam.py:98` (`_post`): one module-level `_request(method, path, body,
   timeout)` wrapper that tests monkeypatch.
 - Environment read lazily at call time (`os.environ.get`), like
   `antispam.py`. Missing credentials → a typed error with a Spanish message
@@ -643,7 +643,7 @@ turn the flag on again.
 | 8 | `siigo_documents`, cash receipt RC-2 (preview, confirm, locks), `siigo.bill` permission | 6, 7 |
 | 9 | Electronic invoice FV-3 + `users.siigo_seller_id` | 8 |
 | 10 | Extra products (`order_items`) | 9 |
-| — | Docs, in the PR that changes each: `docs/DATABASE.md`, `docs/CORE.md` (permissions list), `docs/WEB.md` (routes), `docs/MIGRATION_PLAN.md` (`siigo/` domain + endpoints) | each task |
+| — | Docs, in the PR that changes each: `docs/DATABASE.md`, `docs/DOMAINS.md` (permissions list), `docs/WEB.md` (routes), `docs/MIGRATION_PLAN.md` (`siigo/` domain + endpoints) | each task |
 
 All tasks start after phases 1-7 of `docs/MIGRATION_PLAN.md` are done; each
 task includes its API endpoints, schemas and Next.js screen changes (no

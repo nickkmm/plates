@@ -4,9 +4,9 @@
 
 ## Components
 
-Three distinct ingestion "gateways" converge on the same `app/core`
-pipeline — `app/web` never writes SQL directly or implements business
-rules; it always goes through `app/core`:
+Three distinct ingestion "gateways" converge on the same pipeline in the
+domain packages — the routes never write SQL directly or implement business
+rules; they always go through a domain's `service.py` or `repository`:
 
 ```mermaid
 flowchart TD
@@ -27,16 +27,16 @@ flowchart TD
     PROC --> INV[recalc_inventory]
     INV --> DBL
 
-    WEB["app/orders/routes/*.py, app/web/blueprints/*.py<br/>(Flask routes)"] --> PROC
+    WEB["app/orders/routes/*.py, app/*/routes.py<br/>(Flask routes)"] --> PROC
     WEB --> DBL
     WEB --> DOM
 ```
 
 The ingestion module (now `app/orders/service.py`, first renamed from
-`process.py`) and `app/core/db/` (split out of a single `db.py`) are the result of Phase 1d — an
+`process.py`) and the per-table SQL modules (split out of a single `db.py`, now in each domain's repository) are the result of Phase 1d — an
 architecture refactor by domain without adding an ORM, a DI framework or a
 repository layer, plus a real connection pool (`psycopg_pool`). Full
-details in [`CORE.md`](CORE.md).
+details in [`DOMAINS.md`](DOMAINS.md).
 
 Login, the per-request session check, `permission_required`, the users and
 roles admin screens and their SQL form the auth domain, `app/auth/` (its
@@ -57,9 +57,9 @@ The production and cash summary domains add a `service.py` for their
 business rules: `app/production/` holds `routes.py`, `service.py` (the
 status transitions) and `repository.py` (the production-status SQL);
 `app/cash_summary/` holds `routes.py` and `service.py` (the aggregation and
-its PDF). `app/production/` imports `app.orders` for the order data; until the
-declarations domain moves, it also imports `app.core.db` and
-`app.web.blueprints.declarations`, and the cash summary queries read
+its PDF). `app/production/` imports `app.orders` for the order data and
+`app.declarations` (its repository and the declaration-file constants of
+`app.declarations.routes`), and the cash summary queries read
 `plates` and `production_orders` directly.
 
 The orders domain, `app/orders/`, holds the point of sale, records and
@@ -68,18 +68,27 @@ duplicates review blueprints (`routes/ingest.py`, `routes/records.py`,
 parsers (`pdf_extract.py`, `xlsx_extract.py`, `pedido_upload.py`) and the
 `production_orders`/`plates` SQL (`repository/`, a package with `orders.py`
 and `plates.py`). It imports `app/shared/`, `app/auth/`, `app/customers/`,
-`app/pricing/` and `app/inventory/`; until they move, `app.core.db` and
-`app.core.declarations` for the declarations data, and the routes import
+`app/pricing/`, `app/inventory/` and `app/declarations/` (the declarations
+data), and the routes import
 `app.web.helpers` until phase 6. Nothing in `app/customers/` imports it:
 `relink_plates`, which `update_customer` calls, lives in
 `app/customers/repository/ownership_cards.py`.
+
+The declarations domain, `app/declarations/`, holds the staff review screens
+(`routes.py`), the public sworn-declaration form (`public_routes.py`) and its
+anti-spam checks (`antispam.py`), the submission and review rules
+(`service.py`), the printable PDF (`pdf.py`) and the
+`declarations`/`declaration_cards` SQL (`repository.py`). It imports
+`app/shared/`, `app/auth/`, `app/customers/`, `app/orders/` and
+`app/production/`, and the routes import `app.web.csrf` until phase 6. Its
+templates stay in `app/web/templates/`.
 
 This is what lets the historical Excel migration (`app/migrate.py`) reuse
 exactly the same normalization and duplicate detection that the web form
 uses — a single path for validating business rules, not two parallel
 implementations.
 
-See [`CORE.md`](CORE.md) for the details of each module in this pipeline
+See [`DOMAINS.md`](DOMAINS.md) for the details of each module in this pipeline
 and [`WEB.md`](WEB.md) for the routes that trigger it.
 
 ## Deployment (Docker Compose)
