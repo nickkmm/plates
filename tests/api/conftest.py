@@ -11,6 +11,7 @@ import pytest
 
 from app.web.app import app as flask_app
 
+
 @pytest.fixture
 def client():
     """A test client with CSRF on and COOKIE_SECURE off; both settings are
