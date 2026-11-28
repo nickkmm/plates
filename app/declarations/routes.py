@@ -15,7 +15,7 @@ Atendida / Rechazada. The list's tabs (`?stage=`) filter by that stage.
 
 Access: EVERY route is @permission_required("declarations.review") (seeded
 for admin and point_of_sale); `reviewed_by`
-records the acting session user. The read-only 'production' role gets 403 on
+records the access token's user. The read-only 'production' role gets 403 on
 everything here: it handles identity documents and signatures. The flags
 context (previous owner, fabrication dates) is shown ONLY here, never to the
 anonymous submitter.
@@ -53,13 +53,11 @@ from flask import (
     render_template,
     request,
     send_file,
-    session,
     url_for,
 )
 from psycopg.rows import DictRow
 
 from app.auth import repository
-from app.auth.decorators import permission_required
 from app.customers import repository as customers_repository
 from app.declarations import repository as declarations_repository
 from app.declarations import service as decl
@@ -85,6 +83,7 @@ from app.declarations.repository import (
 from app.orders import repository as orders_repository
 from app.production import repository as production_repository
 from app.shared import db
+from app.shared.auth import permission_required, signed_in_user
 from app.shared.normalize import clean_plate, normalize_requested_by
 from app.shared.timezones import utc_now
 from app.shared.uploads import UploadError, resolve_upload_path, send_stored_file
@@ -485,7 +484,7 @@ def _reassign_ids_from_form() -> frozenset[int]:
 def _decide(declaration_id: int, decision: str):
     """Shared approve/reject flow: unknown id -> list; ValueError -> detail
     with the message (400, nothing changed); success -> commit + redirect."""
-    user_id = session["user_id"]
+    user_id = signed_in_user().user_id
     with db.get_conn() as conn:
         if declarations_repository.get_declaration(conn, declaration_id) is None:
             return redirect(url_for("declarations.declarations"))
@@ -504,7 +503,7 @@ def _decide(declaration_id: int, decision: str):
         return _render_detail(declaration_id, error=str(exc), reassign_ids=reassign_ids)
     current_app.logger.info(
         "declaration review: user=%s declaration_id=%s decision=%s",
-        session.get("user"), declaration_id, decision,
+        signed_in_user().username, declaration_id, decision,
     )
     return redirect(url_for("declarations.declaration_detail", declaration_id=declaration_id))
 
@@ -564,7 +563,7 @@ def _set_notarized(declaration_id: int, *, received: bool):
     """Shared mark/undo flow. Unknown id -> list; an ineligible declaration
     (not approved, no PÉRDIDA card, or -- for the undo -- already attended by
     an order) -> detail with a message (400, nothing changed)."""
-    user_id = session["user_id"]
+    user_id = signed_in_user().user_id
     error = None
     with db.get_conn() as conn:
         declaration = declarations_repository.get_declaration(conn, declaration_id)
@@ -583,7 +582,7 @@ def _set_notarized(declaration_id: int, *, received: bool):
             conn.commit()
             current_app.logger.info(
                 "declaration notarized: user=%s declaration_id=%s received=%s",
-                session.get("user"), declaration_id, received,
+                signed_in_user().username, declaration_id, received,
             )
     if error:
         return _render_detail(declaration_id, error=error)

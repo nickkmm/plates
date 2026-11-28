@@ -19,9 +19,9 @@ from datetime import date
 
 from flask import Blueprint, Response, render_template, request
 
-from app.auth.decorators import permission_required
 from app.cash_summary.service import build_cash_summary, render_cash_summary_pdf
 from app.shared import db
+from app.shared.auth import permission_required
 from app.web.helpers import today_iso
 
 bp = Blueprint("cash_summary", __name__)

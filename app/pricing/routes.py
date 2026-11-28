@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, redirect, render_template, request, session, url_for
+from flask import Blueprint, redirect, render_template, request, url_for
 
-from app.auth.decorators import permission_required
 from app.pricing import repository
 from app.shared import db
+from app.shared.auth import permission_required, signed_in_user
 
 bp = Blueprint("pricing", __name__)
 
@@ -63,7 +63,7 @@ def precios_update(plate_type: str):
             # itself and raises the same kind of Spanish ValueError -- caught
             # below, so a tampered/unknown value in the URL re-renders the form
             # instead of a raw traceback.
-            repository.set_price(conn, plate_type, unit_price, updated_by=session["user"])
+            repository.set_price(conn, plate_type, unit_price, updated_by=signed_in_user().username)
             conn.commit()
     except ValueError as e:
         with db.get_conn() as conn:

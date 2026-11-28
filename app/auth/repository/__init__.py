@@ -1,7 +1,7 @@
 """SQL for the auth domain: the users, roles and refresh_tokens tables, one module per table.
 
     users.py -- users / user_roles reads/writes (the login flow in
-                app/auth/decorators.py and the admin screen).
+                app/auth/login.py and the admin screen).
     roles.py -- roles / role_permissions / permissions reads/writes (the
                 permission catalog itself lives in app/auth/permissions.py,
                 mirrored in the `permissions` table).

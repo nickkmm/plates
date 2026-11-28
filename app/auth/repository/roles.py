@@ -1,5 +1,5 @@
 """roles / role_permissions / permissions reads/writes. get_role_permissions
-reads one role's stored codes (app/auth/decorators.py reads a user's, the union over
+reads one role's stored codes (app/auth/login.py reads a user's, the union over
 all their roles, through users.get_user_permissions); the writes and
 list_permissions are the data layer for the "Roles y permisos" section of
 the admin users screen (/usuarios/roles, app/auth/admin_routes.py).

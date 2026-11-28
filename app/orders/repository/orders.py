@@ -57,7 +57,7 @@ def insert_order(
     customer_id/created_by are passed separately, NOT read off `row`:
     customer_id is RESOLVED from row.requested_by by the caller (see
     customers_repository.resolve_or_create_customer) rather than typed, and
-    created_by comes from session["user_id"], which ExtractedRow has no
+    created_by comes from the access token's user id, which ExtractedRow has no
     business knowing about. Both are required (no default) so every caller
     makes an explicit choice, same convention as insert_plate's
     is_possible_duplicate.

@@ -27,6 +27,10 @@ import jwt
 ACCESS_TOKEN_LIFETIME = timedelta(minutes=5)
 REFRESH_TOKEN_LIFETIME = timedelta(days=30)
 
+# The cookies that carry them (set by app/auth/login.py, read by app/shared/auth.py).
+ACCESS_COOKIE = "access_token"
+REFRESH_COOKIE = "refresh_token"
+
 _ALGORITHM = "HS256"
 _REQUIRED_CLAIMS = ("sub", "username", "perms", "iat", "exp")
 

@@ -6,9 +6,8 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
-from flask import Blueprint, abort, current_app, render_template, request, session
+from flask import Blueprint, abort, current_app, render_template, request
 
-from app.auth.decorators import permission_required
 from app.customers import repository as customers_repository
 from app.declarations import repository as declarations_repository
 from app.declarations.repository import STATUS_APPROVED, STATUS_PENDING_REVIEW, requires_notarization
@@ -19,6 +18,7 @@ from app.orders.pedido_upload import parse_uploaded_pedido
 from app.orders.service import find_duplicate_plate_numbers, process_rows, replace_order
 from app.pricing import repository as pricing_repository
 from app.shared import db
+from app.shared.auth import permission_required, signed_in_user
 from app.shared.models import ExtractedRow
 from app.shared.normalize import (
     _CITY_SPECIFIC_TYPES,
@@ -589,13 +589,13 @@ def ingest_post():
                     conn, rows[0].requested_by, **customer_fields_from_form(request.form)
                 )
                 summary = replace_order(conn, rows[0].order_number, rows,
-                                        created_by=session.get("user_id"))
+                                        created_by=signed_in_user().user_id)
                 if declaration_id is not None:
                     _mark_declaration_attended(conn, declaration_id, rows[0].order_number)
                     attended_declaration_id = declaration_id
             current_app.logger.info(
                 "order replaced: user=%s order_number=%s plates=%d",
-                session.get("user"), rows[0].order_number, len(rows),
+                signed_in_user().username, rows[0].order_number, len(rows),
             )
         else:
             # One connection for the whole route from here down: the
@@ -630,13 +630,13 @@ def ingest_post():
                         customers_repository.resolve_or_create_customer(
                             conn, rows[0].requested_by, **customer_fields_from_form(request.form)
                         )
-                        summary = process_rows(conn, rows, created_by=session.get("user_id"))
+                        summary = process_rows(conn, rows, created_by=signed_in_user().user_id)
                         if declaration_id is not None:
                             _mark_declaration_attended(conn, declaration_id, rows[0].order_number)
                             attended_declaration_id = declaration_id
                         current_app.logger.info(
                             "order created: user=%s order_number=%s plates=%d",
-                            session.get("user"), rows[0].order_number, len(rows),
+                            signed_in_user().username, rows[0].order_number, len(rows),
                         )
     except Exception as e:  # surface validation/DB errors without crashing
         error = f"Error: {e}"

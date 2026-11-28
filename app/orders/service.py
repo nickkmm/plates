@@ -175,7 +175,7 @@ def process_rows(
     together on a clean exit, or nothing does.
 
     created_by (Fase 2) is the id of the logged-in user who triggered this
-    save (session["user_id"]) -> production_orders.created_by. Defaults to
+    save (the access token's user id) -> production_orders.created_by. Defaults to
     None so the historical Excel migration (app/migrate.py, which has no
     notion of a logged-in user) and any other caller not yet updated keep
     working unchanged.
