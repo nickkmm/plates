@@ -20,6 +20,8 @@ never touches the Flask session. See docs/WEB.md, "JSON API (`/api`)".
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from flask import Blueprint, Response, jsonify, redirect, request, url_for
 from pydantic import ValidationError
 from werkzeug.wrappers import Response as BaseResponse
@@ -27,7 +29,7 @@ from werkzeug.wrappers import Response as BaseResponse
 from app.auth import login as auth_login
 from app.auth.schemas import LoginRequest, LoginResponse, MeResponse, MeUser, UserOut
 from app.shared.api import error_response, http_error_response
-from app.shared.auth import current_user, is_safe_next
+from app.shared.auth import current_user
 from app.shared.tokens import REFRESH_COOKIE
 
 bp = Blueprint("auth_api", __name__, url_prefix="/api/auth")
@@ -103,14 +105,22 @@ def refresh_continue() -> BaseResponse:
     or it can't be rotated, clears both cookies and sends them to /login.
     Exists only while Jinja pages exist; phase 6 of docs/MIGRATION_PLAN.md
     removes it."""
-    next_url = request.args.get("next", "")
-    safe_next = next_url if is_safe_next(next_url) else ""
+    # The same guard as is_safe_next (app/shared/auth.py), written out in the
+    # shape CodeQL's py/url-redirection query recognizes as a sanitizer:
+    # backslashes become slashes (browsers read them that way, so "/\\host"
+    # turns into "//host"), then only a path with no scheme and no host passes.
+    next_url = request.args.get("next", "").replace("\\", "/")
+    safe_next = ""
+    if next_url.startswith("/") and not urlparse(next_url).netloc and not urlparse(next_url).scheme:
+        safe_next = next_url
     raw = request.cookies.get(REFRESH_COOKIE)
     signed_in = auth_login.refresh(raw) if raw else None
     if signed_in is None:
         login_url = url_for("auth_routes.login", next=safe_next) if safe_next else url_for("auth_routes.login")
         return auth_login.clear_token_cookies(redirect(login_url))
-    return auth_login.set_token_cookies(redirect(safe_next or url_for("index")), signed_in)
+    if safe_next:
+        return auth_login.set_token_cookies(redirect(safe_next), signed_in)
+    return auth_login.set_token_cookies(redirect(url_for("index")), signed_in)
 
 
 @bp.get("/logout/continue")
