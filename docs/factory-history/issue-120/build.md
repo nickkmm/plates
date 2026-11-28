@@ -7,12 +7,12 @@ STATUS: READY
 - An expired but genuine token redirects through the new `GET /api/auth/refresh/continue` and comes back; anything else goes to `/login`; `/api` gets a JSON 401.
 - Jinja `/login` and `/logout` share `app/auth/login.py` with `/api/auth/*`; logout ends at the new `GET /api/auth/logout/continue`, which revokes the refresh token. The Flask session only holds the CSRF token.
 - The `access_token` cookie now lives 30 days (the JWT still expires after 5 minutes), and a small script in `_nav.html` refreshes the token before a POST form or the `/ingest/pdf` upload is sent.
-- Round 1: first build. Draft PR #199.
+- Round 2 (user feedback): both token cookies are now `SameSite=Lax` instead of `Strict`, so a link opened from outside (e.g. WhatsApp) keeps the user signed in. Draft PR #199.
 
 ## Changes
 - `app/shared/auth.py` (new): `current_user()` (decodes the cookie once per request, cached on `flask.g`), `signed_in_user()` (the same, typed non-None, for views behind a guard), `has_permission`, `authenticated`, `permission_required` (sets `required_permissions` on the wrapper), `is_safe_next` (moved unchanged), and the redirect rules of requirement 2. Imports only `app.shared` and Flask.
 - `app/shared/tokens.py`: `ACCESS_COOKIE` / `REFRESH_COOKIE` names.
-- `app/auth/login.py` (new): `ROLE_ADMIN`, `load_users`, `load_roles`, `authenticate`, `verify_credentials` (moved), `SignedIn`, `sign_in`, `refresh`, `sign_out`, `set_token_cookies`, `clear_access_cookie`, `clear_token_cookies`. Both cookies get `Max-Age=REFRESH_TOKEN_LIFETIME`.
+- `app/auth/login.py` (new; round 2: cookies set and cleared with `samesite="Lax"`): `ROLE_ADMIN`, `load_users`, `load_roles`, `authenticate`, `verify_credentials` (moved), `SignedIn`, `sign_in`, `refresh`, `sign_out`, `set_token_cookies`, `clear_access_cookie`, `clear_token_cookies`. Both cookies get `Max-Age=REFRESH_TOKEN_LIFETIME`.
 - `app/auth/api.py`: refactored onto `login.py` (JSON contract unchanged apart from the cookie Max-Age); `me` uses `current_user()`; new `refresh_continue` and `logout_continue` GET endpoints.
 - `app/auth/routes.py`: GET `/login` redirects a valid token to `landing_url()`; POST `/login` uses `sign_in` and sets the cookies, landing by the new permissions; POST `/logout` clears the access cookie and session and redirects to `/api/auth/logout/continue`.
 - `app/web/navigation.py`: `landing_url(permissions=None)` moved here; the optional argument is how POST /login lands by the new permissions.
@@ -21,7 +21,7 @@ STATUS: READY
 - `app/schema_migrate.py`: imports the backfill parsers from `app.auth.login`. Docstrings in `app/auth/__init__.py`, `permissions.py`, `repository/*`, `orders/service.py`, `orders/repository/orders.py` reworded.
 - `app/web/templates/_nav.html`: `data-token-seconds` on the nav and the `platesEnsureFreshToken` script (document-level submit listener for `form[method=post]` except `.logout`; only intercepts when under 30 s remain; keeps the submitter's name/value). `ingest_pdf.html`: the XHR awaits it before `send`.
 - Tests: `tests/web/_helpers.py` (`log_in`, `set_access_token`, `expire_access_token`), `conftest.py` fixtures use `log_in`; `test_auth.py` rewritten onto the cookie; `test_permissions.py`, `test_users.py`, `test_role_admin.py`, `test_login.py`, `test_csrf.py`, `test_public_routes.py`, `tests/api/test_auth_api.py` adapted; new `tests/web/test_token_flow.py`; comment fixes in other tests.
-- Docs: `docs/WEB.md`, `docs/ARCHITECTURE.md`, `docs/DOMAINS.md`, `docs/DATABASE.md`, `CLAUDE.md`.
+- Docs: `docs/WEB.md`, `docs/ARCHITECTURE.md`, `docs/DOMAINS.md`, `docs/DATABASE.md`, `CLAUDE.md`. Round 2: `WEB.md` (cookie table, external-link note, `X-Requested-With` paragraph now explains `Lax` and the logout/continue effect) and the CSRF row of `docs/MIGRATION_PLAN.md` "Decisions" say `SameSite=Lax`.
 
 ## Acceptance criteria
 1. [x] No session user reads, no permanent session: both `rg` commands print nothing.
@@ -30,7 +30,7 @@ STATUS: READY
 4. [x] `tests/web/test_token_flow.py::TestExpiredTokenRefreshes::test_records_goes_through_refresh_and_comes_back` passes (302 to `/api/auth/refresh/continue?next=/records`, 302 to `/records` setting both cookies, 200, then a direct 200).
 5. [x] `TestRefreshContinueStaysOnSite` (4 evil `next` values, with and without a refresh cookie) passes.
 6. [x] `TestEveryGuardedRoute::test_refuses_without_a_token_and_without_its_code` passes, asserting at least 50 route/method pairs.
-7. [x] `TestJinjaLogin` passes: same cookie attributes as the API (`HttpOnly`, `SameSite=Strict`, `Max-Age=2592000`, paths), no `user`/`user_id` in the session, `/api/auth/me` 200; the three failures give identical 401 bodies and no `access_token`. The page's CSRF token is masked before the bodies are compared: Flask-WTF signs it with a timestamp, so two responses a second apart can differ in that one field.
+7. [x] `TestJinjaLogin` passes: same cookie attributes as the API (`HttpOnly`, `SameSite=Lax`, `Max-Age=2592000`, paths), no `user`/`user_id` in the session, `/api/auth/me` 200; the three failures give identical 401 bodies and no `access_token`. The page's CSRF token is masked before the bodies are compared: Flask-WTF signs it with a timestamp, so two responses a second apart can differ in that one field.
 8. [x] `TestJinjaLogout` passes (CSRF on): ends on `/login` via `/logout` and `/api/auth/logout/continue`, both cookies cleared, `revoked_at` set, `GET /records` then goes to `/login`. Also `test_csrf.py::TestLogout::test_post_with_token_logs_out`.
 9. [x] `test_me_with_an_expired_token_is_still_a_json_401` and `test_refresh_continue_is_never_cached` pass.
 10. [x] `test_auth.py::TestPermissionRequired::test_never_reads_the_database` (and `test_token_flow.py::TestNoDatabaseOnGuardedPages`) pass with `db.get_conn` patched to raise.
@@ -42,6 +42,7 @@ STATUS: READY
 13. [x] Every existing test in `test_permissions.py`, `test_roles.py`, `test_login.py`, `test_users.py`, `test_role_admin.py` and `test_public_routes.py` still exists under its name and passes. The "next request" ones now expire the token and refresh, or sign in again where `/usuarios` revoked the refresh tokens.
 
 ## Validation
+- Round 2: `bash factory/checks.sh` (same env): passed, 1930 tests.
 - `cd <worktree> && bash factory/checks.sh` (main checkout's script, with `TEST_POSTGRES_DB=plates_test_25`, `TEST_REQUIRE_DB=1`): passed. Ruff and mypy are clean and 1930 tests passed.
 - `.venv/Scripts/python -m ruff check app/` and `mypy app/`: passed.
 - Manual curl and headless-Edge checks above: passed.
@@ -57,3 +58,11 @@ STATUS: READY
 - Implemented requirements 1 to 23 in four commits (code, freshness script, tests, docs), pushed, and opened draft PR #199.
 - The first full run had 14 failures, all in tests that asserted the old session rule. I adapted them as requirements 20 to 22 say. mypy then rejected werkzeug-vs-flask `Response` types in `api.py`, so I made the cookie helpers generic and annotated the redirect endpoints with werkzeug's `Response`. After that the gate passed.
 - The gate hook then failed `test_failures_are_identical_and_set_no_cookie`, an intermittent failure: the login page's CSRF token is signed with a timestamp, so it differs when the three responses straddle a second boundary. The test now strips the `csrf_token` value before comparing; everything else must still be byte-identical. I re-ran `checks.sh`: it passed, with 1930 tests.
+
+### Round 2
+- Feedback 1 (@nickkmm on PR #199): "change the auth cookies from SameSite=Strict to SameSite=Lax, so a user who opens an app link from outside (e.g. WhatsApp) stays signed in."
+  - `app/auth/login.py`: `_set_cookie` and `_delete_cookie` use `samesite="Lax"` for `access_token` and `refresh_token`; module docstrings of `login.py` and `api.py` updated.
+  - Tests: `tests/api/test_auth_api.py` and `tests/web/test_token_flow.py` now assert `SameSite=Lax` on both cookies.
+  - Docs: `docs/WEB.md` and `docs/MIGRATION_PLAN.md` updated. The docs note the trade-off: `Lax` sends the cookies on a cross-site top-level GET, so a cross-site link to `/api/auth/logout/continue` can sign a user out, and `refresh/continue` only rotates and redirects on-site. Cross-site POSTs still carry no cookie, and the `X-Requested-With` and Flask-WTF checks are unchanged.
+  - PR #199 description's "Behavior change" section updated.
+- `factory/checks.sh` passed (1930 tests). Commit `f510072`, pushed.
