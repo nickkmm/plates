@@ -8,7 +8,9 @@ yourself out, at least one active admin) live in app/auth/service.py;
 this module only reads the form, writes through app.auth.repository and commits.
 There is no delete: deactivating a user is how access is removed, and
 app.auth.decorators re-reads roles and the active flag on every request, so a
-change applies on the user's next request.
+change applies on the user's next request. A role change, a deactivation and
+a password reset also revoke the user's refresh tokens (app/auth/api.py) in
+the same transaction, so their API session ends at the next refresh.
 
 Roles: admin is read-only (it always has every permission, see
 app/auth/permissions.py), so its page has no form and a POST is a 400.
@@ -38,7 +40,7 @@ from flask import (
 from psycopg.rows import DictRow
 from werkzeug.security import generate_password_hash
 
-from app.auth import repository, service
+from app.auth import refresh_tokens, repository, service
 from app.auth.decorators import permission_required
 from app.auth.permissions import ADMIN_ROLE
 from app.auth.repository import RoleRecord, UserRecord
@@ -139,6 +141,8 @@ def user_edit(user_id: int):
         if error is None:
             repository.set_user_roles(conn, user_id, roles, assigned_by=session["user_id"])
             repository.update_user(conn, user_id, active=active)
+            if set(roles) != set(user.roles) or (user.active and not active):
+                refresh_tokens.revoke_user(conn, user_id)
             conn.commit()
     if error:
         return _render_edit(user, roles=roles, active=active, error=error)
@@ -162,6 +166,7 @@ def user_password(user_id: int):
 
     with db.get_conn() as conn:
         repository.set_user_password(conn, user_id, generate_password_hash(password))
+        refresh_tokens.revoke_user(conn, user_id)
         conn.commit()
     current_app.logger.info(
         "user password reset: by=%s user=%s roles=%s", session["user"], user.username, ",".join(user.roles)
