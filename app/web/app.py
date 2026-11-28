@@ -22,6 +22,8 @@ and in app/auth/:
                       GET/POST /usuarios/<id>, POST /usuarios/<id>/password
                       (admin-only login account management)
   routes.py        -- GET/POST /login, POST /logout
+  api.py           -- POST /api/auth/login|refresh|logout, GET /api/auth/me
+                      (the JSON auth API: httpOnly token cookies)
 and in each domain package's routes.py:
   app/customers/   -- GET /customers, GET/POST /customers/<id> (admin-only
                       customer master-data editor, Fase 6)
@@ -34,7 +36,8 @@ and in each domain package's routes.py:
   app/cash_summary/ -- GET /cuadre, GET /cuadre/pdf (daily cash-reconciliation
                       report, Fase 5b)
 
-All routes except /login, /logout, /healthz and /declaracion require an
+All routes except /login, /logout, /healthz, /declaracion and
+/api/auth/login|refresh|logout require an
 active logged-in user, checked against the database on every request. Each
 one requires one permission code of the user's role -- see
 app.auth.decorators.permission_required and app/auth/permissions.py. `/` only
@@ -45,10 +48,13 @@ when their role has no permissions.
 Every POST/PUT/PATCH/DELETE also needs a valid CSRF token (Flask-WTF
 CSRFProtect, app/web/csrf.py); a missing or invalid one answers the 400 page
 csrf_error.html. /declaracion checks it by hand, after raising its own body
-cap. See docs/WEB.md, "CSRF protection".
+cap. See docs/WEB.md, "CSRF protection". The JSON API blueprints are exempt:
+every POST/PUT/PATCH/DELETE under /api/ must send X-Requested-With:
+XMLHttpRequest instead (app/shared/api.py, docs/WEB.md, "JSON API (`/api`)").
 
 Every 404 (an unknown URL or an abort(404)) answers the standalone Spanish
-page not_found.html, with no nav and no database lookup.
+page not_found.html, with no nav and no database lookup. Under /api/, every
+error answers JSON instead (app/shared/api.py).
 """
 
 from __future__ import annotations
@@ -64,6 +70,7 @@ from sentry_sdk.integrations.flask import FlaskIntegration
 
 from app.auth import decorators as auth
 from app.auth.admin_routes import bp as users_bp
+from app.auth.api import bp as auth_api_bp
 from app.auth.decorators import authenticated
 from app.auth.routes import bp as auth_routes_bp
 from app.cash_summary.routes import bp as cash_summary_bp
@@ -77,6 +84,7 @@ from app.orders.routes.review import bp as review_bp
 from app.pricing.routes import bp as pricing_bp
 from app.production.routes import PRODUCTION_STATUS_LABELS
 from app.production.routes import bp as production_bp
+from app.shared.api import http_error_response, init_api, is_api_request
 from app.shared.timezones import format_bogota
 from app.web.csrf import csrf
 from app.web.helpers import format_cop
@@ -118,7 +126,11 @@ if not os.environ.get("JWT_SECRET"):
         'python -c "import secrets; print(secrets.token_hex(32))"'
     )
 csrf.init_app(app)
+# The JSON API checks X-Requested-With instead (app/shared/api.py).
+csrf.exempt(auth_api_bp)
+init_api(app)
 
+app.register_blueprint(auth_api_bp)
 app.register_blueprint(auth_routes_bp)
 app.register_blueprint(cash_summary_bp)
 app.register_blueprint(customers_bp)
@@ -133,9 +145,11 @@ app.register_blueprint(review_bp)
 app.register_blueprint(users_bp)
 
 # Mark the session cookie Secure only behind HTTPS (set COOKIE_SECURE=1 in
-# production). Off by default so local plain-HTTP dev still works.
+# production). Off by default so local plain-HTTP dev still works. The API's
+# token cookies (app/auth/api.py) read the same flag from COOKIE_SECURE.
 _COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").strip().lower() in ("1", "true", "yes")
 app.config.update(
+    COOKIE_SECURE=_COOKIE_SECURE,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=_COOKIE_SECURE,
@@ -169,7 +183,10 @@ def _not_found(_exc: Exception) -> Response:
     """Unknown URL or abort(404): a standalone Spanish page with a link back
     to the public form (a visitor without a session under /declaracion) or to
     `/`. Like _csrf_error it skips the context processors and never shows
-    the request or the abort() message."""
+    the request or the abort() message. Under /api/ it answers the JSON
+    error instead (app/shared/api.py)."""
+    if is_api_request():
+        return http_error_response(404)
     on_public_form = request.path == "/declaracion" or request.path.startswith("/declaracion/")
     back_url = "/declaracion" if on_public_form and "user_id" not in session else url_for("index")
     body = app.jinja_env.get_template("not_found.html").render(back_url=back_url)
