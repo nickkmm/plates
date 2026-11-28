@@ -178,7 +178,9 @@ class TestJinjaLogin:
             resp = log_in(client, username, password)
             assert resp.status_code == 401
             assert "access_token" not in _set_cookies(resp)
-            bodies.add(resp.get_data())
+            # The CSRF token is signed with a timestamp, so it can differ between
+            # two responses a second apart; everything else must be identical.
+            bodies.add(_TOKEN_RE.sub("", resp.get_data(as_text=True)))
         assert len(bodies) == 1
 
 
