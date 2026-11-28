@@ -7,7 +7,7 @@ like a browser would.
 
 The contract under test:
 - A POST without a valid token answers the Spanish 400 page and the route
-  never runs: no row and no session changes.
+  never runs: no row changes and no token cookie is set or cleared.
 - The same POST with the token from a rendered page behaves as it does today.
 - /ingest/pdf accepts the token in the X-CSRFToken header (its XHR sends it).
 - /declaracion checks the token by hand, after raising its own 40 MB cap.
@@ -17,6 +17,7 @@ The contract under test:
 
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 from datetime import date
@@ -97,8 +98,8 @@ class TestLogin:
         resp = csrf_on.post("/login", data={"username": TEST_USERNAME, "password": TEST_PASSWORD})
         _assert_csrf_rejected(resp)
         assert 'href="/"' in resp.get_data(as_text=True)
-        with csrf_on.session_transaction() as sess:
-            assert "user" not in sess
+        assert not any(h.startswith("access_token=") for h in resp.headers.getlist("Set-Cookie"))
+        assert csrf_on.get_cookie("access_token") is None
         resp = csrf_on.get("/records")
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/login"
@@ -109,8 +110,8 @@ class TestLogin:
             "/login", data={"username": TEST_USERNAME, "password": TEST_PASSWORD, "csrf_token": token},
         )
         assert resp.status_code == 302
-        with csrf_on.session_transaction() as sess:
-            assert sess["user"] == TEST_USERNAME
+        assert csrf_on.get_cookie("access_token") is not None
+        assert csrf_on.get_cookie("refresh_token", path="/api/auth") is not None
 
     def test_invalid_token_is_rejected(self, csrf_on, test_credentials):
         _token(csrf_on, "/login")
@@ -129,9 +130,20 @@ class TestLogout:
         _assert_csrf_rejected(staff.post("/logout"))
         assert _logged_in(staff)
 
-    def test_post_with_token_logs_out(self, staff):
+    def test_post_with_token_logs_out(self, staff, db_conn):
+        refresh = staff.get_cookie("refresh_token", path="/api/auth")
+        assert refresh is not None
         resp = staff.post("/logout", data={"csrf_token": _token(staff, "/records")})
         assert resp.status_code == 302
+        assert urlparse(resp.headers["Location"]).path == "/api/auth/logout/continue"
+        resp = staff.get(resp.headers["Location"])
+        assert urlparse(resp.headers["Location"]).path == "/login"
+        assert staff.get_cookie("access_token") is None
+        assert staff.get_cookie("refresh_token", path="/api/auth") is None
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT revoked_at FROM refresh_tokens WHERE token_hash = %s", (hashlib.sha256(refresh.value.encode()).hexdigest(),))
+            row = cur.fetchone()
+        assert row is not None and row["revoked_at"] is not None
         assert not _logged_in(staff)
 
 

@@ -28,6 +28,7 @@ from werkzeug.security import generate_password_hash
 from app.auth import repository, service
 from app.web.app import app as flask_app
 from tests.conftest import PRODUCCION_PASSWORD, PRODUCCION_USERNAME, TEST_PASSWORD, TEST_USERNAME
+from tests.web._helpers import expire_access_token
 
 INTERNAL_NAMES = ("custom_", "point_of_sale", "production", "admin")
 ADMIN_READ_ONLY = "El rol Administrador siempre tiene todos los permisos y no se puede editar."
@@ -139,7 +140,13 @@ class TestPermissionChanges:
         assert resp.status_code == 302
         assert urlparse(resp.headers["Location"]).path == "/usuarios/roles/production"
         assert "Cambios guardados." in admin.get("/usuarios/roles/production").get_data(as_text=True)
-        assert production.get("/records").status_code == 403
+        # The current access token keeps the old permissions until it expires;
+        # the refresh then reloads them.
+        assert production.get("/records").status_code == 200
+        expire_access_token(production)
+        resp = production.get("/records", follow_redirects=True)
+        assert resp.request.path == "/records"
+        assert resp.status_code == 403
 
     def test_removing_production_manage(self, authenticated_client, db_conn):
         user = repository.get_user_by_username(db_conn, PRODUCCION_USERNAME)

@@ -38,10 +38,11 @@ architecture refactor by domain without adding an ORM, a DI framework or a
 repository layer, plus a real connection pool (`psycopg_pool`). Full
 details in [`DOMAINS.md`](DOMAINS.md).
 
-Login, the per-request session check, `permission_required`, the users and
-roles admin screens and their SQL form the auth domain, `app/auth/` (its
-SQL in `app/auth/repository/`). Every blueprint imports
-`app.auth.decorators.permission_required`; `app/auth/` imports no other domain
+Login, refresh and logout, the users and roles admin screens and their SQL
+form the auth domain, `app/auth/` (its SQL in `app/auth/repository/`).
+Every blueprint imports `app.shared.auth.permission_required`, which reads
+the user and their permissions from the JWT `access_token` cookie, with no
+database read; `app/auth/` imports no other domain
 package, only `app/shared/` (and `app.web.navigation` for the landing page).
 
 The customers, pricing and inventory domains follow the same layout:

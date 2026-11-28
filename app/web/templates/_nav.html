@@ -6,9 +6,52 @@
   }
   .tabs .logout button:hover { background:#fdecec; color:#d33; }
 </style>
-<nav class="tabs">
+<nav class="tabs" data-token-seconds="{{ token_seconds_left }}">
   {% for endpoint, label, _permission, active_endpoints in nav_items %}
   <a href="{{ url_for(endpoint) }}" class="{{ 'on' if request.endpoint in active_endpoints }}">{{ label }}</a>
   {% endfor %}
   <form method="post" action="{{ url_for('auth_routes.logout') }}" class="logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" title="Cerrar sesión">Salir</button></form>
 </nav>
+<script>
+  // The access token lives 5 minutes. Before a POST form is sent (and before
+  // the /ingest/pdf upload), refresh it when it has under 30 seconds left, so
+  // a form filled in slowly is not lost to a redirect to /login. A failed
+  // refresh lets the submission go ahead; the server then asks to sign in.
+  (function () {
+    var nav = document.querySelector("nav[data-token-seconds]");
+    var deadline = Date.now() + Number(nav.getAttribute("data-token-seconds")) * 1000;
+
+    function stale() {
+      return deadline - Date.now() < 30000;
+    }
+
+    window.platesEnsureFreshToken = function () {
+      if (!stale()) return Promise.resolve();
+      return fetch("/api/auth/refresh", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
+      }).then(function (response) {
+        if (response.ok) deadline = Date.now() + 300000;
+      }).catch(function () {});
+    };
+
+    document.addEventListener("submit", function (e) {
+      var form = e.target;
+      if (e.defaultPrevented || !form.matches("form[method=post]") || form.classList.contains("logout")) return;
+      if (!stale()) return;
+      e.preventDefault();
+      var submitter = e.submitter;
+      window.platesEnsureFreshToken().then(function () {
+        if (submitter && submitter.name) {
+          var input = document.createElement("input");
+          input.type = "hidden";
+          input.name = submitter.name;
+          input.value = submitter.value;
+          form.appendChild(input);
+        }
+        HTMLFormElement.prototype.submit.call(form);
+      });
+    });
+  })();
+</script>

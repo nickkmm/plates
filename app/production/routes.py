@@ -26,9 +26,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from flask import Blueprint, abort, current_app, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, redirect, render_template, request, url_for
 
-from app.auth.decorators import has_permission, permission_required
 from app.declarations import repository as declarations_repository
 from app.declarations.repository import REASON_LOSS
 from app.declarations.routes import CARD_PHOTO_SIDES, FILE_KINDS
@@ -42,6 +41,7 @@ from app.production.repository import (
 )
 from app.production.service import advance_order, revert_order
 from app.shared import db
+from app.shared.auth import has_permission, permission_required, signed_in_user
 from app.shared.normalize import inventory_category
 from app.shared.uploads import send_stored_file
 
@@ -189,13 +189,13 @@ def _move(order_id: int, *, forward: bool):
     move = advance_order if forward else revert_order
     try:
         with db.get_conn() as conn:
-            new_status = move(conn, order_id, session["user_id"], expected_status=expected_status)
+            new_status = move(conn, order_id, signed_in_user().user_id, expected_status=expected_status)
             conn.commit()
     except ValueError as exc:
         return _render_detail(order_id, error=str(exc))
     current_app.logger.info(
         "production status: user=%s order_id=%s %s -> %s",
-        session.get("user"), order_id, expected_status, new_status,
+        signed_in_user().username, order_id, expected_status, new_status,
     )
     return redirect(url_for("production.order_detail", order_id=order_id))
 

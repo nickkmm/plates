@@ -36,12 +36,12 @@ and in each domain package's routes.py:
   app/cash_summary/ -- GET /cuadre, GET /cuadre/pdf (daily cash-reconciliation
                       report, Fase 5b)
 
-All routes except /login, /logout, /healthz, /declaracion and
-/api/auth/login|refresh|logout require an
-active logged-in user, checked against the database on every request. Each
-one requires one permission code of the user's role -- see
-app.auth.decorators.permission_required and app/auth/permissions.py. `/` only
-requires a logged-in user (app.auth.decorators.authenticated) and sends them to the
+All routes except /login, /logout, /healthz, /declaracion,
+/api/auth/login|refresh|logout and /api/auth/refresh/continue|logout/continue
+require a logged-in user, read from the JWT in the `access_token` cookie with
+no database read. Each one requires one permission code of the user's
+roles -- see app.shared.auth.permission_required and app/auth/permissions.py. `/` only
+requires a logged-in user (app.shared.auth.authenticated) and sends them to the
 first nav entry they may open (app/web/navigation.py), or answers a 403 page
 when their role has no permissions.
 
@@ -61,17 +61,14 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import timedelta
 
 import sentry_sdk
-from flask import Flask, Response, make_response, redirect, render_template, request, session, url_for
+from flask import Flask, Response, make_response, redirect, render_template, request, url_for
 from flask_wtf.csrf import CSRFError
 from sentry_sdk.integrations.flask import FlaskIntegration
 
-from app.auth import decorators as auth
 from app.auth.admin_routes import bp as users_bp
 from app.auth.api import bp as auth_api_bp
-from app.auth.decorators import authenticated
 from app.auth.routes import bp as auth_routes_bp
 from app.cash_summary.routes import bp as cash_summary_bp
 from app.customers.routes import bp as customers_bp
@@ -85,10 +82,11 @@ from app.pricing.routes import bp as pricing_bp
 from app.production.routes import PRODUCTION_STATUS_LABELS
 from app.production.routes import bp as production_bp
 from app.shared.api import http_error_response, init_api, is_api_request
-from app.shared.timezones import format_bogota
+from app.shared.auth import authenticated, current_user, has_permission
+from app.shared.timezones import format_bogota, utc_now
 from app.web.csrf import csrf
 from app.web.helpers import format_cop
-from app.web.navigation import NAV_ITEMS
+from app.web.navigation import NAV_ITEMS, landing_url
 
 # Sentry: only if SENTRY_DSN is set, so dev/local/tests never send anything.
 _SENTRY_DSN = os.environ.get("SENTRY_DSN")
@@ -146,21 +144,20 @@ app.register_blueprint(users_bp)
 
 # Mark the session cookie Secure only behind HTTPS (set COOKIE_SECURE=1 in
 # production). Off by default so local plain-HTTP dev still works. The API's
-# token cookies (app/auth/api.py) read the same flag from COOKIE_SECURE.
+# token cookies (app/auth/login.py) read the same flag from COOKIE_SECURE.
 _COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").strip().lower() in ("1", "true", "yes")
 app.config.update(
     COOKIE_SECURE=_COOKIE_SECURE,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=_COOKIE_SECURE,
-    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
     # Public /declaracion: PDF (<=10 MB) + two PNG signatures as data URLs
     # (~270 KB each). Werkzeug 3.1 caps non-file form fields at 500 KB by
     # default, which would reject a gestor submission.
     MAX_CONTENT_LENGTH=12 * 1024 * 1024,
     MAX_FORM_MEMORY_SIZE=2 * 1024 * 1024,
-    # A CSRF token lives as long as the session (12 h for staff, the browser
-    # session for anonymous visitors), so a slow /declaracion is never rejected.
+    # The session only holds the CSRF token, which lives for the browser
+    # session, so a slow form or /declaracion is never rejected.
     WTF_CSRF_TIME_LIMIT=None,
 )
 
@@ -181,14 +178,14 @@ def _csrf_error(_exc: CSRFError) -> Response:
 @app.errorhandler(404)
 def _not_found(_exc: Exception) -> Response:
     """Unknown URL or abort(404): a standalone Spanish page with a link back
-    to the public form (a visitor without a session under /declaracion) or to
+    to the public form (a visitor without an access token under /declaracion) or to
     `/`. Like _csrf_error it skips the context processors and never shows
     the request or the abort() message. Under /api/ it answers the JSON
     error instead (app/shared/api.py)."""
     if is_api_request():
         return http_error_response(404)
     on_public_form = request.path == "/declaracion" or request.path.startswith("/declaracion/")
-    back_url = "/declaracion" if on_public_form and "user_id" not in session else url_for("index")
+    back_url = "/declaracion" if on_public_form and current_user() is None else url_for("index")
     body = app.jinja_env.get_template("not_found.html").render(back_url=back_url)
     response = make_response(body, 404)
     response.headers["Cache-Control"] = "no-store"
@@ -197,13 +194,17 @@ def _not_found(_exc: Exception) -> Response:
 
 @app.context_processor
 def _inject_permissions() -> dict:
-    """Expose `can(code)` (auth.has_permission) and `nav_items` (the
+    """Expose `can(code)` (has_permission) and `nav_items` (the
     NAV_ITEMS entries the user may open) to templates, so they gate links and
-    edit/delete UI on the same permission the route checks. On pages with no
-    session (login, the public /declaracion) `can` is False and `nav_items`
-    is empty, without touching the database."""
-    nav_items = [item for item in NAV_ITEMS if auth.has_permission(item[2])]
-    return {"can": auth.has_permission, "nav_items": nav_items}
+    edit/delete UI on the same permission the route checks, and
+    `token_seconds_left`, the seconds left on the access token, for the
+    freshness script of _nav.html. Everything comes from the access token, never
+    the database; without one `can` is False, `nav_items` is empty and
+    `token_seconds_left` is 0."""
+    user = current_user()
+    nav_items = [item for item in NAV_ITEMS if has_permission(item[2])]
+    seconds_left = max(0, int((user.expires_at - utc_now()).total_seconds())) if user is not None else 0
+    return {"can": has_permission, "nav_items": nav_items, "token_seconds_left": seconds_left}
 
 
 app.jinja_env.filters["cop"] = format_cop
@@ -215,7 +216,7 @@ app.jinja_env.globals["production_status_labels"] = PRODUCTION_STATUS_LABELS
 @app.get("/")
 @authenticated
 def index():
-    landing = auth.landing_url()
+    landing = landing_url()
     if landing == url_for("index"):
         return render_template("no_permissions.html"), 403
     return redirect(landing)

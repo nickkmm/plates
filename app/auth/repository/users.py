@@ -1,5 +1,5 @@
-"""users reads/writes -- backs app/auth/decorators.py's DB-backed login flow (Fase
-2 moved login off the AUTH_USERS/AUTH_ROLES env vars, see decorators.py's module
+"""users reads/writes -- backs app/auth/login.py's DB-backed login flow (Fase
+2 moved login off the AUTH_USERS/AUTH_ROLES env vars, see login.py's module
 docstring) and any future admin user-management screen.
 
 See app/shared/db.py for the module-wide connection/transaction
@@ -19,8 +19,8 @@ from psycopg.rows import DictRow, class_row
 @dataclass
 class UserRecord:
     """One `users` row plus the names of the roles it holds (user_roles,
-    sorted by name) -- returned by lookups. Consumed by app.auth.decorators to
-    decide whether a login succeeds, what session["user_id"] gets set to,
+    sorted by name) -- returned by lookups. Consumed by app.auth.login to
+    decide whether a login succeeds, which user id the access token carries,
     and which permissions the user has."""
 
     id: int
@@ -42,7 +42,7 @@ _SELECT_COLUMNS = """id, username, password_hash,
 def get_user_by_username(conn: psycopg.Connection[DictRow], username: str) -> UserRecord | None:
     """Look up one user by username (case-sensitive, matching the UNIQUE
     constraint). Returns None for no such user -- an inactive user IS
-    returned (active=False); it's app.auth.decorators.authenticate's job to decide
+    returned (active=False); it's app.auth.login.authenticate's job to decide
     an inactive account can't log in, not this lookup's."""
     with conn.cursor(row_factory=class_row(UserRecord)) as cur:
         cur.execute(f"SELECT {_SELECT_COLUMNS} FROM users WHERE username = %s", (username,))
@@ -50,7 +50,7 @@ def get_user_by_username(conn: psycopg.Connection[DictRow], username: str) -> Us
 
 
 def get_user_by_id(conn: psycopg.Connection[DictRow], user_id: int) -> UserRecord | None:
-    """Look up one user by id (session["user_id"] / production_orders.created_by)."""
+    """Look up one user by id (the access token's user id / production_orders.created_by)."""
     with conn.cursor(row_factory=class_row(UserRecord)) as cur:
         cur.execute(f"SELECT {_SELECT_COLUMNS} FROM users WHERE id = %s", (user_id,))
         return cur.fetchone()

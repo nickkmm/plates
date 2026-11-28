@@ -15,8 +15,8 @@ It also covers the rules and SQL of `app/auth/` (the auth domain): the
 permission catalog (`app/auth/permissions.py`), the users and roles admin
 rules (`app/auth/service.py`), the refresh tokens
 (`app/auth/refresh_tokens.py`) and the `users`/`roles`/`refresh_tokens` SQL
-(`app/auth/repository/`). Its login, session check and routes are in
-[`WEB.md`](WEB.md).
+(`app/auth/repository/`). Its login (`app/auth/login.py`), the access-token
+check (`app/shared/auth.py`) and its routes are in [`WEB.md`](WEB.md).
 
 It also covers the SQL of the customers, pricing and inventory domains
 (`app/customers/repository/`, `app/pricing/repository.py`,
@@ -542,8 +542,8 @@ Real backend of the login — replaces the `AUTH_USERS`/`AUTH_ROLES` env vars.
 
 | Function | What it does |
 |---|---|
-| `get_user_by_username(conn, username)` | Used by `app/auth/decorators.py::authenticate` on every login. Returns the row even if `active=False` — it is `authenticate` that decides that an inactive user cannot log in, not this lookup. |
-| `get_user_by_id(conn, user_id)` | For `session["user_id"]` → `production_orders.created_by`, and for `current_user()` on every request. |
+| `get_user_by_username(conn, username)` | Used by `app/auth/login.py::authenticate` on every login. Returns the row even if `active=False` — it is `authenticate` that decides that an inactive user cannot log in, not this lookup. |
+| `get_user_by_id(conn, user_id)` | For a refresh (`app/auth/login.py::refresh`), which reloads the user behind a refresh token, and the users admin screen. |
 | `create_user(conn, *, username, password_hash, roles, active=True, assigned_by=None)` | Inserts the user and one `user_roles` row for each distinct role (repeats are ignored). A nonexistent role is rejected by the `user_roles_role_fkey` FK (`ForeignKeyViolation`). |
 | `list_users(conn)` | All users, by `id`. |
 | `list_users_with_role(conn, role)` | The users (active or not) that have that role, by `id`. |
@@ -579,15 +579,16 @@ codes (regardless of what is stored, so no admin is left without
 access to a new permission); otherwise, the stored codes that still
 exist in the catalog (unknown ones are discarded). `stored` is the
 union of the `role_permissions` codes of all the user's roles
-(`repository.get_user_permissions`). `app/auth/decorators.py` applies it on every request:
-each protected route asks for a code with `@permission_required` (see
-[`WEB.md`](WEB.md)).
+(`repository.get_user_permissions`). `app/auth/login.py` applies it at every
+login and refresh and puts the result in the access token's `perms`; each
+protected route asks for a code with `@permission_required`
+(`app/shared/auth.py`, see [`WEB.md`](WEB.md)).
 
 ### `app/auth/repository/roles.py`
 
 Read/write of `roles` and `role_permissions`, and read of
 `permissions` (see [`DATABASE.md`](DATABASE.md)). `get_role_permissions` reads
-the codes of a single role (for per-request access, `app/auth/decorators.py`
+the codes of a single role (for the access token's permissions, `app/auth/login.py`
 uses `repository.get_user_permissions`, the union of all the user's roles); the
 writes and `list_permissions` are for a future role management
 screen. The `permissions.PERMISSIONS` catalog has a mirror in the `permissions`

@@ -25,6 +25,7 @@ from werkzeug.security import generate_password_hash
 from app.auth import repository, service
 from app.web.app import app as flask_app
 from tests.conftest import PRODUCCION_PASSWORD, PRODUCCION_USERNAME, TEST_PASSWORD, TEST_USERNAME
+from tests.web._helpers import expire_access_token
 
 NEW_PASSWORD = "nuevaclave123"
 
@@ -177,14 +178,21 @@ class TestEdit:
         assert "Cambios guardados." in authenticated_client.get(f"/usuarios/{target.id}").get_data(
             as_text=True
         )
+        # The current access token keeps the old roles until it expires; the
+        # role change revoked the refresh tokens, so the user signs in again.
+        assert production.get("/ingest").status_code == 403
+        expire_access_token(production)
+        assert production.get("/ingest", follow_redirects=True).request.path == "/login"
+        _log_in(production, PRODUCCION_USERNAME, PRODUCCION_PASSWORD)
         assert production.get("/ingest").status_code == 200
 
         resp = authenticated_client.post(f"/usuarios/{target.id}", data={"roles": ["point_of_sale"]})
         assert resp.status_code == 302
         assert not _user(db_conn, PRODUCCION_USERNAME).active
-        resp = production.get("/ingest")
-        assert resp.status_code == 302
-        assert urlparse(resp.headers["Location"]).path == "/login"
+        expire_access_token(production)
+        resp = production.get("/ingest", follow_redirects=True)
+        assert resp.request.path == "/login"
+        assert production.get_cookie("access_token") is None
 
     def test_two_roles_give_the_union(self, db_conn):
         target = _user(db_conn, PRODUCCION_USERNAME)
@@ -194,6 +202,8 @@ class TestEdit:
             f"/usuarios/{target.id}", data={"roles": ["production", "point_of_sale"], "active": "1"}
         )
         assert _user(db_conn, PRODUCCION_USERNAME).roles == ["point_of_sale", "production"]
+        # The role change revoked the refresh tokens: the new roles apply at the next login.
+        _log_in(production, PRODUCCION_USERNAME, PRODUCCION_PASSWORD)
         assert production.get("/ingest").status_code == 200
         assert production.get("/records").status_code == 200
 

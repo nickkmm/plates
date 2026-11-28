@@ -3,9 +3,8 @@ full detail, and a PDF-based consult-only duplicate check."""
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
+from flask import Blueprint, current_app, redirect, render_template, request, url_for
 
-from app.auth.decorators import permission_required
 from app.customers import repository as customers_repository
 from app.inventory import repository as inventory_repository
 from app.orders import repository as orders_repository
@@ -15,6 +14,7 @@ from app.orders.service import find_duplicate_plate_numbers
 from app.pricing import repository as pricing_repository
 from app.production import repository as production_repository
 from app.shared import db
+from app.shared.auth import permission_required, signed_in_user
 from app.shared.models import ExtractedRow
 from app.shared.normalize import (
     PAYMENT_METHODS,
@@ -257,7 +257,7 @@ def record_save(order_id):
         return _record_detail_error(order_id, f"Error: {e}")
     current_app.logger.info(
         "record saved: user=%s order_id=%d order_number=%s",
-        session.get("user"), order_id, order_number,
+        signed_in_user().username, order_id, order_number,
     )
     return redirect(url_for("records.record_detail", order_id=order_id))
 

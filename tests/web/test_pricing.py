@@ -49,7 +49,7 @@ class TestPreciosAdmin:
         by_type = {r.plate_type: r for r in rows}
         row = by_type["CARRO PARTICULAR"]
         assert row.unit_price == Decimal("95000")
-        assert row.updated_by == "testuser"  # session["user"], not user_id
+        assert row.updated_by == "testuser"  # the access token's username, not user_id
         assert row.updated_at is not None
 
         # Other types are untouched -- still "sin tarifa".

@@ -6,11 +6,12 @@ role's permissions and delete an unused custom role.
 The rules (username format, password length, valid roles, no locking
 yourself out, at least one active admin) live in app/auth/service.py;
 this module only reads the form, writes through app.auth.repository and commits.
-There is no delete: deactivating a user is how access is removed, and
-app.auth.decorators re-reads roles and the active flag on every request, so a
-change applies on the user's next request. A role change, a deactivation and
-a password reset also revoke the user's refresh tokens (app/auth/api.py) in
-the same transaction, so their API session ends at the next refresh.
+There is no delete: deactivating a user is how access is removed. Access is
+read from the access token (app/shared/auth.py), so a change applies within
+5 minutes, when the user's access token expires and is refreshed. A role
+change, a deactivation and a password reset also revoke the user's refresh
+tokens (app/auth/refresh_tokens.py) in the same transaction, so their session
+ends at the next refresh.
 
 Roles: admin is read-only (it always has every permission, see
 app/auth/permissions.py), so its page has no form and a POST is a 400.
@@ -34,17 +35,16 @@ from flask import (
     redirect,
     render_template,
     request,
-    session,
     url_for,
 )
 from psycopg.rows import DictRow
 from werkzeug.security import generate_password_hash
 
 from app.auth import refresh_tokens, repository, service
-from app.auth.decorators import permission_required
 from app.auth.permissions import ADMIN_ROLE
 from app.auth.repository import RoleRecord, UserRecord
 from app.shared import db
+from app.shared.auth import permission_required, signed_in_user
 
 bp = Blueprint("users", __name__)
 
@@ -111,14 +111,14 @@ def user_new():
                 return _rerender(error)
             repository.create_user(
                 conn, username=username, password_hash=generate_password_hash(password),
-                roles=roles, assigned_by=session["user_id"],
+                roles=roles, assigned_by=signed_in_user().user_id,
             )
             conn.commit()
     except psycopg.errors.UniqueViolation:
         return _rerender(service.MSG_DUPLICATE_USERNAME)
 
     current_app.logger.info(
-        "user created: by=%s user=%s roles=%s", session["user"], username, ",".join(sorted(set(roles)))
+        "user created: by=%s user=%s roles=%s", signed_in_user().username, username, ",".join(sorted(set(roles)))
     )
     flash("Usuario creado.")
     return redirect(url_for("users.users"))
@@ -136,10 +136,10 @@ def user_edit(user_id: int):
     active = request.form.get("active") is not None
     with db.get_conn() as conn:
         error = service.validate_user_update(
-            conn, target=user, actor_id=session["user_id"], roles=roles, active=active,
+            conn, target=user, actor_id=signed_in_user().user_id, roles=roles, active=active,
         )
         if error is None:
-            repository.set_user_roles(conn, user_id, roles, assigned_by=session["user_id"])
+            repository.set_user_roles(conn, user_id, roles, assigned_by=signed_in_user().user_id)
             repository.update_user(conn, user_id, active=active)
             if set(roles) != set(user.roles) or (user.active and not active):
                 refresh_tokens.revoke_user(conn, user_id)
@@ -148,7 +148,7 @@ def user_edit(user_id: int):
         return _render_edit(user, roles=roles, active=active, error=error)
 
     current_app.logger.info(
-        "user updated: by=%s user=%s roles=%s", session["user"], user.username, ",".join(sorted(set(roles)))
+        "user updated: by=%s user=%s roles=%s", signed_in_user().username, user.username, ",".join(sorted(set(roles)))
     )
     flash("Cambios guardados.")
     return redirect(url_for("users.user_edit", user_id=user_id))
@@ -169,7 +169,7 @@ def user_password(user_id: int):
         refresh_tokens.revoke_user(conn, user_id)
         conn.commit()
     current_app.logger.info(
-        "user password reset: by=%s user=%s roles=%s", session["user"], user.username, ",".join(user.roles)
+        "user password reset: by=%s user=%s roles=%s", signed_in_user().username, user.username, ",".join(user.roles)
     )
     flash("Contraseña actualizada.")
     return redirect(url_for("users.user_edit", user_id=user_id))
@@ -225,7 +225,7 @@ def role_new():
             None, label=label, permissions=request.form.getlist("permissions"), error=error
         )
 
-    current_app.logger.info("role created: by=%s role=%s", session["user"], name)
+    current_app.logger.info("role created: by=%s role=%s", signed_in_user().username, name)
     flash("Rol creado.")
     return redirect(url_for("users.roles"))
 
@@ -255,7 +255,7 @@ def role_edit(name: str):
             role, label=label, permissions=request.form.getlist("permissions"), error=error
         )
 
-    current_app.logger.info("role updated: by=%s role=%s", session["user"], name)
+    current_app.logger.info("role updated: by=%s role=%s", signed_in_user().username, name)
     flash("Cambios guardados.")
     return redirect(url_for("users.role_edit", name=name))
 
@@ -276,6 +276,6 @@ def role_delete(name: str):
     if error:
         return _render_role_form(role, label=role.label, permissions=role.permissions, error=error)
 
-    current_app.logger.info("role deleted: by=%s role=%s", session["user"], name)
+    current_app.logger.info("role deleted: by=%s role=%s", signed_in_user().username, name)
     flash("Rol eliminado.")
     return redirect(url_for("users.roles"))

@@ -89,8 +89,6 @@ def _fold(text: str) -> str:
 
 
 _DOTS_SPACES = re.compile(r"[.\s]+")
-_REDUNDANT_DOT = re.compile(r"\s*\.\s*")
-_TRAILING_DOT = re.compile(r"\.+$")
 _NUMERIC = re.compile(r"\d+(\.0)?")
 
 
@@ -108,8 +106,10 @@ def _normalize_spelling(value: str) -> str:
 
     Keeps accents (BOGOTÁ, GUTIÉRREZ). 'X . Y' -> 'X.Y'; drops a dangling dot.
     """
-    s = _REDUNDANT_DOT.sub(".", value.strip().upper())
-    s = _TRAILING_DOT.sub("", s)
+    # split/strip rather than a \s*\.\s* regex: same result, linear time
+    # (CodeQL py/polynomial-redos).
+    s = ".".join(part.strip() for part in value.strip().upper().split("."))
+    s = s.rstrip(".")
     return _WHITESPACE.sub(" ", s).strip()
 
 

@@ -1,26 +1,30 @@
-"""/login and /logout -- session login page (open) and logout (open, POST only).
+"""/login and /logout -- the Jinja login page (open) and logout (open, POST only).
 
-The actual auth logic (user store, permission lookup, the
-permission_required/authenticated decorators) lives in app/auth/decorators.py
-and is used by every OTHER blueprint too -- these are
-just the two routes that call into it.
+They sign in and out through app/auth/login.py, the same code as the JSON
+auth API (app/auth/api.py), and set the same two token cookies. The access
+check every OTHER blueprint uses (permission_required/authenticated) lives in
+app/shared/auth.py. The Flask session only holds the CSRF token.
 """
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, redirect, render_template, request, session, url_for
+from urllib.parse import urlparse
 
-from app.auth import decorators as auth
+from flask import Blueprint, redirect, render_template, request, session, url_for
+
+from app.auth import login as auth_login
+from app.shared.auth import current_user, is_safe_next
+from app.web.navigation import landing_url
 
 bp = Blueprint("auth_routes", __name__)
 
 
 @bp.get("/login")
 def login():
-    if session.get("user"):
-        return redirect(auth.landing_url())
+    if current_user() is not None:
+        return redirect(landing_url())
     next_url = request.args.get("next", "")
-    return render_template("login.html", next=next_url if auth.is_safe_next(next_url) else "")
+    return render_template("login.html", next=next_url if is_safe_next(next_url) else "")
 
 
 @bp.post("/login")
@@ -28,19 +32,22 @@ def login_post():
     username = (request.form.get("username") or "").strip()
     password = request.form.get("password") or ""
     next_url = request.form.get("next") or ""
-    user = auth.authenticate(username, password)
-    if user is not None:
-        session.clear()
-        session["user"] = user.username
-        session["user_id"] = user.id
-        session.permanent = True
-        current_app.logger.info("login: user=%s roles=%s", user.username, ",".join(user.roles))
-        return redirect(next_url if auth.is_safe_next(next_url) else auth.landing_url())
+    signed_in = auth_login.sign_in(username, password)
+    if signed_in is not None:
+        # The same guard as is_safe_next, written out in the shape CodeQL's
+        # py/url-redirection query recognizes as a sanitizer: backslashes
+        # become slashes (browsers read them that way, so "/\\host" turns
+        # into "//host"), then only a path with no scheme and no host passes.
+        next_path = next_url.replace("\\", "/")
+        if next_path.startswith("/") and not urlparse(next_path).netloc and not urlparse(next_path).scheme:
+            return auth_login.set_token_cookies(redirect(next_path), signed_in)
+        # The request itself carries no token yet: land by the new permissions.
+        return auth_login.set_token_cookies(redirect(landing_url(signed_in.permissions)), signed_in)
     return (
         render_template(
             "login.html",
             error="Usuario o contraseña incorrectos.",
-            next=next_url if auth.is_safe_next(next_url) else "",
+            next=next_url if is_safe_next(next_url) else "",
         ),
         401,
     )
@@ -48,5 +55,7 @@ def login_post():
 
 @bp.post("/logout")
 def logout():
+    """Clears the access cookie and the session, then ends at
+    /api/auth/logout/continue, which receives the refresh cookie and revokes it."""
     session.clear()
-    return redirect(url_for("auth_routes.login"))
+    return auth_login.clear_access_cookie(redirect(url_for("auth_api.logout_continue")))

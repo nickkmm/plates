@@ -1,12 +1,17 @@
 """/api/auth -- the JSON auth API: login, refresh, logout and me.
 
-Login sets two httpOnly, SameSite=Strict cookies (Secure when COOKIE_SECURE
-is on): `access_token`, the 5-minute JWT of app/shared/tokens.py on path `/`,
-and `refresh_token`, the opaque 30-day token of app/auth/refresh_tokens.py
-on path `/api/auth` (logout must receive it to revoke it). Refresh rotates the
-refresh token and reloads the user's current roles and permissions; me reads
-only the access token, never the database. Login, refresh and logout are
-public; me answers 401 without a valid access token.
+Login sets two httpOnly, SameSite=Lax cookies (Secure when COOKIE_SECURE
+is on, app/auth/login.py): `access_token`, the 5-minute JWT of
+app/shared/tokens.py on path `/`, and `refresh_token`, the opaque 30-day
+token of app/auth/refresh_tokens.py on path `/api/auth` (logout must receive
+it to revoke it). Both cookies live 30 days; the JWT inside `access_token`
+still expires after 5 minutes. Refresh rotates the refresh token and reloads
+the user's current roles and permissions; me reads only the access token,
+never the database. Login, refresh and logout are public; me answers 401
+without a valid access token.
+
+Two GET endpoints, refresh/continue and logout/continue, exist only for the
+Jinja pages, which can't see the refresh cookie (see their docstrings).
 
 The blueprint is exempt from Flask-WTF CSRF (app/web/app.py): every POST must
 send `X-Requested-With: XMLHttpRequest` instead (app/shared/api.py). This API
@@ -15,30 +20,20 @@ never touches the Flask session. See docs/WEB.md, "JSON API (`/api`)".
 
 from __future__ import annotations
 
-from flask import Blueprint, Response, current_app, jsonify, request
-from pydantic import ValidationError
+from urllib.parse import urlparse
 
-from app.auth import decorators as auth
-from app.auth import permissions, refresh_tokens, repository
-from app.auth.repository import UserRecord
+from flask import Blueprint, Response, jsonify, redirect, request, url_for
+from pydantic import ValidationError
+from werkzeug.wrappers import Response as BaseResponse
+
+from app.auth import login as auth_login
 from app.auth.schemas import LoginRequest, LoginResponse, MeResponse, MeUser, UserOut
-from app.shared import db
 from app.shared.api import error_response, http_error_response
-from app.shared.timezones import utc_now
-from app.shared.tokens import (
-    ACCESS_TOKEN_LIFETIME,
-    REFRESH_TOKEN_LIFETIME,
-    TokenError,
-    decode_access_token,
-    issue_access_token,
-)
+from app.shared.auth import current_user
+from app.shared.tokens import REFRESH_COOKIE
 
 bp = Blueprint("auth_api", __name__, url_prefix="/api/auth")
 
-ACCESS_COOKIE = "access_token"
-REFRESH_COOKIE = "refresh_token"
-_ACCESS_PATH = "/"
-_REFRESH_PATH = "/api/auth"
 MSG_INVALID_CREDENTIALS = "Usuario o contraseña incorrectos."
 MSG_INVALID_BODY = "Escribe tu usuario y tu contraseña."
 
@@ -49,40 +44,14 @@ def _no_store(response: Response) -> Response:
     return response
 
 
-def _set_cookie(response: Response, name: str, value: str, *, max_age: int, path: str) -> None:
-    response.set_cookie(
-        name, value, max_age=max_age, path=path, httponly=True, samesite="Strict",
-        secure=current_app.config["COOKIE_SECURE"],
-    )
-
-
-def _delete_cookie(response: Response, name: str, path: str) -> None:
-    response.delete_cookie(
-        name, path=path, httponly=True, samesite="Strict", secure=current_app.config["COOKIE_SECURE"],
-    )
-
-
-def _clear_cookies(response: Response) -> Response:
-    _delete_cookie(response, ACCESS_COOKIE, _ACCESS_PATH)
-    _delete_cookie(response, REFRESH_COOKIE, _REFRESH_PATH)
-    return response
-
-
-def _signed_in(user: UserRecord, perms: list[str], raw_refresh: str) -> Response:
+def _signed_in(signed_in: auth_login.SignedIn) -> Response:
     """200 with LoginResponse and both cookies freshly set."""
+    user = signed_in.user
     body = LoginResponse(
-        user=UserOut(id=user.id, username=user.username, roles=user.roles), permissions=perms
+        user=UserOut(id=user.id, username=user.username, roles=user.roles), permissions=signed_in.permissions
     )
     response = jsonify(body.model_dump())
-    access = issue_access_token(user.id, user.username, perms, utc_now())
-    _set_cookie(
-        response, ACCESS_COOKIE, access, max_age=int(ACCESS_TOKEN_LIFETIME.total_seconds()),
-        path=_ACCESS_PATH,
-    )
-    _set_cookie(
-        response, REFRESH_COOKIE, raw_refresh, max_age=int(REFRESH_TOKEN_LIFETIME.total_seconds()),
-        path=_REFRESH_PATH,
-    )
+    auth_login.set_token_cookies(response, signed_in)
     return response
 
 
@@ -96,61 +65,71 @@ def login() -> Response:
     except ValidationError:
         return error_response(400, "invalid_body", MSG_INVALID_BODY)
 
-    user = auth.authenticate(body.username.strip(), body.password)
-    if user is None:
+    signed_in = auth_login.sign_in(body.username.strip(), body.password)
+    if signed_in is None:
         return error_response(401, "invalid_credentials", MSG_INVALID_CREDENTIALS)
-    with db.get_conn() as conn:
-        perms = sorted(
-            permissions.effective_permissions(user.roles, repository.get_user_permissions(conn, user.id))
-        )
-        raw_refresh = refresh_tokens.issue(conn, user.id)
-        conn.commit()
-    current_app.logger.info("login: user=%s roles=%s", user.username, ",".join(user.roles))
-    return _signed_in(user, perms, raw_refresh)
+    return _signed_in(signed_in)
 
 
 @bp.post("/refresh")
 def refresh() -> Response:
     raw = request.cookies.get(REFRESH_COOKIE)
-    if not raw:
-        return _clear_cookies(http_error_response(401))
-    with db.get_conn() as conn:
-        rotated = refresh_tokens.rotate(conn, raw)
-        if rotated is None:
-            # Commit anyway: on reuse, rotate revoked the whole family.
-            conn.commit()
-            return _clear_cookies(http_error_response(401))
-        user_id, new_raw = rotated
-        user = repository.get_user_by_id(conn, user_id)
-        if user is None or not user.active:
-            refresh_tokens.revoke_user(conn, user_id)
-            conn.commit()
-            return _clear_cookies(http_error_response(401))
-        perms = sorted(
-            permissions.effective_permissions(user.roles, repository.get_user_permissions(conn, user.id))
-        )
-        conn.commit()
-    return _signed_in(user, perms, new_raw)
+    signed_in = auth_login.refresh(raw) if raw else None
+    if signed_in is None:
+        return auth_login.clear_token_cookies(http_error_response(401))
+    return _signed_in(signed_in)
 
 
 @bp.post("/logout")
 def logout() -> Response:
     raw = request.cookies.get(REFRESH_COOKIE)
     if raw:
-        with db.get_conn() as conn:
-            refresh_tokens.revoke(conn, raw)
-            conn.commit()
-    return _clear_cookies(Response(status=204))
+        auth_login.sign_out(raw)
+    return auth_login.clear_token_cookies(Response(status=204))
 
 
 @bp.get("/me")
 def me() -> Response:
-    token = request.cookies.get(ACCESS_COOKIE)
-    if not token:
-        return http_error_response(401)
-    try:
-        claims = decode_access_token(token, utc_now())
-    except TokenError:
+    claims = current_user()
+    if claims is None:
         return http_error_response(401)
     body = MeResponse(user=MeUser(id=claims.user_id, username=claims.username), permissions=list(claims.perms))
     return jsonify(body.model_dump())
+
+
+@bp.get("/refresh/continue")
+def refresh_continue() -> BaseResponse:
+    """A Jinja page whose access token expired lands here (app/shared/auth.py):
+    the refresh cookie only reaches /api/auth. Rotates the tokens and sends the
+    user back to the safe `next` (or `/`), or, when there is no refresh cookie
+    or it can't be rotated, clears both cookies and sends them to /login.
+    Exists only while Jinja pages exist; phase 6 of docs/MIGRATION_PLAN.md
+    removes it."""
+    # The same guard as is_safe_next (app/shared/auth.py), written out in the
+    # shape CodeQL's py/url-redirection query recognizes as a sanitizer:
+    # backslashes become slashes (browsers read them that way, so "/\\host"
+    # turns into "//host"), then only a path with no scheme and no host passes.
+    next_url = request.args.get("next", "").replace("\\", "/")
+    safe_next = ""
+    if next_url.startswith("/") and not urlparse(next_url).netloc and not urlparse(next_url).scheme:
+        safe_next = next_url
+    raw = request.cookies.get(REFRESH_COOKIE)
+    signed_in = auth_login.refresh(raw) if raw else None
+    if signed_in is None:
+        login_url = url_for("auth_routes.login", next=safe_next) if safe_next else url_for("auth_routes.login")
+        return auth_login.clear_token_cookies(redirect(login_url))
+    if safe_next:
+        return auth_login.set_token_cookies(redirect(safe_next), signed_in)
+    return auth_login.set_token_cookies(redirect(url_for("index")), signed_in)
+
+
+@bp.get("/logout/continue")
+def logout_continue() -> BaseResponse:
+    """Where Jinja POST /logout ends: that request never carries the refresh
+    cookie (it only reaches /api/auth), so the token is revoked here. Clears
+    both cookies and sends the user to /login. Exists only while Jinja pages
+    exist; phase 6 of docs/MIGRATION_PLAN.md removes it."""
+    raw = request.cookies.get(REFRESH_COOKIE)
+    if raw:
+        auth_login.sign_out(raw)
+    return auth_login.clear_token_cookies(redirect(url_for("auth_routes.login")))

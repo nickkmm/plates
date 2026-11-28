@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from flask import Blueprint, redirect, render_template, request, url_for
 
-from app.auth.decorators import permission_required
 from app.inventory import repository
 from app.shared import db
+from app.shared.auth import permission_required
 from app.web.helpers import INVENTORY_CATS
 
 bp = Blueprint("inventory", __name__)

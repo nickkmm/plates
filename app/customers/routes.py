@@ -18,9 +18,9 @@ from __future__ import annotations
 import psycopg
 from flask import Blueprint, redirect, render_template, request, url_for
 
-from app.auth.decorators import permission_required
 from app.customers import repository
 from app.shared import db
+from app.shared.auth import permission_required
 from app.shared.normalize import (
     CUSTOMER_TYPES,
     DOCUMENT_RELATIONS,

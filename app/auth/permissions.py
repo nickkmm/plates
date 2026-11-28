@@ -6,7 +6,8 @@ The catalog is mirrored in the `permissions` table (same codes, labels and
 order), which role_permissions.permission references by FK; a test keeps the
 table and this tuple identical, so adding a code takes both a new migration
 and an entry here. Every protected route checks one of these codes on each
-request (app/auth/decorators.py's permission_required), through
+request (app/shared/auth.py's permission_required, against the access
+token's permissions), which login and refresh compute through
 effective_permissions below.
 """
 

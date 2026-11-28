@@ -1,11 +1,17 @@
 """The nav bar's entries, in display order, each gated by one permission code.
 
 _nav.html renders the entries the current user's permissions open (the
-`nav_items` context variable in app.py), and auth.landing_url() sends a user
+`nav_items` context variable in app.py), and landing_url() sends a user
 to the first of them.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterable
+
+from flask import url_for
+
+from app.shared.auth import has_permission
 
 # (endpoint, label, permission, active_endpoints). Later tasks append their
 # screens' entries here.
@@ -41,3 +47,17 @@ NAV_ITEMS: list[tuple[str, str, str, tuple[str, ...]]] = [
     ("users.users", "Usuarios", "users.manage", ("users.users", "users.user_new", "users.user_edit")),
     ("records.records", "Registros", "records.view", ("records.records", "records.record_detail")),
 ]
+
+
+def landing_url(permissions: Iterable[str] | None = None) -> str:
+    """Where a logged-in user lands with no specific ?next= target: the first
+    NAV_ITEMS entry their permissions open. With none, `/` -- which answers
+    the 403 "no permissions" page itself instead of redirecting again, so
+    there is no redirect loop. `permissions` defaults to the request's access
+    token; POST /login passes the new ones, because its request has no token
+    yet."""
+    allowed = has_permission if permissions is None else set(permissions).__contains__
+    for endpoint, _label, permission, _active in NAV_ITEMS:
+        if allowed(permission):
+            return url_for(endpoint)
+    return url_for("index")
