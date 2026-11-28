@@ -9,11 +9,12 @@ call a domain's `service.py` or `repository`.
 
 This page covers `app/shared/`: code every domain needs and that
 depends on no domain package — the connection pool (`app/shared/db.py`),
-`models.py`, `normalize.py`, `timezones.py` and `uploads.py`.
+`models.py`, `normalize.py`, `timezones.py`, `tokens.py` and `uploads.py`.
 
 It also covers the rules and SQL of `app/auth/` (the auth domain): the
 permission catalog (`app/auth/permissions.py`), the users and roles admin
-rules (`app/auth/service.py`) and the `users`/`roles` SQL
+rules (`app/auth/service.py`), the refresh tokens
+(`app/auth/refresh_tokens.py`) and the `users`/`roles`/`refresh_tokens` SQL
 (`app/auth/repository/`). Its login, session check and routes are in
 [`WEB.md`](WEB.md).
 
@@ -613,6 +614,30 @@ catalog and its Spanish label.
 | `update_role(conn, name, *, label, permissions)` | Changes the label and **replaces** (does not merge) the permissions. Same `ValueError` validation; `False` without writing anything if the role does not exist. |
 | `delete_role(conn, name)` | Deletes the role and, in cascade, its permissions. `False` if it did not exist. If any user still has it, the FK `user_roles_role_fkey` raises `ForeignKeyViolation` (no pre-check). |
 
+### `app/auth/refresh_tokens.py` (refresh tokens)
+
+Opaque refresh tokens of the JWT authentication (docs/MIGRATION_PLAN.md,
+"Phase 2"). **No route uses it yet**: the login, refresh and logout endpoints
+come in a later task. Takes an open `conn` and never commits. The raw token
+(`secrets.token_urlsafe(32)`) is only returned to the caller; only its SHA-256
+hex is stored (see `refresh_tokens` in [`DATABASE.md`](DATABASE.md)).
+
+| Function | What it does |
+|---|---|
+| `issue(conn, user_id)` | A new token in a new family, valid for `REFRESH_TOKEN_LIFETIME` (30 days, from `app/shared/tokens.py`). Returns the raw value. |
+| `rotate(conn, raw)` | `(user_id, new_raw)`: revokes the token and issues its successor in the same family. `None` for an unknown or expired token (an expired one does not revoke its family), and for a revoked one, after revoking every token of its family (reuse detection). The lookup is `SELECT ... FOR UPDATE`, so two concurrent rotations of the same token serialize and the second one takes the reuse path. |
+| `revoke(conn, raw)` | Revokes that one token; unknown or already revoked is a no-op. |
+| `revoke_user(conn, user_id)` | Revokes every token of the user, in every family. Nothing calls it yet. |
+
+### `app/auth/repository/refresh_tokens.py`
+
+The `refresh_tokens` SQL behind `app/auth/refresh_tokens.py`; no route uses it
+yet. It only ever writes and compares `token_hash`. `RefreshTokenRecord` is one
+row. `insert_refresh_token`, `get_refresh_token_for_update` (the row by hash,
+locked `FOR UPDATE`), `revoke_refresh_token` (one row by id),
+`revoke_refresh_token_family` and `revoke_user_refresh_tokens`. Revoking sets
+`revoked_at` to `utc_now()` and never touches an already revoked row.
+
 ### `app/production/repository.py` (production status)
 
 Data layer only for the production status of orders
@@ -704,6 +729,21 @@ time zone, so **every stored timestamp is UTC**. It is stored in UTC and
 converted only when displayed: `to_bogota` (PDF) and the Jinja filter `bogota`
 (`format_bogota`, on screens). `utc_now()` gives the time as it is stored.
 Business dates (`order_date` and other `DATE` columns) are not converted.
+
+### `tokens.py` (JWT access tokens, `app/shared/tokens.py`)
+
+Pure, no Flask or database. `issue_access_token(user_id, username, perms, now)`
+signs an HS256 JWT with the claims `sub` (the user id as a string),
+`username`, `perms` (sorted, deduplicated), `iat` and `exp` (integer Unix
+seconds, `exp = iat + 5 minutes`). `decode_access_token(token, now)` returns
+the frozen `AccessClaims` dataclass; it accepts only HS256, requires all five
+claims and checks expiry against `now` (`now >= exp` is expired), not the wall
+clock. Errors are typed: `ExpiredTokenError` and `InvalidTokenError` (bad
+signature, malformed, wrong algorithm, missing or ill-typed claim), both
+`TokenError`; no `jwt.*` exception escapes. `now` is naive UTC like
+`utc_now()`. The key is `JWT_SECRET`, read on every call (`RuntimeError` when
+missing, never `SECRET_KEY`). `ACCESS_TOKEN_LIFETIME` and
+`REFRESH_TOKEN_LIFETIME` are defined only here. **No route uses it yet.**
 
 ### `app/declarations/pdf.py` (sworn declaration as PDF)
 

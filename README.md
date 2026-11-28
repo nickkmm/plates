@@ -138,7 +138,7 @@ Details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 ## Local development
 
 ```sh
-cp .env.example .env          # set POSTGRES_PASSWORD and SECRET_KEY
+cp .env.example .env          # set POSTGRES_PASSWORD, SECRET_KEY and JWT_SECRET
 docker compose up -d
 docker compose exec web python -m app.schema_migrate
 ```

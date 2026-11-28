@@ -64,7 +64,7 @@ hand just like the `cargador.ingse.co` block). Locally, directly at
 - **`TEST_REQUIRE_DB=1`** turns "Postgres not available" into a failure
   instead of a skip. The factory gate sets it so a branch is not approved with
   the database tests skipped.
-- `SECRET_KEY`/`AUTH_USERS` are also forced when `conftest.py` is imported,
+- `SECRET_KEY`/`JWT_SECRET`/`AUTH_USERS` are also forced when `conftest.py` is imported,
   before any `from app...` — otherwise a local run would inherit
   the real credentials from `.env` and the test logins would fail
   silently.
@@ -115,6 +115,7 @@ hand just like the `cargador.ingse.co` block). Locally, directly at
 | `DB_PORT` | `app/shared/db.py` | `5432` inside the container; `5433` is only the host mapping. |
 | `DB_POOL_MIN_SIZE` / `DB_POOL_MAX_SIZE` | `app/shared/db.py` | Size of the `psycopg_pool.ConnectionPool` per gunicorn worker. Default `1`/`5` — with 2 workers, at most 10 connections from the app. |
 | `SECRET_KEY` | `app/web/app.py` | Required — `RuntimeError` at startup if missing. |
+| `JWT_SECRET` | `app/web/app.py`, `app/shared/tokens.py` | Required — `RuntimeError` at startup if missing or empty. Signs the JWT access tokens (HS256). Dedicated: separate from `SECRET_KEY`, never the same value. Generate it like `SECRET_KEY`. In production it must be added to the `ENV_FILE_B64` secret, or the deployed app does not start. |
 | `AUTH_USERS` | `app/schema_migrate.py` (one-time backfill) | `user:hash` separated by commas. **No longer feeds the live login** (Phase 2) — it is only read once, the first time `schema_migrate` runs against a new database, to create the `users` rows. The hash contains `$` → it must be escaped as `$$` in `.env` or Compose corrupts it when interpolating variables (already documented in the root README). |
 | `AUTH_ROLES` | `app/schema_migrate.py` (one-time backfill) | `user:role` separated by commas, same one-time backfill as `AUTH_USERS`. **It is not in `.env.example` today** — any user without an entry here ends up as `admin` by default. |
 | `COOKIE_SECURE` | `app/web/app.py` | `1` in production (HTTPS) to mark the cookie `Secure`; off in local dev over plain HTTP. |

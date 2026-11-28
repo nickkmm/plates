@@ -57,6 +57,7 @@ erDiagram
     customers ||--o{ production_orders : "customer_id (nullable)"
     users ||--o{ production_orders : "created_by (nullable)"
     users ||--o{ user_roles : "user_id (ON DELETE CASCADE)"
+    users ||--o{ refresh_tokens : "user_id (ON DELETE CASCADE)"
     roles ||--o{ user_roles : "role"
     roles ||--o{ role_permissions : "role"
     permissions ||--o{ role_permissions : "permission"
@@ -140,6 +141,15 @@ erDiagram
         text role PK,FK "admin/production/point_of_sale/..."
         timestamp assigned_at
         int assigned_by FK "nullable"
+    }
+    refresh_tokens {
+        int id PK
+        int user_id FK
+        text token_hash "UNIQUE — SHA-256 hex, never the raw token"
+        uuid family_id
+        timestamp expires_at
+        timestamp revoked_at "nullable"
+        timestamp created_at
     }
     roles {
         text name PK "English identifier, never shown"
@@ -372,6 +382,31 @@ they had. It only runs while `users.role` exists, so it is safe to run twice.
 > assignment (`user_roles`) and permission-role assignment
 > (`role_permissions`). All of a user's roles are active in every session;
 > there is no role hierarchy or separation of duties.
+
+### `refresh_tokens`
+
+*Added in migration `0019` (`app/migrations/0019_refresh_tokens.sql`).* One
+row per opaque refresh token of the JWT authentication (see
+`app/auth/refresh_tokens.py` in [`DOMAINS.md`](DOMAINS.md)). **Only the
+SHA-256 hash of the token is stored**, never the raw value: the raw token is
+returned to the client once, so a leaked table can't be replayed. No route
+uses it yet.
+
+| Column | Type | Constraint/Default | Note |
+|---|---|---|---|
+| `id` | SERIAL | PK | |
+| `user_id` | INTEGER | NOT NULL, FK → `users(id)` `ON DELETE CASCADE` | Deleting a user deletes their tokens. Indexed (`refresh_tokens_user_id_idx`) to revoke all of a user's tokens. |
+| `token_hash` | TEXT | NOT NULL UNIQUE | `sha256(raw).hexdigest()`; the only column ever compared. |
+| `family_id` | UUID | NOT NULL | Shared by a token and every successor rotated from it; a new login (`issue`) starts a new family. Indexed (`refresh_tokens_family_id_idx`). |
+| `expires_at` | TIMESTAMP | NOT NULL | Naive UTC; 30 days after the row was created (`REFRESH_TOKEN_LIFETIME`). |
+| `revoked_at` | TIMESTAMP | nullable | Naive UTC; set when the token is rotated or revoked or its family is revoked. Never overwritten once set. |
+| `created_at` | TIMESTAMP | NOT NULL DEFAULT now() | |
+
+**Families and reuse.** Rotating a token revokes it and inserts its successor
+in the same `family_id`. A revoked token presented again (stolen, or replayed)
+is reuse: every token in that family is revoked, so whoever holds the newest
+one is logged out too. An expired token is simply refused; its family is not
+revoked. Expired and revoked rows are not purged yet.
 
 ### `roles`
 
