@@ -98,7 +98,9 @@
         bar.style.width = "0%";
         text.textContent = "Subiendo... 0%";
         submitBtn.disabled = true;
-        xhr.send(new FormData(form));
+        window.platesEnsureFreshToken().then(function () {
+          xhr.send(new FormData(form));
+        });
       });
     })();
   </script>
