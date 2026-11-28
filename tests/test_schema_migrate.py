@@ -48,6 +48,7 @@ _0015_SQL = (_MIGRATIONS_DIR / "0015_roles_and_permissions.sql").read_text(encod
 _0016_SQL = (_MIGRATIONS_DIR / "0016_production_status.sql").read_text(encoding="utf-8")
 _0017_SQL = (_MIGRATIONS_DIR / "0017_permissions.sql").read_text(encoding="utf-8")
 _0018_SQL = (_MIGRATIONS_DIR / "0018_user_roles.sql").read_text(encoding="utf-8")
+_0019_SQL = (_MIGRATIONS_DIR / "0019_refresh_tokens.sql").read_text(encoding="utf-8")
 _0004_SQL = (_MIGRATIONS_DIR / "0004_translate_role_values_to_english.sql").read_text(encoding="utf-8")
 
 # Snapshot of init.sql exactly as it was immediately BEFORE the Fase 1
@@ -104,7 +105,7 @@ _APP_TABLES = (
     "production_orders", "plates", "blank_preparations", "inventory_categories",
     "customers", "users", "plate_type_prices", "schema_migrations", "plate_types",
     "ownership_cards", "declarations", "declaration_cards", "roles", "role_permissions",
-    "production_order_events", "permissions", "user_roles",
+    "production_order_events", "permissions", "user_roles", "refresh_tokens",
 )
 
 
@@ -1434,6 +1435,23 @@ class TestUserRoles:
             newly_applied = schema_migrate.apply_sql_migrations(db_conn)
         assert recorded == expected
         assert newly_applied == []
+
+
+class TestRefreshTokens:
+    """app/migrations/0019_refresh_tokens.sql: the refresh_tokens table."""
+
+    def test_0019_refresh_tokens_sql_is_safe_to_apply_twice_directly(self, db_conn):
+        """Re-applying it on the current schema (which already has the table)
+        raises nothing and keeps the table's rows."""
+        with db_conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                "INSERT INTO refresh_tokens (user_id, token_hash, family_id, expires_at) "
+                "SELECT id, 'h', gen_random_uuid(), now() FROM users ORDER BY id LIMIT 1"
+            )
+            cur.execute(_0019_SQL)
+            cur.execute(_0019_SQL)
+            cur.execute("SELECT count(*) FROM refresh_tokens")
+            assert cur.fetchone() == (1,)
 
 
 # --------------------------------------------------------------------------
