@@ -2,8 +2,9 @@
 `/api` plumbing (app/shared/api.py).
 
 The contract under test:
-- Login sets the httpOnly, SameSite=Strict `access_token` (path /, 5 min) and
-  `refresh_token` (path /api/auth, 30 days) cookies, Secure when
+- Login sets the httpOnly, SameSite=Strict `access_token` (path /, a JWT that
+  expires after 5 min in a 30-day cookie) and `refresh_token` (path
+  /api/auth, 30 days) cookies, Secure when
   COOKIE_SECURE is on; its three failures are byte-identical 401s with no cookie.
 - /me reads only the access token; refresh rotates the refresh token, detects
   reuse and reloads the user's current permissions; logout revokes it.
@@ -24,6 +25,8 @@ import re
 import secrets
 import uuid
 from datetime import timedelta
+
+import jwt
 
 from app.auth import repository
 from app.auth.permissions import PERMISSION_CODES
@@ -58,6 +61,12 @@ def _assert_cleared(resp) -> None:
         assert "Max-Age=0" in _attributes(header)
     assert "Path=/" in _attributes(cookies["access_token"])
     assert "Path=/api/auth" in _attributes(cookies["refresh_token"])
+
+
+def _assert_access_lifetime(header: str) -> None:
+    """The JWT inside the 30-day cookie still expires 5 minutes after it was issued."""
+    claims = jwt.decode(_cookie_value(header), options={"verify_signature": False})
+    assert claims["exp"] - claims["iat"] == 300
 
 
 def _assert_error(resp, status: int, code: str) -> None:
@@ -108,7 +117,8 @@ class TestLogin:
         assert body["permissions"] == sorted(PERMISSION_CODES)
 
         cookies = _set_cookies(resp)
-        assert {"HttpOnly", "SameSite=Strict", "Max-Age=300", "Path=/"} <= _attributes(cookies["access_token"])
+        assert {"HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/"} <= _attributes(cookies["access_token"])
+        _assert_access_lifetime(cookies["access_token"])
         assert {"HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/api/auth"} <= _attributes(
             cookies["refresh_token"]
         )
@@ -125,9 +135,10 @@ class TestLogin:
         assert api_login(client, f"  {TEST_USERNAME}  ", TEST_PASSWORD).status_code == 200
 
     def test_login_does_not_touch_the_flask_session(self, client, clean_db):
+        """And its access token opens the Jinja pages too: one login for both."""
         resp = api_login(client, TEST_USERNAME, TEST_PASSWORD)
         assert "session" not in _set_cookies(resp)
-        assert client.get("/records").status_code == 302
+        assert client.get("/records").status_code == 200
 
     def test_the_three_login_failures_are_identical(self, client, db_conn):
         repository.create_user(
@@ -228,7 +239,8 @@ class TestRefresh:
         assert {"HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/api/auth"} <= _attributes(
             cookies["refresh_token"]
         )
-        assert {"HttpOnly", "SameSite=Strict", "Max-Age=300", "Path=/"} <= _attributes(cookies["access_token"])
+        assert {"HttpOnly", "SameSite=Strict", "Max-Age=2592000", "Path=/"} <= _attributes(cookies["access_token"])
+        _assert_access_lifetime(cookies["access_token"])
 
         client.set_cookie("refresh_token", old_refresh, path="/api/auth")
         reused = _refresh(client)

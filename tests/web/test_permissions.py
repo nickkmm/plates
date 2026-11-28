@@ -1,6 +1,8 @@
-"""Route access decided per request from `users`, `user_roles` and
-`role_permissions` (app.auth.decorators.permission_required): a deactivated user or
-a role change takes effect on the very next request, a custom role sees only
+"""Route access decided from the access token's permissions, computed from
+`users`, `user_roles` and `role_permissions` at login and at every refresh
+(app.shared.auth.permission_required): a deactivated user or a role change
+takes effect once the access token expires (5 minutes) and the refresh
+reloads the user, a custom role sees only
 its own screens, a user with several roles gets the union of their
 permissions, a user with no permissions gets the 403 page on `/`, and admin
 (in any of the user's roles) keeps every permission whatever role_permissions
@@ -19,6 +21,7 @@ from werkzeug.security import generate_password_hash
 from app.auth import repository
 from app.auth.permissions import ADMIN_ROLE, PERMISSION_CODES, effective_permissions
 from tests.conftest import _TEST_USERS
+from tests.web._helpers import expire_access_token, log_in
 
 NO_PERMISSIONS_TEXT = "Tu usuario no tiene permisos asignados. Pide a un administrador que te asigne un rol."
 
@@ -26,7 +29,7 @@ NO_PERMISSIONS_TEXT = "Tu usuario no tiene permisos asignados. Pide a un adminis
 def _create_and_log_in(client, conn, *, roles, username="customuser", password="custompass123"):
     user_id = repository.create_user(conn, username=username, password_hash=generate_password_hash(password), roles=roles)
     conn.commit()
-    client.post("/login", data={"username": username, "password": password})
+    log_in(client, username, password)
     return user_id
 
 
@@ -39,12 +42,17 @@ class TestDeactivation:
         repository.update_user(db_conn, user.id, active=False)
         db_conn.commit()
 
+        # The current access token still works until it expires...
+        assert punto_venta_client.get("/ingest").status_code == 200
+        # ...then the refresh finds the user inactive: /login, cookies cleared.
+        expire_access_token(punto_venta_client)
         resp = punto_venta_client.get("/ingest")
         assert resp.status_code == 302
-        assert urlparse(resp.headers["Location"]).path == "/login"
-        with punto_venta_client.session_transaction() as sess:
-            assert "user" not in sess
-            assert "user_id" not in sess
+        assert urlparse(resp.headers["Location"]).path == "/api/auth/refresh/continue"
+        resp = punto_venta_client.get("/ingest", follow_redirects=True)
+        assert resp.request.path == "/login"
+        assert punto_venta_client.get_cookie("access_token") is None
+        assert punto_venta_client.get_cookie("refresh_token", path="/api/auth") is None
 
 
 class TestRoleChange:
@@ -56,7 +64,11 @@ class TestRoleChange:
         repository.set_user_roles(db_conn, user.id, ["point_of_sale"])
         db_conn.commit()
 
-        assert produccion_client.get("/ingest").status_code == 200
+        assert produccion_client.get("/ingest").status_code == 403
+        expire_access_token(produccion_client)
+        resp = produccion_client.get("/ingest", follow_redirects=True)
+        assert resp.request.path == "/ingest"
+        assert resp.status_code == 200
 
 
 class TestCustomRole:
@@ -129,11 +141,13 @@ class TestSeveralRoles:
 
         assert repository.assign_role(db_conn, user_id, ADMIN_ROLE) is True
         db_conn.commit()
-        assert client.get("/precios").status_code == 200
+        expire_access_token(client)
+        assert client.get("/precios", follow_redirects=True).status_code == 200
 
         assert repository.unassign_role(db_conn, user_id, ADMIN_ROLE) is True
         db_conn.commit()
-        assert client.get("/precios").status_code == 403
+        expire_access_token(client)
+        assert client.get("/precios", follow_redirects=True).status_code == 403
 
     def test_user_whose_roles_are_all_removed_gets_the_403_page(self, client, db_conn):
         user_id = _create_and_log_in(client, db_conn, roles=["production"])
@@ -142,13 +156,14 @@ class TestSeveralRoles:
         assert repository.set_user_roles(db_conn, user_id, []) is True
         db_conn.commit()
 
-        resp = client.get("/")
+        expire_access_token(client)
+        resp = client.get("/", follow_redirects=True)
         assert resp.status_code == 403
         assert NO_PERMISSIONS_TEXT in resp.get_data(as_text=True)
 
     def test_old_cookie_with_role_still_works_and_the_role_in_it_is_ignored(self, client, db_conn):
-        """A cookie issued before the session stopped storing the role still
-        carries `role`; it keeps working, and access follows the database."""
+        """A session cookie from before the token login still carries `user`,
+        `user_id` and `role`; without an access token it signs nobody in."""
         user = repository.get_user_by_username(db_conn, "produccionuser")
         assert user is not None
         with client.session_transaction() as sess:
@@ -156,8 +171,10 @@ class TestSeveralRoles:
             sess["role"] = ADMIN_ROLE
             sess["user_id"] = user.id
 
-        assert client.get("/records").status_code == 200
-        assert client.get("/precios").status_code == 403
+        for path in ("/records", "/precios"):
+            resp = client.get(path)
+            assert resp.status_code == 302
+            assert urlparse(resp.headers["Location"]).path == "/login"
 
 
 class TestAccessUnchanged:

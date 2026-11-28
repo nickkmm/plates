@@ -3,9 +3,9 @@
 CRITICAL ORDERING: ``app.web.app`` reads ``SECRET_KEY`` and ``JWT_SECRET``
 from the environment at MODULE IMPORT TIME (not inside a factory function) and
 raises ``RuntimeError`` if either is unset (``app.shared.tokens`` also reads
-``JWT_SECRET`` on every call, so it is forced to a fixed test value below). ``app.auth.decorators`` reads ``AUTH_USERS`` lazily
+``JWT_SECRET`` on every call, so it is forced to a fixed test value below). ``app.auth.login`` reads ``AUTH_USERS`` lazily
 (inside functions), but we set both here together, up front, so that ANY test
-module importing ``app.web.app`` or ``app.auth.decorators`` -- directly or
+module importing ``app.web.app`` or ``app.auth.login`` -- directly or
 transitively -- never races the module-level check. Because pytest always
 imports a directory's ``conftest.py`` before collecting test modules inside
 it, everything below runs before any ``tests/**/test_*.py`` file is imported.
@@ -14,7 +14,7 @@ Do not reorder: the env vars must be set before the ``from app...`` imports
 further down this file.
 
 **Fase 2**: the live login flow now queries the `users` TABLE, not
-AUTH_USERS/AUTH_ROLES (see app/auth/decorators.py's module docstring) -- so the
+AUTH_USERS/AUTH_ROLES (see app/auth/login.py's module docstring) -- so the
 three test identities below are seeded into `users` by the `clean_db`
 fixture itself (see TEST_USERS/its INSERT below), not just exported as env
 vars. AUTH_USERS/AUTH_ROLES are still set here too, because
@@ -45,7 +45,7 @@ _TEST_PASSWORD_HASH = generate_password_hash(TEST_PASSWORD)
 # A second user with the 'production' role -- read-only today (demoted from
 # its original full-access grant once real usage showed it should only ever
 # look things up), for testing the default-deny role restrictions (see
-# app.auth.decorators.consulta_allowed). TEST_USERNAME deliberately has role 'admin'
+# app.shared.auth.permission_required). TEST_USERNAME deliberately has role 'admin'
 # below -- it must keep behaving as full-access, matching production today
 # (every AUTH_USERS-era account with no AUTH_ROLES entry defaulted to admin).
 PRODUCCION_USERNAME = "produccionuser"

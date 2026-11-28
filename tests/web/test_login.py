@@ -118,20 +118,22 @@ class TestLogin:
         assert resp.status_code == 401
 
     def test_login_stores_user_and_user_id_but_no_role_in_session(self, client, test_credentials):
-        """The roles are read from user_roles on every request, never kept in
-        the session."""
+        """The user and their permissions travel in the access token cookie;
+        the session stores no user, user_id or role."""
         username, password = test_credentials
         client.post("/login", data={"username": username, "password": password})
+        assert client.get_cookie("access_token") is not None
         with client.session_transaction() as sess:
-            assert sess["user"] == username
-            assert "user_id" in sess
+            assert "user" not in sess
+            assert "user_id" not in sess
             assert "role" not in sess
 
     def test_login_of_another_role_also_stores_no_role(self, client, produccion_credentials):
         username, password = produccion_credentials
         client.post("/login", data={"username": username, "password": password})
+        assert client.get_cookie("access_token") is not None
         with client.session_transaction() as sess:
-            assert sess["user"] == username
+            assert "user" not in sess
             assert "role" not in sess
 
     def test_production_role_lands_on_the_production_board_not_ingest(self, client, produccion_credentials):

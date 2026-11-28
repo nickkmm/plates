@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from app.web.app import app as flask_app
+from tests.web._helpers import log_in
 
 
 @pytest.fixture
@@ -30,12 +31,12 @@ def client():
 def authenticated_client(client, test_credentials):
     """A test client that has already logged in as the fixture test user.
 
-    The session cookie set by the login POST persists on `client` for
+    The token cookies set by the login POST persist on `client` for
     subsequent requests (test_client() preserves cookies across calls within
     the same `with` block), so routes behind @permission_required work directly.
     """
     username, password = test_credentials
-    client.post("/login", data={"username": username, "password": password})
+    log_in(client, username, password)
     return client
 
 
@@ -50,7 +51,7 @@ def produccion_client(client, produccion_credentials):
     (/records, /records/<id>) still returns 200.
     """
     username, password = produccion_credentials
-    client.post("/login", data={"username": username, "password": password})
+    log_in(client, username, password)
     return client
 
 
@@ -61,5 +62,5 @@ def punto_venta_client(client, punto_venta_credentials):
     -- its seeded role_permissions give it the point-of-sale screens, narrower
     than admin but wider than the read-only 'production' role."""
     username, password = punto_venta_credentials
-    client.post("/login", data={"username": username, "password": password})
+    log_in(client, username, password)
     return client

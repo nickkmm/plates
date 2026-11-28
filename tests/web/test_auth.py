@@ -1,30 +1,35 @@
-"""Tests for app.auth.decorators.
+"""Tests for app/shared/auth.py (the access-token check) and app/auth/login.py.
 
-Fase 2: the live login flow (authenticate/verify_credentials) is now
-DB-backed (queries the `users` table via app/auth/repository/users.py), so those
-tests need `clean_db`/`db_conn` (see tests/conftest.py). load_users/
-load_roles are UNCHANGED and still pure os.environ parsing -- they're kept
-only for app.schema_migrate.backfill_users (the historical, already-applied
-migration that originally moved AUTH_USERS/AUTH_ROLES into `users`), so
-their tests stay environment-only, no DB/Flask context needed. is_safe_next
-is pure string/urlparse logic, also no context needed.
+Fase 2: the live login flow (authenticate/verify_credentials, app/auth/login.py)
+is DB-backed (queries the `users` table via app/auth/repository/users.py), so
+those tests need `clean_db`/`db_conn` (see tests/conftest.py). load_users/
+load_roles are still pure os.environ parsing -- they're kept only for
+app.schema_migrate.backfill_users (the historical, already-applied migration
+that originally moved AUTH_USERS/AUTH_ROLES into `users`), so their tests
+stay environment-only. is_safe_next is pure string/urlparse logic.
 
-The `permission_required`/`authenticated` decorators need a real Flask
-request/session context and real `users`/`role_permissions` rows (they read
-both on every request), so they're exercised here against a minimal
-standalone Flask app built just for this test file, on `db_conn`. Route-level
-access per role is covered in tests/web/test_roles.py and
-tests/web/test_permissions.py.
+The `permission_required`/`authenticated` decorators read only the
+`access_token` cookie (never the database), so they're exercised here
+against a minimal standalone Flask app built just for this test file, with
+tokens issued by the test itself. Route-level access per role is covered in
+tests/web/test_roles.py and tests/web/test_permissions.py.
 """
 
 from __future__ import annotations
+
+from datetime import timedelta
+from urllib.parse import parse_qs, urlparse
 
 import flask
 import pytest
 from werkzeug.security import generate_password_hash
 
-from app.auth import decorators as auth
+from app.auth import login as auth
 from app.auth import repository
+from app.shared import auth as shared_auth
+from app.shared import db
+from app.shared.timezones import utc_now
+from tests.web._helpers import set_access_token
 
 # --------------------------------------------------------------------------
 # load_users -- ONLY used by app.schema_migrate.backfill_users now
@@ -226,51 +231,52 @@ class TestVerifyCredentials:
 
 class TestIsSafeNext:
     def test_none_is_unsafe(self):
-        assert auth.is_safe_next(None) is False
+        assert shared_auth.is_safe_next(None) is False
 
     def test_empty_string_is_unsafe(self):
-        assert auth.is_safe_next("") is False
+        assert shared_auth.is_safe_next("") is False
 
     def test_relative_path_without_leading_slash_is_unsafe(self):
-        assert auth.is_safe_next("relative") is False
+        assert shared_auth.is_safe_next("relative") is False
 
     def test_protocol_relative_is_unsafe(self):
-        assert auth.is_safe_next("//evil.com") is False
+        assert shared_auth.is_safe_next("//evil.com") is False
 
     def test_backslash_trick_is_unsafe(self):
-        assert auth.is_safe_next("/\\evil.com") is False
+        assert shared_auth.is_safe_next("/\\evil.com") is False
 
     def test_absolute_url_is_unsafe(self):
-        assert auth.is_safe_next("http://evil.com") is False
+        assert shared_auth.is_safe_next("http://evil.com") is False
 
     def test_absolute_https_url_is_unsafe(self):
-        assert auth.is_safe_next("https://evil.com") is False
+        assert shared_auth.is_safe_next("https://evil.com") is False
 
     def test_simple_path_is_safe(self):
-        assert auth.is_safe_next("/inventory") is True
+        assert shared_auth.is_safe_next("/inventory") is True
 
     def test_path_with_query_string_is_safe(self):
-        assert auth.is_safe_next("/records/5?x=1") is True
+        assert shared_auth.is_safe_next("/records/5?x=1") is True
 
     def test_root_path_is_safe(self):
-        assert auth.is_safe_next("/") is True
+        assert shared_auth.is_safe_next("/") is True
 
 
 # --------------------------------------------------------------------------
 # permission_required / authenticated -- against a tiny standalone Flask app
-# (one dummy view each), with the real test users from tests/conftest.py.
+# (one dummy view each), with access tokens issued by the test.
 # --------------------------------------------------------------------------
 
 
 @pytest.fixture
 def guarded_app():
     """A minimal Flask app with one dummy view behind
-    @permission_required("orders.capture") and one behind @authenticated.
+    @permission_required("orders.capture"), one behind @authenticated and one
+    under /api.
 
-    Also registers a stand-in "auth_routes.login" endpoint: auth._redirect_to_login
-    (used for a stale/missing session) builds its redirect with
-    `url_for("auth_routes.login", ...)`, which would otherwise raise
-    BuildError in an app that never registers the real blueprint.
+    Also registers stand-in "auth_routes.login", "auth_api.refresh_continue"
+    and "auth_api.logout_continue" endpoints: app/shared/auth.py builds its
+    redirects with url_for, which would otherwise raise BuildError in an app
+    that never registers the real blueprints.
     """
     app = flask.Flask(__name__)
     app.secret_key = "test-only"
@@ -281,16 +287,32 @@ def guarded_app():
     def login():
         return "login page"
 
-    app.register_blueprint(auth_routes)
+    auth_api = flask.Blueprint("auth_api", __name__, url_prefix="/api/auth")
 
-    @app.get("/capture-only")
-    @auth.permission_required("orders.capture")
+    @auth_api.get("/refresh/continue")
+    def refresh_continue():
+        return "refresh"
+
+    @auth_api.get("/logout/continue")
+    def logout_continue():
+        return "logout"
+
+    app.register_blueprint(auth_routes)
+    app.register_blueprint(auth_api)
+
+    @app.route("/capture-only", methods=["GET", "POST"])
+    @shared_auth.permission_required("orders.capture")
     def capture_only():
         return "ok"
 
     @app.get("/any-user")
-    @auth.authenticated
+    @shared_auth.authenticated
     def any_user():
+        return "ok"
+
+    @app.get("/api/thing")
+    @shared_auth.permission_required("orders.capture")
+    def api_thing():
         return "ok"
 
     return app
@@ -302,118 +324,94 @@ def guarded_client(guarded_app):
         yield c
 
 
-def _log_in_as(client, conn, username):
-    """Put a real `users` row into the client's session, the way POST /login
-    does."""
-    user = repository.get_user_by_username(conn, username)
-    assert user is not None
-    with client.session_transaction() as sess:
-        sess["user"] = user.username
-        sess["user_id"] = user.id
-    return user
+def _location(resp):
+    assert resp.status_code == 302
+    location = urlparse(resp.headers["Location"])
+    return location.path, parse_qs(location.query)
+
+
+def _expired(client, perms=("orders.capture",)):
+    set_access_token(client, 7, "someone", perms, now=utc_now() - timedelta(minutes=6))
 
 
 class TestPermissionRequired:
-    def test_no_session_redirects_to_login(self, guarded_client):
-        resp = guarded_client.get("/capture-only")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
+    def test_no_cookie_redirects_to_login(self, guarded_client):
+        assert _location(guarded_client.get("/capture-only")) == ("/login", {"next": ["/capture-only"]})
 
-    def test_session_without_role_is_accepted(self, guarded_client, db_conn):
-        """The session stores `user` and `user_id` only; the roles come from
-        the database on every request."""
-        user = repository.get_user_by_username(db_conn, "puntoventauser")
-        assert user is not None
-        with guarded_client.session_transaction() as sess:
-            sess["user"] = user.username
-            sess["user_id"] = user.id
+    def test_invalid_token_redirects_to_login(self, guarded_client):
+        guarded_client.set_cookie("access_token", "not-a-jwt", path="/")
+        assert _location(guarded_client.get("/capture-only"))[0] == "/login"
+
+    def test_forged_token_redirects_to_login(self, guarded_client, monkeypatch):
+        """Signed with another secret: InvalidTokenError, not a refresh."""
+        monkeypatch.setenv("JWT_SECRET", "another-secret-at-least-32-bytes-long")
+        set_access_token(guarded_client, 7, "someone", ["orders.capture"])
+        monkeypatch.undo()
+        assert _location(guarded_client.get("/capture-only"))[0] == "/login"
+
+    def test_expired_token_redirects_through_refresh(self, guarded_client):
+        _expired(guarded_client)
+        resp = guarded_client.get("/capture-only?x=1")
+        assert _location(resp) == ("/api/auth/refresh/continue", {"next": ["/capture-only?x=1"]})
+
+    def test_non_get_with_an_expired_token_comes_back_to_root(self, guarded_client):
+        _expired(guarded_client)
+        assert _location(guarded_client.post("/capture-only")) == ("/api/auth/refresh/continue", {"next": ["/"]})
+
+    def test_non_get_without_a_token_comes_back_to_root(self, guarded_client):
+        assert _location(guarded_client.post("/capture-only")) == ("/login", {"next": ["/"]})
+
+    def test_api_path_answers_a_json_401(self, guarded_client):
+        for set_up in (lambda: None, lambda: _expired(guarded_client)):
+            set_up()
+            resp = guarded_client.get("/api/thing")
+            assert resp.status_code == 401
+            assert resp.get_json()["error"]["code"] == "not_authenticated"
+
+    def test_token_with_the_code_is_allowed(self, guarded_client):
+        set_access_token(guarded_client, 7, "someone", ["orders.capture"])
         assert guarded_client.get("/capture-only").status_code == 200
 
-    def test_session_missing_user_id_redirects_to_login(self, guarded_client):
-        """A session predating user_id (role+user but no user_id, e.g. a
-        cookie from before Fase 2) must be treated as stale -- not crash
-        when current_user() reads session['user_id']."""
-        with guarded_client.session_transaction() as sess:
-            sess["user"] = "someone"
-            sess["role"] = "admin"
-        resp = guarded_client.get("/capture-only")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
-
-    def test_user_id_of_no_user_redirects_to_login(self, guarded_client, db_conn):
-        with guarded_client.session_transaction() as sess:
-            sess["user"] = "ghost"
-            sess["user_id"] = 999999
-        resp = guarded_client.get("/capture-only")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
-
-    def test_user_with_the_permission_is_allowed(self, guarded_client, db_conn):
-        _log_in_as(guarded_client, db_conn, "puntoventauser")
-        assert guarded_client.get("/capture-only").status_code == 200
-
-    def test_admin_is_allowed(self, guarded_client, db_conn):
-        _log_in_as(guarded_client, db_conn, "testuser")
-        assert guarded_client.get("/capture-only").status_code == 200
-
-    def test_user_without_the_permission_is_forbidden(self, guarded_client, db_conn):
-        _log_in_as(guarded_client, db_conn, "produccionuser")
+    def test_token_without_the_code_is_forbidden(self, guarded_client):
+        set_access_token(guarded_client, 7, "someone", ["records.view"])
         assert guarded_client.get("/capture-only").status_code == 403
 
-    def test_inactive_user_redirects_to_login_and_clears_the_session(self, guarded_client, db_conn):
-        user = _log_in_as(guarded_client, db_conn, "puntoventauser")
-        repository.update_user(db_conn, user.id, active=False)
-        db_conn.commit()
-        resp = guarded_client.get("/capture-only")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
-        with guarded_client.session_transaction() as sess:
-            assert "user_id" not in sess
+    def test_never_reads_the_database(self, guarded_client, monkeypatch):
+        def no_db(*_args, **_kwargs):
+            raise AssertionError("the access check must not read the database")
 
-    def test_role_change_applies_on_the_next_request(self, guarded_client, db_conn):
-        user = _log_in_as(guarded_client, db_conn, "produccionuser")
-        assert guarded_client.get("/capture-only").status_code == 403
-        repository.set_user_roles(db_conn, user.id, ["point_of_sale"])
-        db_conn.commit()
+        monkeypatch.setattr(db, "get_conn", no_db)
+        set_access_token(guarded_client, 7, "someone", ["orders.capture"])
         assert guarded_client.get("/capture-only").status_code == 200
+
+    def test_exposes_its_codes(self, guarded_app):
+        assert guarded_app.view_functions["capture_only"].required_permissions == ("orders.capture",)
 
 
 class TestAuthenticated:
-    def test_no_session_redirects_to_login(self, guarded_client):
-        resp = guarded_client.get("/any-user")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
+    def test_no_cookie_redirects_to_login(self, guarded_client):
+        assert _location(guarded_client.get("/any-user"))[0] == "/login"
 
-    def test_session_without_role_is_accepted(self, guarded_client, db_conn):
-        user = repository.get_user_by_username(db_conn, "produccionuser")
-        assert user is not None
-        with guarded_client.session_transaction() as sess:
-            sess["user"] = user.username
-            sess["user_id"] = user.id
+    def test_expired_token_redirects_through_refresh(self, guarded_client):
+        _expired(guarded_client)
+        assert _location(guarded_client.get("/any-user"))[0] == "/api/auth/refresh/continue"
+
+    def test_any_token_is_allowed_whatever_its_permissions(self, guarded_client):
+        set_access_token(guarded_client, 7, "someone", [])
         assert guarded_client.get("/any-user").status_code == 200
 
-    def test_session_missing_user_id_redirects_to_login(self, guarded_client):
-        with guarded_client.session_transaction() as sess:
-            sess["user"] = "someone"
-            sess["role"] = "admin"
-        resp = guarded_client.get("/any-user")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
 
-    def test_any_active_user_is_allowed_whatever_their_permissions(self, guarded_client, db_conn):
-        _log_in_as(guarded_client, db_conn, "produccionuser")
-        assert guarded_client.get("/any-user").status_code == 200
-
-    def test_inactive_user_redirects_to_login(self, guarded_client, db_conn):
-        user = _log_in_as(guarded_client, db_conn, "produccionuser")
-        repository.update_user(db_conn, user.id, active=False)
-        db_conn.commit()
-        resp = guarded_client.get("/any-user")
-        assert resp.status_code == 302
-        assert "/login" in resp.headers["Location"]
+class TestCurrentUser:
+    def test_reads_the_token_claims(self, guarded_app):
+        with guarded_app.test_client() as client:
+            set_access_token(client, 7, "someone", ["records.view"])
+            client.get("/any-user")
+            user = shared_auth.current_user()
+            assert user is not None
+            assert (user.user_id, user.username, user.perms) == (7, "someone", ("records.view",))
 
 
 class TestHasPermission:
-    def test_false_with_no_session(self, guarded_app):
+    def test_false_with_no_token(self, guarded_app):
         with guarded_app.test_request_context("/"):
-            assert auth.has_permission("records.view") is False
+            assert shared_auth.has_permission("records.view") is False

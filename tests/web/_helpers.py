@@ -7,10 +7,36 @@ explicitly, e.g. `from tests.web._helpers import make_row, _insert_order`."""
 
 from __future__ import annotations
 
-from datetime import date
+from collections.abc import Iterable
+from datetime import date, datetime, timedelta
 
 from app.orders import repository as orders_repository
 from app.shared.models import ExtractedRow
+from app.shared.timezones import utc_now
+from app.shared.tokens import ACCESS_COOKIE, decode_access_token, issue_access_token
+
+
+def log_in(client, username: str, password: str):
+    """POST /login, which leaves both token cookies on the client."""
+    return client.post("/login", data={"username": username, "password": password})
+
+
+def set_access_token(client, user_id: int, username: str, perms: Iterable[str], now: datetime | None = None) -> str:
+    """Put an access token issued at `now` (default: now) on the client, the
+    way login does. A `now` more than 5 minutes ago gives an expired token."""
+    token = issue_access_token(user_id, username, perms, now or utc_now())
+    client.set_cookie(ACCESS_COOKIE, token, path="/")
+    return token
+
+
+def expire_access_token(client) -> None:
+    """Replace the client's access token with the same claims issued 6
+    minutes ago, as if the user had waited past its 5-minute lifetime: the
+    next page goes through /api/auth/refresh/continue."""
+    cookie = client.get_cookie(ACCESS_COOKIE)
+    assert cookie is not None
+    claims = decode_access_token(cookie.value, utc_now())
+    set_access_token(client, claims.user_id, claims.username, claims.perms, now=utc_now() - timedelta(minutes=6))
 
 
 def make_row(**overrides: object) -> ExtractedRow:

@@ -93,7 +93,7 @@ class TestGetUserByUsername:
         assert repository.get_user_by_username(db_conn, "ghost") is None
 
     def test_returns_inactive_user_too(self, db_conn):
-        """Deactivation is the caller's business rule (app.auth.decorators), not
+        """Deactivation is the caller's business rule (app.auth.login), not
         this lookup's -- it must hand back an inactive row rather than
         hiding it."""
         repository.create_user(db_conn, username="frank", password_hash="hash7", roles=["admin"], active=False)

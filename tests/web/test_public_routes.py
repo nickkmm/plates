@@ -22,6 +22,11 @@ PUBLIC_RULES = {
     "/api/auth/login",
     "/api/auth/refresh",
     "/api/auth/logout",
+    # Jinja-only GET steps of the token login (app/auth/api.py): refresh and
+    # come back to a page, and finish a logout. Without a refresh cookie they
+    # only clear cookies and redirect to /login.
+    "/api/auth/refresh/continue",
+    "/api/auth/logout/continue",
 }
 REFUSED = (302, 401, 403)
 
