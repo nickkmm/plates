@@ -8,6 +8,8 @@ app/shared/auth.py. The Flask session only holds the CSRF token.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
 from app.auth import login as auth_login
@@ -32,9 +34,15 @@ def login_post():
     next_url = request.form.get("next") or ""
     signed_in = auth_login.sign_in(username, password)
     if signed_in is not None:
+        # The same guard as is_safe_next, written out in the shape CodeQL's
+        # py/url-redirection query recognizes as a sanitizer: backslashes
+        # become slashes (browsers read them that way, so "/\\host" turns
+        # into "//host"), then only a path with no scheme and no host passes.
+        next_path = next_url.replace("\\", "/")
+        if next_path.startswith("/") and not urlparse(next_path).netloc and not urlparse(next_path).scheme:
+            return auth_login.set_token_cookies(redirect(next_path), signed_in)
         # The request itself carries no token yet: land by the new permissions.
-        target = next_url if is_safe_next(next_url) else landing_url(signed_in.permissions)
-        return auth_login.set_token_cookies(redirect(target), signed_in)
+        return auth_login.set_token_cookies(redirect(landing_url(signed_in.permissions)), signed_in)
     return (
         render_template(
             "login.html",
