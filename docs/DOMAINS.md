@@ -1,15 +1,15 @@
-# Core (`app/core/`)
+# Domains and shared code
 
 [← back to the index](README.md)
 
-Business logic independent of the web framework — shared between
-`app/web` and the historical Excel migration (`app/migrate.py`). No SQL
-query or business rule should live outside this folder.
+The business rules and SQL of each domain package, independent of the web
+framework — shared between the routes and the historical Excel migration
+(`app/migrate.py`). No SQL query or business rule lives in a route: routes
+call a domain's `service.py` or `repository`.
 
-This page also covers `app/shared/`: code every domain needs and that
+This page covers `app/shared/`: code every domain needs and that
 depends on no domain package — the connection pool (`app/shared/db.py`),
-`models.py`, `normalize.py`, `timezones.py` and `uploads.py`. Those modules
-live there, not in `app/core/`.
+`models.py`, `normalize.py`, `timezones.py` and `uploads.py`.
 
 It also covers the rules and SQL of `app/auth/` (the auth domain): the
 permission catalog (`app/auth/permissions.py`), the users and roles admin
@@ -30,6 +30,13 @@ It also covers the orders domain, `app/orders/`: the ingestion pipeline
 `production_orders`/`plates` SQL (`app/orders/repository/`, a package with
 `orders.py` and `plates.py`). Its routes (`app/orders/routes/`: `ingest.py`,
 `records.py`, `review.py`) are in [`WEB.md`](WEB.md).
+
+It also covers the declarations domain, `app/declarations/`: the submission
+and review rules (`app/declarations/service.py`), the printable PDF
+(`app/declarations/pdf.py`) and the `declarations`/`declaration_cards` SQL
+(`app/declarations/repository.py`). Its routes (`routes.py` for the staff
+screens, `public_routes.py` and `antispam.py` for the public form) are in
+[`WEB.md`](WEB.md).
 
 ## Full ingestion pipeline
 
@@ -211,7 +218,7 @@ to text and passes them to `pdf_extract.parse_pedido_rows` (the same label logic
 
 ## `service.py` (`app/orders/service.py`)
 
-Formerly `ingestion.py` in `app/core/` (and before Phase 1d, `process.py`).
+Formerly `ingestion.py` in the old core package (and before Phase 1d, `process.py`).
 
 The single ingestion backend that all entry points converge on. Given a
 batch of `ExtractedRow`: normalizes, detects duplicates, groups by order,
@@ -305,15 +312,10 @@ concrete case this closes.
   a multi-order batch); `replace_order` is deliberately limited to
   a single `order_number` and cannot span several orders.
 
-## `db/` (package — formerly a single flat `db.py`, split in Phase 1d)
+## Data layer (each domain's repository)
 
-The raw SQL (psycopg 3, no ORM) for `declarations`/`declaration_cards`; the
-rest of the old 556-line file moved to the domain packages:
-
-| Module | What it contains |
-|---|---|
-| `db/__init__.py` | `get_conn()` re-exported from `app/shared/db.py` (see pool below) + explicit re-export of every public function of all the submodules — `db.get_declaration(...)` etc. are still called exactly the same from outside the package. The orders, plates, customers, ownership cards, pricing, inventory and production-status SQL moved to their domain packages (see the table below) and is no longer re-exported here. |
-| `db/declarations.py` (Phase 3 declarations) | Read/write of `declarations` and `declaration_cards` — see details below. |
+The raw SQL (psycopg 3, no ORM) was a single flat `db.py`, split by table in
+Phase 1d and then moved, table by table, into the domain packages.
 
 The SQL for `users`, `user_roles`, `roles`, `role_permissions` and
 `permissions` lives in the auth domain, `app/auth/repository/` (`users.py`
@@ -322,13 +324,15 @@ and `roles.py`, re-exported by its `__init__.py`), and is called as
 
 The SQL for `production_orders`, `plates`, `customers`, `ownership_cards`, `plate_type_prices`,
 `blank_preparations`, `inventory_categories`,
-`production_orders.production_status` and `production_order_events` lives in
-the orders, customers, pricing, inventory and production domains (`app/orders/`,
-`app/customers/`, `app/pricing/`, `app/inventory/`, `app/production/`, each
-with its routes). Code outside a domain calls it through the module, as
+`production_orders.production_status`, `production_order_events`,
+`declarations` and `declaration_cards` lives in
+the orders, customers, pricing, inventory, production and declarations domains (`app/orders/`,
+`app/customers/`, `app/pricing/`, `app/inventory/`, `app/production/`,
+`app/declarations/`, each with its routes). Code outside a domain calls it through the module, as
 `orders_repository.<function>(conn, ...)`, `customers_repository.<function>(conn, ...)`,
-`pricing_repository.<function>(...)`, `inventory_repository.<function>(...)`
-and `production_repository.<function>(...)`; a domain's own `routes.py` and
+`pricing_repository.<function>(...)`, `inventory_repository.<function>(...)`,
+`production_repository.<function>(...)` and
+`declarations_repository.<function>(...)`; a domain's own `routes.py` and
 `service.py` call `repository.<function>(...)`.
 `app/orders/repository/` (`orders.py` and `plates.py`) and
 `app/customers/repository/` (`customers.py` and `ownership_cards.py`) are
@@ -343,6 +347,7 @@ packages, each re-exported by its `__init__.py`.
 | `app/pricing/repository.py` (Phase 2) | CRUD of `plate_type_prices` — see details below. |
 | `app/inventory/repository.py` | `blank_preparations`/`inventory_categories`: `insert_blank_preparation`, `recalc_inventory`, `inventory_view`, `ornamental_count`. |
 | `app/production/repository.py` | `production_orders.production_status`/`production_order_events` — see details below. |
+| `app/declarations/repository.py` (Phase 3 declarations) | Read/write of `declarations` and `declaration_cards` — see details below. |
 
 Connection config from environment variables (`DB_HOST` default `"db"` —
 **never use that default in Docker Compose**, see
@@ -361,8 +366,8 @@ commit, which is precisely the point that a real bug (several functions of
 to light.
 
 **Connection pool (Phase 1d)**: the pool lives in `app/shared/db.py`
-(`_conninfo_kwargs`, `_get_pool`, `get_conn`) and `app/core/db/__init__.py`
-re-exports `get_conn`, so call sites keep using `db.get_conn()`.
+(`_conninfo_kwargs`, `_get_pool`, `get_conn`); call sites import the module
+(`from app.shared import db`) and use `db.get_conn()`.
 `get_conn()` no longer opens a new socket
 on every call — it is a `@contextmanager` that wraps a
 `psycopg_pool.ConnectionPool`, built lazily (only on the
@@ -447,9 +452,9 @@ dependency only points `app.orders` → `app.customers`: `update_customer` has
 to relink a customer's plates, and importing `app.orders` from
 `app.customers` would make a cycle. A `TODO(phase 4)` marks them.
 
-### `db/declarations.py` (Phase 3 declarations)
+### `app/declarations/repository.py` (Phase 3 declarations)
 
-Data layer only; the decision rules are in `app/core/declarations.py`
+Data layer only; the decision rules are in `app/declarations/service.py`
 (below). A declaration has one declarant and several ownership cards
 (`declaration_cards`). Columns, states and alerts: [`DATABASE.md`](DATABASE.md).
 Constants: `STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` and
@@ -476,7 +481,7 @@ Constants: `STATUS_PENDING_REVIEW` / `STATUS_APPROVED` / `STATUS_REJECTED` and
 the most recent `order_date` of a plate with that exact number, **ignoring**
 `is_voided` or `is_plate_annulled` plates; `None` if it was never manufactured.
 
-### `declarations.py` (Phase 3 declarations)
+### `app/declarations/service.py` (Phase 3 declarations)
 
 Business logic without Flask; receives `conn` and never commits/rolls back.
 
@@ -700,7 +705,7 @@ converted only when displayed: `to_bogota` (PDF) and the Jinja filter `bogota`
 (`format_bogota`, on screens). `utc_now()` gives the time as it is stored.
 Business dates (`order_date` and other `DATE` columns) are not converted.
 
-### `declaration_pdf.py` (sworn declaration as PDF)
+### `app/declarations/pdf.py` (sworn declaration as PDF)
 
 Pure function (no Flask or DB) that generates, with `reportlab`, the sworn
 declaration as the customer submitted it, so that —when any reason is
@@ -709,7 +714,7 @@ notary office. The download route calls it; this module does not touch the datab
 
 | Function | What it does |
 |---|---|
-| `build_declaration_pdf(*, declaration, cards, signature_png, issued_at) -> bytes` | Letter-size PDF: INGSE header, number and date, capacity in which the person acts (PROPIETARIO / POSEEDOR / GESTOR), declarant data (from `submitted_data["declarant"]`), one block per ownership card (with each one's owner if GESTOR), the legal texts, section 7 «Autorización de tratamiento de datos personales» (text from `app/core/declarations.py`, acceptance date and `[X] SÍ / [ ] NO` according to `accepts_marketing`; **only** if `accepted_data_policy_at` is not NULL), the declarant's signature (section 8, or «7. FIRMA» with no recorded authorization: earlier declarations are printed the same as before) with their name and document, and a blank box for the notarial authentication. Footer "Declaración N° X — página i de n" on every page; the signature block is not split across pages. If `signature_png` is `None` or cannot be read, the image is omitted and the space is left for signing by hand. |
+| `build_declaration_pdf(*, declaration, cards, signature_png, issued_at) -> bytes` | Letter-size PDF: INGSE header, number and date, capacity in which the person acts (PROPIETARIO / POSEEDOR / GESTOR), declarant data (from `submitted_data["declarant"]`), one block per ownership card (with each one's owner if GESTOR), the legal texts, section 7 «Autorización de tratamiento de datos personales» (text from `app/declarations/service.py`, acceptance date and `[X] SÍ / [ ] NO` according to `accepts_marketing`; **only** if `accepted_data_policy_at` is not NULL), the declarant's signature (section 8, or «7. FIRMA» with no recorded authorization: earlier declarations are printed the same as before) with their name and document, and a blank box for the notarial authentication. Footer "Declaración N° X — página i de n" on every page; the signature block is not split across pages. If `signature_png` is `None` or cannot be read, the image is omitted and the space is left for signing by hand. |
 
 Notes: all user text is escaped (reportlab's `Paragraph`
 interprets markup) and reduced to characters the standard fonts can

@@ -241,8 +241,8 @@ first index outside a PK/UNIQUE — see quirks for both.
 | `received_by` | TEXT | nullable | Who physically received the order — distinct from `customer_id`/`requested_by`. Before Phase 1c, `nombre_recibe`. |
 | `notes` | TEXT | nullable | Before Phase 1c, `observaciones`. |
 | `created_by` | INTEGER | FK → `users(id)`, nullable | The logged-in user who saved the order — distinct from `dispatched_by`/`received_by` (physical delivery data, not who entered it into the system). Before Phase 1c, `creado_por`. |
-| `production_status` | TEXT | NOT NULL DEFAULT `'pending'` | *Added in migration `0016`.* Production status of the order: `pending` → `in_progress` → `ready` → `delivered` (to do, in progress, ready for delivery, delivered). The values are English identifiers, like `user_roles.role`; the Spanish labels are supplied by the web layer. Every new order is born `pending` through the default, without `insert_order` writing it. Orders that already existed when `0016` ran were left as `delivered` (see quirks). Indexed (`production_orders_production_status_idx`). Every change is recorded in `production_order_events`; the rules live in `app/production/service.py` (see [`CORE.md`](CORE.md)). No `CHECK`, like the rest of the schema. |
-| `created_at` | TIMESTAMP | DEFAULT now() | Never used to sort by "recent" (see `recent_orders` in [`CORE.md`](CORE.md)). |
+| `production_status` | TEXT | NOT NULL DEFAULT `'pending'` | *Added in migration `0016`.* Production status of the order: `pending` → `in_progress` → `ready` → `delivered` (to do, in progress, ready for delivery, delivered). The values are English identifiers, like `user_roles.role`; the Spanish labels are supplied by the web layer. Every new order is born `pending` through the default, without `insert_order` writing it. Orders that already existed when `0016` ran were left as `delivered` (see quirks). Indexed (`production_orders_production_status_idx`). Every change is recorded in `production_order_events`; the rules live in `app/production/service.py` (see [`DOMAINS.md`](DOMAINS.md)). No `CHECK`, like the rest of the schema. |
+| `created_at` | TIMESTAMP | DEFAULT now() | Never used to sort by "recent" (see `recent_orders` in [`DOMAINS.md`](DOMAINS.md)). |
 
 ### `plates`
 
@@ -257,7 +257,7 @@ first index outside a PK/UNIQUE — see quirks for both.
 | `material` | TEXT | nullable | Rarely filled in directly — the actual material is derived from `plate_type`. |
 | `prepared_by` | TEXT | nullable | Rarely filled in. |
 | `city` | TEXT | nullable | **Per plate, not per order** — one order may ship to several cities. |
-| `unit_price` | NUMERIC(12,2) | nullable | Snapshot of the price at the moment the plate is saved/edited, taken from `plate_type_prices` but editable — not a live reference to the rate (the exact re-snapshot rule, including the 3 editing cases, lives in `app/orders/repository/plates.py::_resnapshot_unit_price`, see [`CORE.md`](CORE.md)). `NULL` means "no rate captured" — `/cuadre` excludes it from the total and lists it as a warning, never treats it as `0`. |
+| `unit_price` | NUMERIC(12,2) | nullable | Snapshot of the price at the moment the plate is saved/edited, taken from `plate_type_prices` but editable — not a live reference to the rate (the exact re-snapshot rule, including the 3 editing cases, lives in `app/orders/repository/plates.py::_resnapshot_unit_price`, see [`DOMAINS.md`](DOMAINS.md)). `NULL` means "no rate captured" — `/cuadre` excludes it from the total and lists it as a warning, never treats it as `0`. |
 | `reason` | TEXT | nullable | A vehicle/plate datum, not an order one. Expected value: `normalize.REASONS` (`DETERIORO`/`PÉRDIDA`/`OTROS`). Before Phase 1c, this column was called `motivo`. |
 | `vehicle_brand` | TEXT | nullable | A vehicle datum, always entered manually (it is not printed on the order PDF). Before Phase 1c, `marca_vehiculo`. |
 | `ownership_card_id` | INTEGER | FK → `ownership_cards(id)`, nullable | *Added in migration `0008`.* Formal link between the manufactured plate and its **ownership card** (tarjeta de propiedad). It is **automatic and silent**: the app computes it on every insert and edit (`app/orders/repository/plates.py`, rule in `app/customers/repository/ownership_cards.py::resolve_card_id_for_plate`) by comparing `plates.plate_number` with `ownership_cards.plate_number`. It stays `NULL` if there is no card with that plate, if the order belongs to an `EMPRESA` or `TRÁNSITO` customer (they have no ownership card; it is not even attempted), if the plate is a range (`plate_to`), a replacement, is voided (`is_voided` / `is_plate_annulled`) or has no real plate number (`normalize.is_real_plate`). If the customer type is `NULL` it is attempted (it only links if a card with that exact plate exists). A `GESTOR` links plates of its customers' cards: the card is looked up by plate regardless of whose name it is in. It is also recomputed when the customer of an order or the type of a customer changes. Migration `0008` does a one-time, idempotent *backfill* of the already manufactured plates with the same rules (in production there were no cards, so it links nothing). A card created later does **not** link already saved plates backwards; they are linked when edited. |
@@ -557,7 +557,7 @@ lives.
 | `created_at` | TIMESTAMP | DEFAULT now() | |
 | `acting_as` | TEXT | NOT NULL | `normalize.ACTING_AS`: `PROPIETARIO` / `POSEEDOR` / `GESTOR`. |
 | `gestor_id` | INTEGER | FK → `customers(id)` | The declarant when `acting_as` is `GESTOR` (customer of type `GESTOR`). `NULL` in the other cases or while pending. |
-| `status` | TEXT | NOT NULL | `pending_review` / `approved` / `rejected` (no `CHECK`; constants in `app/core/db/declarations.py`). |
+| `status` | TEXT | NOT NULL | `pending_review` / `approved` / `rejected` (no `CHECK`; constants in `app/declarations/repository.py`). |
 | `review_flags` | TEXT[] | NOT NULL DEFAULT `'{}'` | **Union** (without duplicates) of the alerts of all its cards. They are kept on approval. |
 | `reviewed_by` | INTEGER | FK → `users(id)` | Who approved/rejected. |
 | `reviewed_at` | TIMESTAMP | nullable | |
@@ -749,7 +749,7 @@ it as delivered: it predates the production board.
 There can legitimately be **2 or more rows** of `production_orders` with the
 same `order_number` — nothing in the schema or in the old code prevented it.
 `find_orders_by_number()` can return 0, 1, or 2+ rows; the function
-`replace_order()` (see [`CORE.md`](CORE.md)) exists precisely to **merge** all
+`replace_order()` (see [`DOMAINS.md`](DOMAINS.md)) exists precisely to **merge** all
 the matches into a single order when the user explicitly asks for it.
 
 ### `city` lives in `plates`, not in `production_orders`

@@ -200,6 +200,8 @@ recipient signs on the screen with a finger or stylus.
 
 ### Phase 1: reorganize by domain (no behavior change)
 
+Status: done (#117 moved the last domain, declarations, and removed the old core package).
+
 Move files into the domain packages above and fix imports. Each Jinja
 blueprint keeps its URLs and templates. One PR per domain (or a few small
 domains per PR), plus one for `shared/`. The existing test suite is the

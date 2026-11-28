@@ -387,7 +387,7 @@ requirements:
 
 1. **Parity with today.** List every field, action, validation, message,
    permission check and edge case of the current Jinja screen and of its
-   route in `app/web/blueprints/`; each one is present in the new screen or
+   route in its domain package; each one is present in the new screen or
    its removal is a documented decision. Nothing is dropped because the
    prototype did not show it.
 2. **Every state of every component:** empty, loading, error, long text,
