@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.core import db
+from app.orders import repository as orders_repository
 from app.shared.models import ExtractedRow
 
 
@@ -28,7 +28,7 @@ def _insert_order(conn, *, order_number: str, order_date, requested_by: str) -> 
     """Back-compat shim for this file's many "just need an order header to
     exist" setup calls -- see the identical helper (and its full rationale)
     in tests/core/db/_helpers.py."""
-    return db.insert_order(
+    return orders_repository.insert_order(
         conn,
         row=ExtractedRow(order_number=order_number, order_date=order_date, requested_by=requested_by,
                           plate_type="MOTO PARTICULAR"),

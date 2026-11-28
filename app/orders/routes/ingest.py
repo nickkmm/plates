@@ -12,10 +12,11 @@ from app.auth.decorators import permission_required
 from app.core import db
 from app.core.db.declarations import STATUS_APPROVED, STATUS_PENDING_REVIEW, requires_notarization
 from app.core.declarations import ACTING_AS_GESTOR
-from app.core.ingestion import find_duplicate_plate_numbers, process_rows, replace_order
-from app.core.pdf_extract import ParsedPedido, PdfExtractError
-from app.core.pedido_upload import parse_uploaded_pedido
 from app.customers import repository as customers_repository
+from app.orders import repository as orders_repository
+from app.orders.pdf_extract import ParsedPedido, PdfExtractError
+from app.orders.pedido_upload import parse_uploaded_pedido
+from app.orders.service import find_duplicate_plate_numbers, process_rows, replace_order
 from app.pricing import repository as pricing_repository
 from app.shared.models import ExtractedRow
 from app.shared.normalize import (
@@ -380,7 +381,7 @@ def _check_declaration(conn, declaration_id: int | None) -> _DeclarationCheck:
             declaration, error=f"{label} fue rechazada: no se puede crear una orden desde ella.",
         )
     if declaration.production_order_id is not None:
-        order, _ = db.order_detail(conn, declaration.production_order_id)
+        order, _ = orders_repository.order_detail(conn, declaration.production_order_id)
         order_number = order["order_number"] if order else str(declaration.production_order_id)
         return _DeclarationCheck(
             declaration,
@@ -500,7 +501,7 @@ def _mark_declaration_attended(conn, declaration_id: int, order_number: str) -> 
     declaration = db.get_declaration(conn, declaration_id)
     if declaration is None or declaration.production_order_id is not None:
         raise ValueError(f"La declaración #{declaration_id} ya fue atendida por otra orden.")
-    orders = db.find_orders_by_number(conn, order_number)
+    orders = orders_repository.find_orders_by_number(conn, order_number)
     if not orders:
         raise ValueError("No se encontró la orden recién creada para marcar la declaración como atendida.")
     db.set_declaration_production_order(conn, declaration_id, max(o.id for o in orders))
@@ -609,7 +610,7 @@ def ingest_post():
                 # plate check and silently create a second production_orders row
                 # under the same order_number (see replace_order's docstring for
                 # the real WCY449/pedido 1030 case this guards against).
-                order_duplicates = db.find_orders_by_number(conn, rows[0].order_number)
+                order_duplicates = orders_repository.find_orders_by_number(conn, rows[0].order_number)
                 if order_duplicates and not request.form.get("confirm_order_duplicate"):
                     header = _sticky_header_from_form(request.form)
                     lines = _sticky_lines_from_form(request.form)
@@ -620,7 +621,7 @@ def ingest_post():
                     )
                     if dup_plate_numbers and not request.form.get("confirm_duplicate"):
                         duplicates = {
-                            pn: db.find_orders_for_plate(conn, pn) for pn in sorted(dup_plate_numbers)
+                            pn: orders_repository.find_orders_for_plate(conn, pn) for pn in sorted(dup_plate_numbers)
                         }
                         header = _sticky_header_from_form(request.form)
                         lines = _sticky_lines_from_form(request.form)
@@ -691,7 +692,7 @@ def ingest_pdf():
         # previewed, not only after a first failed POST /ingest save attempt.
         # This route never writes to the DB either way.
         order_duplicates = (
-            db.find_orders_by_number(conn, pedido.order_number) if pedido.order_number else []
+            orders_repository.find_orders_by_number(conn, pedido.order_number) if pedido.order_number else []
         )
         context = _form_context(conn)
     return render_template(

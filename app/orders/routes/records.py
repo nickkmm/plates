@@ -7,11 +7,12 @@ from flask import Blueprint, current_app, redirect, render_template, request, se
 
 from app.auth.decorators import permission_required
 from app.core import db
-from app.core.ingestion import find_duplicate_plate_numbers
-from app.core.pdf_extract import PdfExtractError
-from app.core.pedido_upload import parse_uploaded_pedido
 from app.customers import repository as customers_repository
 from app.inventory import repository as inventory_repository
+from app.orders import repository as orders_repository
+from app.orders.pdf_extract import PdfExtractError
+from app.orders.pedido_upload import parse_uploaded_pedido
+from app.orders.service import find_duplicate_plate_numbers
 from app.pricing import repository as pricing_repository
 from app.production import repository as production_repository
 from app.shared.models import ExtractedRow
@@ -70,7 +71,7 @@ def _edit_rows_from_form(form, *, order_number: str, order_date: str, requested_
 
     order_level_fields (Fase 3) is stamped onto every row's ExtractedRow,
     same as order_number/order_date/requested_by -- it's only actually
-    WRITTEN via db.update_order (once, at the order level), never re-read off
+    WRITTEN via orders_repository.update_order (once, at the order level), never re-read off
     these per-row copies, but ExtractedRow needs a value for every field
     regardless of which layer ultimately uses it. reason/vehicle_brand/
     unit_price are genuinely per-line -- read straight off each row's own
@@ -119,13 +120,13 @@ def records():
     query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
         if query:
-            results = db.search_plates_by_number(conn, query)
-            order_matches = db.search_orders_by_number(conn, query)
+            results = orders_repository.search_plates_by_number(conn, query)
+            order_matches = orders_repository.search_orders_by_number(conn, query)
             rows = None
         else:
             results = None
             order_matches = None
-            rows = db.recent_orders(conn)
+            rows = orders_repository.recent_orders(conn)
     return render_template("records.html", rows=rows, query=query, results=results,
                            order_matches=order_matches, pdf_results=None)
 
@@ -146,7 +147,7 @@ def record_detail(order_id):
     # instead of always landing on the unfiltered recent-orders list.
     back_query = (request.args.get("q") or "").strip()
     with db.get_conn() as conn:
-        order, plates = db.order_detail(conn, order_id)
+        order, plates = orders_repository.order_detail(conn, order_id)
         requesters, cities = _options(conn)
         prices = {pt: str(price) for pt, price in pricing_repository.current_prices(conn).items()}
         production_status = production_repository.get_production_status(conn, order_id)
@@ -164,7 +165,7 @@ def _record_detail_error(order_id: int, error: str):
     """Re-render the Registro detail page with a validation error, instead of
     losing the person's edits on a bad plate number. Shared by record_save."""
     with db.get_conn() as conn:
-        order, plates = db.order_detail(conn, order_id)
+        order, plates = orders_repository.order_detail(conn, order_id)
         requesters, cities = _options(conn)
         prices = {pt: str(price) for pt, price in pricing_repository.current_prices(conn).items()}
         production_status = production_repository.get_production_status(conn, order_id)
@@ -205,30 +206,30 @@ def record_save(order_id):
                                      order_date=order_date, requested_by=requested_by,
                                      order_voided=order_voided, order_level_fields=order_level_fields)
         with db.get_conn() as conn:
-            existing_order, existing_plates = db.order_detail(conn, order_id)
+            existing_order, existing_plates = orders_repository.order_detail(conn, order_id)
             if not existing_order:
                 return redirect(url_for("records.records"))
 
             customer_id = customers_repository.resolve_or_create_customer(conn, requested_by)
-            db.update_order(conn, order_id, order_number=order_number,
+            orders_repository.update_order(conn, order_id, order_number=order_number,
                             order_date=order_date, requested_by=requested_by,
                             customer_id=customer_id, **order_level_fields)
 
             submitted_ids = {pid for pid, _row in edits if pid is not None}
             existing_ids = {p["id"] for p in existing_plates}
             for removed_id in existing_ids - submitted_ids:
-                db.delete_plate(conn, removed_id)
+                orders_repository.delete_plate(conn, removed_id)
 
             # Snapshot once for the whole save -- only actually used as a
             # fallback for a brand-new row left without an explicit price
-            # (mirrors app.core.ingestion._snapshot_unit_price; an edited
+            # (mirrors app.orders.service._snapshot_unit_price; an edited
             # EXISTING plate never consults this at all, see update_plate_full).
             prices = pricing_repository.current_prices(conn)
 
             for plate_id, row in edits:
                 normalized = normalize_row(row)
                 if plate_id is not None:
-                    db.update_plate_full(
+                    orders_repository.update_plate_full(
                         conn, plate_id, plate_type=normalized.plate_type,
                         plate_number=normalized.plate_number, plate_to=normalized.plate_to,
                         city=normalized.city, quantity=normalized.quantity,
@@ -242,13 +243,13 @@ def record_save(order_id):
                             update={"unit_price": prices.get(normalized.plate_type)}
                         )
                     # Route this through ingestion.py's own duplicate-detection helper
-                    # instead of querying db.existing_plate_numbers directly -- no SQL
+                    # instead of querying orders_repository.existing_plate_numbers directly -- no SQL
                     # query or business rule should live outside app/core/ (docs/CORE.md),
                     # and duplicating the is_real_plate/is_voided filter inline here risked
                     # drifting from process_rows'/replace_order's actual definition of
                     # "possible duplicate".
                     is_dup = normalized.plate_number in find_duplicate_plate_numbers(conn, [row])
-                    db.insert_plate(conn, order_id=order_id, row=normalized, is_possible_duplicate=is_dup)
+                    orders_repository.insert_plate(conn, order_id=order_id, row=normalized, is_possible_duplicate=is_dup)
 
             inventory_repository.recalc_inventory(conn)
             conn.commit()
@@ -294,7 +295,7 @@ def records_search_pdf():
 
     with db.get_conn() as conn:
         pdf_results = [
-            {"plate_number": pn, "matches": db.find_orders_for_plate(conn, pn)}
+            {"plate_number": pn, "matches": orders_repository.find_orders_for_plate(conn, pn)}
             for pn in candidates
         ]
     return render_template("records.html", rows=None, query=None,
@@ -305,7 +306,7 @@ def records_search_pdf():
 @permission_required("records.delete")
 def records_delete():
     with db.get_conn() as conn:
-        db.delete_order(conn, int(request.form["order_id"]))
+        orders_repository.delete_order(conn, int(request.form["order_id"]))
         inventory_repository.recalc_inventory(conn)  # removing plates changes consumed/waste
         conn.commit()
     return redirect(url_for("records.records"))

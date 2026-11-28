@@ -1,4 +1,4 @@
-"""Unit tests for app.core.xlsx_extract / pedido_upload -- no DB, no Flask.
+"""Unit tests for app.orders.xlsx_extract / pedido_upload -- no DB, no Flask.
 
 The .xlsx files are generated on the fly from the same cell grid the PDF
 fixtures use, so every pedido here exists in both formats.
@@ -13,10 +13,10 @@ from datetime import date, datetime
 import openpyxl
 import pytest
 
-from app.core import xlsx_extract
-from app.core.pdf_extract import PdfExtractError, parse_pedido_pdf
-from app.core.pedido_upload import parse_uploaded_pedido
-from app.core.xlsx_extract import parse_pedido_xlsx
+from app.orders import xlsx_extract
+from app.orders.pdf_extract import PdfExtractError, parse_pedido_pdf
+from app.orders.pedido_upload import parse_uploaded_pedido
+from app.orders.xlsx_extract import parse_pedido_xlsx
 from tests.pdf_fixtures import build_pedido_pdf, build_pedido_xlsx
 
 FULL = {

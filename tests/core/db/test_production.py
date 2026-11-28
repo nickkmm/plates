@@ -12,6 +12,7 @@ from psycopg.rows import tuple_row
 
 from app.auth import repository
 from app.core import db
+from app.orders import repository as orders_repository
 from app.production import repository as production_repository
 from tests.conftest import TEST_USERNAME
 from tests.core.db._helpers import _insert_order, make_row
@@ -23,7 +24,7 @@ def _order(db_conn, order_number: str, order_date: date = date(2026, 1, 1), *, s
     kwargs), then force its production_status when one is given."""
     order_id = _insert_order(db_conn, order_number=order_number, order_date=order_date, requested_by="PEDRO")
     for plate in plates:
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(**plate), is_possible_duplicate=False)
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(**plate), is_possible_duplicate=False)
     if status is not None:
         with db_conn.cursor() as cur:
             cur.execute("UPDATE production_orders SET production_status = %s WHERE id = %s", (status, order_id))

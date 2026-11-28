@@ -11,7 +11,7 @@ section for the full reasoning behind each rule:
 - Decimal end to end, never float.
 - render_cash_summary_pdf produces a real, non-empty PDF.
 
-Uses db.insert_order/db.insert_plate directly (bypassing app.core.ingestion),
+Uses orders_repository.insert_order/orders_repository.insert_plate directly (bypassing app.orders.service),
 same convention as tests/core/db/ -- a failure here should point at
 cash_summary.py's aggregation, not at ingestion or normalization.
 """
@@ -25,12 +25,12 @@ from decimal import Decimal
 import pdfplumber
 import pytest
 
-from app.core import db
 from app.cash_summary.service import (
     MISSING_PAYMENT_METHOD_LABEL,
     build_cash_summary,
     render_cash_summary_pdf,
 )
+from app.orders import repository as orders_repository
 from app.shared.models import ExtractedRow
 
 
@@ -47,12 +47,12 @@ def _make_row(**overrides: object) -> ExtractedRow:
 
 def _insert_order(conn, **overrides: object) -> int:
     row = _make_row(**overrides)
-    return db.insert_order(conn, row=row, customer_id=None, created_by=None)
+    return orders_repository.insert_order(conn, row=row, customer_id=None, created_by=None)
 
 
 def _insert_plate(conn, order_id: int, **overrides: object) -> None:
     row = _make_row(**overrides)
-    db.insert_plate(conn, order_id=order_id, row=row, is_possible_duplicate=False)
+    orders_repository.insert_plate(conn, order_id=order_id, row=row, is_possible_duplicate=False)
 
 
 class TestGrouping:

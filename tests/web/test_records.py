@@ -1,4 +1,4 @@
-"""Integration tests for app/web/blueprints/records.py -- GET /records (the
+"""Integration tests for app/orders/routes/records.py -- GET /records (the
 recent-orders list plus its plate-number/order-number search), GET
 /records/<id> (order detail), POST /records/<id>/save (header + line-
 item edits, including the Fase 3 POS fields -- see
@@ -21,6 +21,7 @@ from psycopg.rows import tuple_row
 from app.core import db
 from app.customers import repository as customers_repository
 from app.inventory import repository as inventory_repository
+from app.orders import repository as orders_repository
 from app.pricing import repository as pricing_repository
 from tests.web._helpers import _insert_order, make_row
 
@@ -49,7 +50,7 @@ class TestRecordsRoute:
         not a client-side filter of the 50 recent rows."""
         order_id = _insert_order(db_conn, order_number="2601", order_date=date(2020, 1, 1),
                                     requested_by="OLD CLIENT")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SRC123"),
                          is_possible_duplicate=False)
         db_conn.commit()
@@ -71,7 +72,7 @@ class TestRecordsRoute:
         still surface that order, via the new order_matches section."""
         order_id = _insert_order(db_conn, order_number="OLD-2603", order_date=date(2019, 1, 1),
                                     requested_by="OLD CLIENT 2")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="NOMATCH1"),
                          is_possible_duplicate=False)
         db_conn.commit()
@@ -92,7 +93,7 @@ class TestRecordsRoute:
         existing plate-search behavior when a query only matches a plate."""
         order_id = _insert_order(db_conn, order_number="2604", order_date=date(2020, 1, 1),
                                     requested_by="OLD CLIENT 3")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="PLT999"),
                          is_possible_duplicate=False)
         db_conn.commit()
@@ -110,7 +111,7 @@ class TestRecordsRoute:
     ):
         order_id = _insert_order(db_conn, order_number="2605", order_date=date(2021, 1, 1),
                                     requested_by="BOTH CLIENT")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="ABC2605"),
                          is_possible_duplicate=False)
         db_conn.commit()
@@ -138,7 +139,7 @@ class TestRecordsRoute:
         this same search instead of always landing on the unfiltered list."""
         order_id = _insert_order(db_conn, order_number="2606", order_date=date(2021, 1, 1),
                                     requested_by="LINK CLIENT")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="LNK606"),
                          is_possible_duplicate=False)
         db_conn.commit()
@@ -172,7 +173,7 @@ class TestRecordDetailRoute:
     def test_existing_order_renders_its_plates(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="2700", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DET111", quantity=2),
                          is_possible_duplicate=False)
         db_conn.commit()
@@ -212,7 +213,7 @@ class TestRecordDetailRoute:
         offers editing rather than just read-only display."""
         order_id = _insert_order(db_conn, order_number="2701", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="EDT111", quantity=2),
                          is_possible_duplicate=False)
         db_conn.commit()
@@ -241,7 +242,7 @@ class TestRecordSaveRoute:
     def test_updates_the_order_header(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="3000", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV100", quantity=1),
                          is_possible_duplicate=False)
         with db_conn.cursor(row_factory=tuple_row) as cur:
@@ -268,7 +269,7 @@ class TestRecordSaveRoute:
     def test_successful_save_is_logged(self, authenticated_client, db_conn, caplog):
         order_id = _insert_order(db_conn, order_number="3002", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV300", quantity=1),
                          is_possible_duplicate=False)
         with db_conn.cursor(row_factory=tuple_row) as cur:
@@ -291,7 +292,7 @@ class TestRecordSaveRoute:
     def test_edits_an_existing_plate_in_place(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="3001", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV200", quantity=1),
                          is_possible_duplicate=True)
         with db_conn.cursor(row_factory=tuple_row) as cur:
@@ -324,10 +325,10 @@ class TestRecordSaveRoute:
         (the plate was made, then the order got voided after the fact)."""
         order_id = _insert_order(db_conn, order_number="3002", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV300", quantity=1),
                          is_possible_duplicate=False)
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV301", quantity=1),
                          is_possible_duplicate=False)
         with db_conn.cursor(row_factory=tuple_row) as cur:
@@ -356,7 +357,7 @@ class TestRecordSaveRoute:
         from the order's actual plates -- not just remembered from the form."""
         order_id = _insert_order(db_conn, order_number="3002b", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV302",
                                       quantity=1, is_voided=True),
                          is_possible_duplicate=False)
@@ -369,7 +370,7 @@ class TestRecordSaveRoute:
     def test_adds_a_new_plate_row_in_the_same_submit(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="3003", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV400", quantity=1),
                          is_possible_duplicate=False)
         with db_conn.cursor(row_factory=tuple_row) as cur:
@@ -398,10 +399,10 @@ class TestRecordSaveRoute:
         simply absent from the next save."""
         order_id = _insert_order(db_conn, order_number="3004", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV500", quantity=1),
                          is_possible_duplicate=False)
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV600", quantity=1),
                          is_possible_duplicate=False)
         with db_conn.cursor(row_factory=tuple_row) as cur:
@@ -424,7 +425,7 @@ class TestRecordSaveRoute:
     def test_removing_every_row_deletes_all_plates_but_keeps_the_order(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="3005", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV700", quantity=1),
                          is_possible_duplicate=False)
         db_conn.commit()
@@ -444,7 +445,7 @@ class TestRecordSaveRoute:
 
     def test_new_row_is_flagged_a_possible_duplicate_against_a_live_plate(self, authenticated_client, db_conn):
         _insert_order(db_conn, order_number="3006", order_date=date(2026, 1, 1), requested_by="PEDRO")
-        db.insert_plate(
+        orders_repository.insert_plate(
             db_conn,
             order_id=_insert_order(db_conn, order_number="3007", order_date=date(2026, 1, 1),
                                       requested_by="PEDRO"),
@@ -490,7 +491,7 @@ class TestRecordSaveRoute:
     def test_invalid_plate_number_rerenders_with_error_and_saves_nothing(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="3010", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="SAV111", quantity=1),
                          is_possible_duplicate=False)
         db_conn.commit()
@@ -615,7 +616,7 @@ class TestRecordSavePosFields:
     def test_edits_reason_and_vehicle_brand_on_an_existing_plate(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="3103", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RVB100"),
                          is_possible_duplicate=False)
         with db_conn.cursor(row_factory=tuple_row) as cur:
@@ -644,7 +645,7 @@ class TestRecordSavePosFields:
         the re-snapshot rule (plate_type changed or not) governs it."""
         order_id = _insert_order(db_conn, order_number="3104", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="NOP100",
                                       unit_price=Decimal("150000")),
                          is_possible_duplicate=False)
@@ -690,7 +691,7 @@ class TestRecordsDeleteRoute:
     def test_deletes_order_and_its_plates_and_redirects(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="2800", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD111", quantity=8),
                          is_possible_duplicate=False)
         db_conn.commit()
@@ -715,12 +716,12 @@ class TestRecordsDeleteRoute:
                                      quantity=100, prepared_by=None)
         keep_order = _insert_order(db_conn, order_number="2801", order_date=date(2026, 1, 1),
                                       requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=keep_order,
+        orders_repository.insert_plate(db_conn, order_id=keep_order,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD200", quantity=3),
                          is_possible_duplicate=False)
         delete_order = _insert_order(db_conn, order_number="2802", order_date=date(2026, 1, 1),
                                         requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=delete_order,
+        orders_repository.insert_plate(db_conn, order_id=delete_order,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="RD201", quantity=8),
                          is_possible_duplicate=False)
         inventory_repository.recalc_inventory(db_conn)
@@ -747,7 +748,7 @@ class TestRecordOwnershipCardLink:
                                                              plate_number="CRD123")
         order_id = _insert_order(db_conn, order_number="3900", order_date=date(2026, 1, 1),
                                  requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                         row=make_row(plate_type="CARRO PARTICULAR", plate_number=number),
                         is_possible_duplicate=False)
         with db_conn.cursor(row_factory=tuple_row) as cur:

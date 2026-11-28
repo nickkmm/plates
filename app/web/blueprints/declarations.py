@@ -82,6 +82,7 @@ from app.core.db.declarations import (
 )
 from app.core.declaration_pdf import build_declaration_pdf
 from app.customers import repository as customers_repository
+from app.orders import repository as orders_repository
 from app.production import repository as production_repository
 from app.shared.normalize import clean_plate, normalize_requested_by
 from app.shared.timezones import utc_now
@@ -222,14 +223,14 @@ def _flag_details(
         lines: list[str] = []
         if flag == FLAG_PLATE_MADE_RECENTLY:
             title = "La placa se fabricó hace menos de 6 meses"
-            last = db.last_fabrication_date(conn, plate)
+            last = orders_repository.last_fabrication_date(conn, plate)
             if last is not None:
                 again = last + relativedelta(months=decl.MIN_MONTHS_BETWEEN_PLATES)
                 lines.append(f"Placa {plate}: última fabricación el {_fmt_date(last)}.")
                 lines.append(f"Podría fabricarse de nuevo a partir del {_fmt_date(again)}.")
             else:
                 lines.append(f"Placa {plate}: ya no hay una fabricación vigente registrada.")
-            for order in db.find_orders_for_plate(conn, plate):
+            for order in orders_repository.find_orders_for_plate(conn, plate):
                 lines.append(
                     f"Orden {order['order_number']} del {_fmt_date(order['order_date'])} "
                     f"({order['requested_by']})."
@@ -304,7 +305,7 @@ def _render_detail(
         attended_order: dict[str, Any] | None = None
         production_status: str | None = None
         if declaration.production_order_id is not None:
-            attended_order, _plates = db.order_detail(conn, declaration.production_order_id)
+            attended_order, _plates = orders_repository.order_detail(conn, declaration.production_order_id)
             production_status = production_repository.get_production_status(conn, declaration.production_order_id)
         needs_notary = declaration.status == STATUS_APPROVED and requires_notarization(card_records)
         received_user = (

@@ -8,7 +8,7 @@ Status: **proposal**, decisions taken with the owner in November 2026 (see
 Recurring customers (*tramitadores* / gestores, companies, transit offices)
 send their plates to INGSE by email, on INGSE's fixed-format *pedido* form
 (PDF or Excel). That form is the reason the point of sale can read pedido
-files: `app/core/pdf_extract.py` and `app/core/xlsx_extract.py` exist only
+files: `app/orders/pdf_extract.py` and `app/orders/xlsx_extract.py` exist only
 to turn those emails into an order. Staff still download each attachment,
 upload it, check it and save it, and the customer has no way to see where
 an order is.

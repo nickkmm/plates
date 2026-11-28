@@ -253,10 +253,10 @@ The NT sequence must continue without gaps or duplicates, so a Postgres
   not cut over yet → error "Falta configurar el último número de NT".
 - **Where the number is assigned:** only in the point-of-sale order-create
   service (`POST /api/orders`; today POST `/ingest`,
-  `app/web/blueprints/ingest.py:540`), right before
+  `app/orders/routes/ingest.py`), right before
   `insert_order`, as the **last** statement before it so the row lock is held
   briefly. Never in `process_rows` (it groups rows by `order_number` and can
-  create several orders per call, `app/core/ingestion.py:226-234`) and never
+  create several orders per call, `app/orders/service.py`) and never
   in `app/migrate.py` (historic import, `migrate.py:232,252`), which keep
   using the numbers they are given.
   - With the flag on, the create endpoint makes exactly one order per request and
@@ -398,21 +398,21 @@ moment. The rule is **not** "no edits": it is "the journal must not change".
 - Every path that changes plates or orders calls it (in the `orders`
   service, not per route):
   - order update, `PUT /api/orders/{id}` (today `record_save`,
-    `app/web/blueprints/records.py:177`);
+    `app/orders/routes/records.py`);
   - plate update, `PATCH /api/plates/{id}` (today `/review/update`,
-    `app/web/blueprints/review.py:24-37`, changes `plate_type`, `quantity`,
-    `is_voided` through `db.update_plate`);
+    `app/orders/routes/review.py`, changes `plate_type`, `quantity`,
+    `is_voided` through `orders_repository.update_plate`);
   - plate delete, `DELETE /api/plates/{id}` (today `/review/delete`,
-    `review.py:50-56`).
+    `review.py`).
 - `order_number` is **read-only for any order with a transfer row** (any
   status: retries reuse `siigo_transfers.number`). With the flag on,
-  `record_save` (`records.py:192,209`) also rejects setting a numeric
+  `record_save` (`records.py`) also rejects setting a numeric
   `order_number` above the cutover number on any other order, so old orders
   cannot be renumbered into the new range.
-- `replace_order` (`app/core/ingestion.py:254`) deletes and recreates the
+- `replace_order` (`app/orders/service.py`) deletes and recreates the
   order with a new id: forbidden for an order with any `siigo_transfers` row
   (checked first, Spanish message).
-- Delete (`/records/delete`, `records.py:302-307`, and `replace_order`): the
+- Delete (`/records/delete`, `records.py`, and `replace_order`): the
   orders service checks the transfer **before** deleting and shows a Spanish
   message; the FK `ON DELETE RESTRICT` is only a backstop (today
   `records_delete` has no try/except, so an FK error would be a 500).
@@ -437,7 +437,7 @@ With `SIIGO_TRANSFERS_ENABLED`:
 
 - Next.js point of sale: the order-number field becomes read-only text
   "Se asigna al guardar"; the `POST /api/orders` schema stops requiring it
-  (today `_rows_from_form`, `app/web/blueprints/ingest.py:93`). The number
+  (today `_rows_from_form`, `app/orders/routes/ingest.py`). The number
   shown after saving is the assigned one.
 - Customer portal pedidos (`docs/CUSTOMER_PORTAL.md`) become orders only
   through the point of sale, so they get the assigned number, the transfer

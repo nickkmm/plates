@@ -88,6 +88,10 @@ plates is the internal plate-production and point-of-sale app for INGSE
   (`repository`); `app/production/` and `app/cash_summary/` also hold a
   `service.py` for the business rules. Their templates stay in
   `app/web/templates/`.
+- `app/orders/`: the point of sale, records and duplicates review
+  (`routes/`: `ingest.py`, `records.py`, `review.py`), the ingestion pipeline
+  (`service.py`), the pedido parsers (`pdf_extract.py`, `xlsx_extract.py`,
+  `pedido_upload.py`) and the orders and plates SQL (`repository/`).
 - CSRF: every `method="post"` form and every JS request that changes data
   must carry the CSRF token (`csrf_token()` field or `X-CSRFToken` header);
   see `docs/WEB.md`, "CSRF protection".

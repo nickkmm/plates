@@ -37,7 +37,7 @@ from psycopg.types.json import Jsonb
 
 from app import schema_migrate
 from app.auth.permissions import PERMISSIONS
-from app.core import db
+from app.orders import repository as orders_repository
 from app.shared.models import ExtractedRow
 from app.shared.normalize import INVENTORY_CATEGORIES, PLATE_TYPES
 
@@ -435,7 +435,7 @@ class TestApplySqlMigrations:
 
     def test_0016_production_status_backfills_old_orders_as_delivered_and_new_ones_pending(self, db_conn):
         """An order that exists when 0016 runs becomes delivered; one inserted
-        afterwards through db.insert_order starts pending; a second apply
+        afterwards through orders_repository.insert_order starts pending; a second apply
         changes neither."""
 
         def status(order_id: int) -> str:
@@ -453,7 +453,7 @@ class TestApplySqlMigrations:
             cur.execute(_0016_SQL)
         assert status(old_id) == "delivered"
 
-        new_id = db.insert_order(
+        new_id = orders_repository.insert_order(
             db_conn,
             row=ExtractedRow(order_number="1601", order_date=date(2026, 1, 2), requested_by="PEDRO",
                              plate_type="CARRO PARTICULAR"),

@@ -13,8 +13,8 @@ from urllib.parse import urlparse
 
 from psycopg.rows import tuple_row
 
-from app.core.pdf_extract import parse_pedido_pdf
-from app.web.blueprints.ingest import _STICKY_HEADER_FIELDS, _form_from_pedido, _sticky_header_from_form
+from app.orders.pdf_extract import parse_pedido_pdf
+from app.orders.routes.ingest import _STICKY_HEADER_FIELDS, _form_from_pedido, _sticky_header_from_form
 from tests.pdf_fixtures import build_pdf_without_table, build_pedido_pdf, build_pedido_xlsx
 
 
@@ -131,7 +131,7 @@ class TestParsedReview:
         def boom(*args, **kwargs):
             raise AssertionError("process_rows must not run during the PDF review step")
 
-        monkeypatch.setattr("app.web.blueprints.ingest.process_rows", boom)
+        monkeypatch.setattr("app.orders.routes.ingest.process_rows", boom)
 
         resp = upload(authenticated_client, build_pedido_pdf())
         assert resp.status_code == 200
@@ -409,9 +409,9 @@ class TestExcelUpload:
     def test_an_existing_order_number_is_flagged_right_away(self, authenticated_client, db_conn):
         from datetime import date
 
-        from app.core import db
+        from app.orders import repository as orders_repository
         from app.shared.models import ExtractedRow
-        db.insert_order(
+        orders_repository.insert_order(
             db_conn,
             row=ExtractedRow(order_number="9001", order_date=date(2026, 1, 1), requested_by="OTRO",
                               plate_type="MOTO PARTICULAR"),

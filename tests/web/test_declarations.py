@@ -45,6 +45,7 @@ from app.auth import repository
 from app.core import db
 from app.core import declarations as decl
 from app.customers import repository as customers_repository
+from app.orders import repository as orders_repository
 from app.shared.models import ExtractedRow
 from app.shared.timezones import utc_now
 from tests.conftest import PUNTO_VENTA_USERNAME, TEST_USERNAME
@@ -116,7 +117,7 @@ def _make_order(db_conn, order_number: str = "7001") -> int:
         order_number=order_number, order_date=date(2026, 9, 2), requested_by="MARIA LOPEZ",
         plate_type="CARRO PARTICULAR",
     )
-    return db.insert_order(db_conn, row=row, customer_id=None, created_by=None)
+    return orders_repository.insert_order(db_conn, row=row, customer_id=None, created_by=None)
 
 
 def _submit_approved(db_conn, inp=None) -> int:

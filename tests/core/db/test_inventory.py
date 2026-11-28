@@ -4,14 +4,14 @@ ornamental_count.
 Needs a real Postgres connection (see tests/conftest.py's
 `db_conn`/`clean_db`). Setup here calls db.py's own
 insert_order/insert_plate directly -- deliberately bypassing
-app.core.ingestion and app.shared.normalize."""
+app.orders.service and app.shared.normalize."""
 
 from __future__ import annotations
 
 from datetime import date
 
-from app.core import db
 from app.inventory import repository as inventory_repository
+from app.orders import repository as orders_repository
 from app.shared.normalize import INVENTORY_CATEGORIES
 from tests.core.db._helpers import _insert_order, make_row
 
@@ -22,7 +22,7 @@ class TestInventoryView:
                                      quantity=100, prepared_by="GILMER")
         order_id = _insert_order(db_conn, order_number="1", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="CARRO PARTICULAR", quantity=30),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="CARRO PARTICULAR", quantity=30),
                          is_possible_duplicate=False)
         inventory_repository.recalc_inventory(db_conn)
 
@@ -37,10 +37,10 @@ class TestInventoryView:
                                      quantity=50, prepared_by=None)
         order_id = _insert_order(db_conn, order_number="2", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="MOTO PARTICULAR", quantity=5, is_plate_annulled=True),
                          is_possible_duplicate=False)
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="MOTO PARTICULAR", quantity=10, is_plate_annulled=False),
                          is_possible_duplicate=False)
         inventory_repository.recalc_inventory(db_conn)
@@ -76,16 +76,16 @@ class TestOrnamentalCount:
     def test_sums_quantity_across_plates(self, db_conn):
         order_id = _insert_order(db_conn, order_number="1", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="ORNAMENTAL", quantity=4),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="ORNAMENTAL", quantity=4),
                          is_possible_duplicate=False)
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="ORNAMENTAL", quantity=6),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="ORNAMENTAL", quantity=6),
                          is_possible_duplicate=False)
         assert inventory_repository.ornamental_count(db_conn) == 10
 
     def test_excludes_voided_plates(self, db_conn):
         order_id = _insert_order(db_conn, order_number="1", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="ORNAMENTAL", quantity=4, is_voided=True),
                          is_possible_duplicate=False)
         assert inventory_repository.ornamental_count(db_conn) == 0
@@ -93,7 +93,7 @@ class TestOrnamentalCount:
     def test_non_ornamental_plates_not_counted(self, db_conn):
         order_id = _insert_order(db_conn, order_number="1", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="CARRO PARTICULAR", quantity=9),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_type="CARRO PARTICULAR", quantity=9),
                          is_possible_duplicate=False)
         assert inventory_repository.ornamental_count(db_conn) == 0
 

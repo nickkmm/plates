@@ -13,7 +13,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import DictRow, class_row
 
-from app.core.db.plates import relink_plates
+from app.customers.repository.ownership_cards import relink_plates
 from app.shared.models import ExtractedRow
 
 
@@ -307,7 +307,7 @@ def find_orders_by_number(conn: psycopg.Connection[DictRow], order_number: str) 
     order_number has no unique constraint in the schema, and historically
     nothing ever checked for a collision here (only plate_number dedup did),
     so 0, 1, or even 2+ rows are all possible results -- no LIMIT needed. See
-    app.core.ingestion.replace_order, which fuses every match this returns into
+    app.orders.service.replace_order, which fuses every match this returns into
     exactly one order.
     """
     with conn.cursor(row_factory=class_row(OrderSummary)) as cur:

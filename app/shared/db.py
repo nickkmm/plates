@@ -17,7 +17,7 @@ calls it is the one that opened the connection (`with db.get_conn() as conn:
 `conn` explicitly, instead of hiding it behind an interface, keeps visible in
 every function's signature who actually owns the commit -- see
 docs/CORE.md's "Contrato de transacción" for the real bug (several functions
-in app/core/ingestion.py each opening their own connection) that made this
+in app/orders/service.py each opening their own connection) that made this
 worth writing down instead of leaving implicit.
 
 **Connection pooling** (Fase 1d): `get_conn()` is a `@contextmanager`

@@ -22,6 +22,7 @@ from decimal import Decimal
 import pytest
 
 from app.core import db
+from app.orders import repository as orders_repository
 from app.production import repository as production_repository
 from tests.core.test_declarations import _count
 from tests.web._helpers import make_row
@@ -49,8 +50,8 @@ def _order(db_conn, order_number: str = "8001", plate_number: str = "ABC123") ->
         plate_number=plate_number, unit_price=Decimal("1954000"), payment_method="EFECTIVO",
         receipt_type="FACTURA", receipt_number="R-555",
     )
-    order_id = db.insert_order(db_conn, row=row, customer_id=None, created_by=None)
-    db.insert_plate(db_conn, order_id=order_id, row=row, is_possible_duplicate=False)
+    order_id = orders_repository.insert_order(db_conn, row=row, customer_id=None, created_by=None)
+    orders_repository.insert_plate(db_conn, order_id=order_id, row=row, is_possible_duplicate=False)
     return order_id
 
 

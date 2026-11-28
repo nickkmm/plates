@@ -29,6 +29,7 @@ from psycopg.rows import tuple_row
 from app.auth import repository
 from app.core import db
 from app.customers import repository as customers_repository
+from app.orders import repository as orders_repository
 from app.pricing import repository as pricing_repository
 from app.web.app import app as flask_app
 from tests.conftest import TEST_PASSWORD, TEST_USERNAME
@@ -261,7 +262,7 @@ class TestRecords:
 class TestReview:
     def test_resolve(self, staff, db_conn):
         order_id = _insert_order(db_conn, order_number="2300", order_date=date(2026, 1, 1), requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="RES111", quantity=3),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="RES111", quantity=3),
                          is_possible_duplicate=True)
         db_conn.commit()
 

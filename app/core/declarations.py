@@ -82,6 +82,7 @@ from app.core.db.declarations import (
     STATUS_REJECTED,
 )
 from app.customers import repository as customers_repository
+from app.orders import repository as orders_repository
 from app.shared.normalize import (
     ACTING_AS,
     DECLARATION_REASONS,
@@ -511,7 +512,7 @@ def _plan_cards(
         flags: list[str] = []
         existing_owner = customers_repository.get_customer_by_name(conn, owner.name)
 
-        last_made = db.last_fabrication_date(conn, card.plate_number)
+        last_made = orders_repository.last_fabrication_date(conn, card.plate_number)
         if last_made is not None and last_made + relativedelta(months=MIN_MONTHS_BETWEEN_PLATES) > today:
             flags.append(PLATE_MADE_RECENTLY)
 

@@ -1,4 +1,4 @@
-"""Integration tests for app/web/blueprints/ingest.py -- POST /ingest (order
+"""Integration tests for app/orders/routes/ingest.py -- POST /ingest (order
 header + plate-line capture): duplicate-plate and duplicate-order-number
 warnings, the required payment_method field, customer capture/
 autocomplete, per-line reason/vehicle_brand/unit_price persistence, and
@@ -21,6 +21,7 @@ from psycopg.rows import tuple_row
 from app.core import db
 from app.core import declarations as decl
 from app.customers import repository as customers_repository
+from app.orders import repository as orders_repository
 from app.pricing import repository as pricing_repository
 from tests.core.test_declarations import (
     TODAY,
@@ -438,12 +439,12 @@ class TestIngestDuplicateWarning:
 
 
 class TestIngestOrderDuplicateWarning:
-    """The order-number collision check (db.find_orders_by_number) runs
+    """The order-number collision check (orders_repository.find_orders_by_number) runs
     BEFORE the plate-number dup check in ingest_post -- a reposición
     placeholder order has plate_number=NULL, so it would otherwise sail
     straight through the plate check and silently create a second
     production_orders row under the same order_number (see
-    app.core.ingestion.replace_order's docstring for the real WCY449/pedido
+    app.orders.service.replace_order's docstring for the real WCY449/pedido
     1030 case)."""
 
     def test_colliding_order_number_blocks_save_and_shows_warning(
@@ -546,13 +547,13 @@ class TestIngestOrderDuplicateWarning:
         -- see WCY449/pedido 1030)."""
         first_id = _insert_order(db_conn, order_number="5003", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=first_id,
+        orders_repository.insert_plate(db_conn, order_id=first_id,
                          row=make_row(order_number="5003", plate_type="CARRO PARTICULAR",
                                       is_batch_replacement=True, quantity=30),
                          is_possible_duplicate=False)
         second_id = _insert_order(db_conn, order_number="5003", order_date=date(2026, 1, 2),
                                      requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=second_id,
+        orders_repository.insert_plate(db_conn, order_id=second_id,
                          row=make_row(order_number="5003", plate_type="CARRO PARTICULAR",
                                       plate_number="OLD999"),
                          is_possible_duplicate=False)
@@ -892,7 +893,7 @@ def _production_order_id(db_conn, declaration_id: int) -> int | None:
 
 
 def _order_ids(db_conn, order_number: str) -> list[int]:
-    return [o.id for o in db.find_orders_by_number(db_conn, order_number)]
+    return [o.id for o in orders_repository.find_orders_by_number(db_conn, order_number)]
 
 
 def _hidden(declaration_id: int) -> str:

@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from app.core import db
+from app.orders import repository as orders_repository
 from app.shared.models import ExtractedRow
 from app.web.helpers import today_iso
 
@@ -44,11 +44,11 @@ def _make_row(**overrides: object) -> ExtractedRow:
 
 
 def _insert_order(conn, **overrides: object) -> int:
-    return db.insert_order(conn, row=_make_row(**overrides), customer_id=None, created_by=None)
+    return orders_repository.insert_order(conn, row=_make_row(**overrides), customer_id=None, created_by=None)
 
 
 def _insert_plate(conn, order_id: int, **overrides: object) -> None:
-    db.insert_plate(conn, order_id=order_id, row=_make_row(**overrides), is_possible_duplicate=False)
+    orders_repository.insert_plate(conn, order_id=order_id, row=_make_row(**overrides), is_possible_duplicate=False)
 
 
 class TestCuadreForbidden:

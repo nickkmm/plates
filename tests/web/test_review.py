@@ -1,4 +1,4 @@
-"""Integration tests for app/web/blueprints/review.py -- GET /review (the
+"""Integration tests for app/orders/routes/review.py -- GET /review (the
 flagged-plates queue) and its three actions: POST /review/update,
 /review/resolve, /review/delete.
 
@@ -24,6 +24,7 @@ from psycopg.rows import tuple_row
 
 from app.core import db
 from app.inventory import repository as inventory_repository
+from app.orders import repository as orders_repository
 from tests.web._helpers import _insert_order, make_row
 
 
@@ -31,7 +32,7 @@ class TestReviewRoute:
     def test_renders_flagged_rows(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="2100", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="REV111"),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="REV111"),
                          is_possible_duplicate=True)
         db_conn.commit()
 
@@ -50,7 +51,7 @@ class TestReviewUpdateRoute:
     def test_updates_plate_clears_flag_and_redirects_to_review(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="2200", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="UPD111", quantity=1),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="UPD111", quantity=1),
                          is_possible_duplicate=True)
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'UPD111'")
@@ -74,7 +75,7 @@ class TestReviewUpdateRoute:
     def test_is_voided_checkbox_on_marks_voided(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="2201", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="UPD333"),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="UPD333"),
                          is_possible_duplicate=True)
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'UPD333'")
@@ -95,7 +96,7 @@ class TestReviewUpdateRoute:
                                      quantity=100, prepared_by=None)
         order_id = _insert_order(db_conn, order_number="2202", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="UPD444", quantity=5),
                          is_possible_duplicate=True)
         inventory_repository.recalc_inventory(db_conn)
@@ -119,7 +120,7 @@ class TestReviewResolveRoute:
     def test_clears_flag_without_other_changes_and_redirects(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="2300", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="RES111", quantity=3),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="RES111", quantity=3),
                          is_possible_duplicate=True)
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'RES111'")
@@ -143,7 +144,7 @@ class TestReviewDeleteRoute:
     def test_deletes_plate_and_redirects(self, authenticated_client, db_conn):
         order_id = _insert_order(db_conn, order_number="2400", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DEL111", quantity=7),
                          is_possible_duplicate=True)
         with db_conn.cursor(row_factory=tuple_row) as cur:
@@ -172,7 +173,7 @@ class TestReviewDeleteRoute:
                                      quantity=100, prepared_by=None)
         order_id = _insert_order(db_conn, order_number="2402", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id,
+        orders_repository.insert_plate(db_conn, order_id=order_id,
                          row=make_row(plate_type="CARRO PARTICULAR", plate_number="DEL222", quantity=7),
                          is_possible_duplicate=True)
         inventory_repository.recalc_inventory(db_conn)
@@ -192,13 +193,13 @@ class TestReviewDeleteRoute:
             assert cur.fetchone() == (0,)  # consumed correctly reset
 
     def test_deleting_one_of_a_flagged_pair_clears_the_surviving_sibling(self, authenticated_client, db_conn):
-        """Exercises db.delete_plate's sibling-clearing behavior through the
+        """Exercises orders_repository.delete_plate's sibling-clearing behavior through the
         actual route, not just the db.py function directly."""
         order_id = _insert_order(db_conn, order_number="2401", order_date=date(2026, 1, 1),
                                     requested_by="PEDRO")
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="SIB999"),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="SIB999"),
                          is_possible_duplicate=True)
-        db.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="SIB999"),
+        orders_repository.insert_plate(db_conn, order_id=order_id, row=make_row(plate_number="SIB999"),
                          is_possible_duplicate=True)
         with db_conn.cursor(row_factory=tuple_row) as cur:
             cur.execute("SELECT id FROM plates WHERE plate_number = 'SIB999' ORDER BY id")
