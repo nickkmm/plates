@@ -1,6 +1,6 @@
 """Sworn-declaration business logic (public form + staff review). No Flask.
 
-The data layer is app/core/db/declarations.py; this module decides what a
+The data layer is app/declarations/repository.py; this module decides what a
 submitted declaration does. Takes an open `conn` and never commits/rolls back
 (same contract as app/shared/db.py).
 
@@ -70,8 +70,9 @@ import psycopg
 from dateutil.relativedelta import relativedelta
 from psycopg.rows import DictRow
 
-from app.core import db
-from app.core.db.declarations import (
+from app.customers import repository as customers_repository
+from app.declarations import repository as declarations_repository
+from app.declarations.repository import (
     FLAG_CARD_DATA_MISMATCH,
     FLAG_CARD_OTHER_OWNER,
     FLAG_CUSTOMER_DOCUMENT_MISMATCH,
@@ -81,7 +82,6 @@ from app.core.db.declarations import (
     STATUS_PENDING_REVIEW,
     STATUS_REJECTED,
 )
-from app.customers import repository as customers_repository
 from app.orders import repository as orders_repository
 from app.shared.normalize import (
     ACTING_AS,
@@ -452,7 +452,7 @@ def _same_name_documents_differ(first: PersonInput, other: PersonInput) -> bool:
 
 def _create_card(
     conn: psycopg.Connection[DictRow], owner_id: int,
-    card: OwnershipCardInput | db.DeclarationCardRecord,
+    card: OwnershipCardInput | declarations_repository.DeclarationCardRecord,
 ) -> int:
     return customers_repository.create_ownership_card(
         conn, owner_id, transit_license=card.transit_license, plate_number=card.plate_number,
@@ -548,7 +548,7 @@ def _insert_card_row(
     customer_id: int | None = None, ownership_card_id: int | None = None,
 ) -> int:
     card = plan.card
-    return db.insert_declaration_card(
+    return declarations_repository.insert_declaration_card(
         conn, declaration_id, position=plan.position,
         reason=normalize_choice(card.reason, DECLARATION_REASONS) or card.reason,
         plate_quantity=card.plate_quantity,
@@ -595,7 +595,7 @@ def submit_declaration(
     # Every declaration waits for the point of sale to review and approve it
     # (approve_declaration creates/links the customers and ownership cards).
     # `flags` only tell the reviewer what to look at; submitting creates nothing.
-    declaration_id = db.insert_declaration(
+    declaration_id = declarations_repository.insert_declaration(
         conn, status=STATUS_PENDING_REVIEW, review_flags=flags, **common,
     )
     for plan in plans:
@@ -605,8 +605,8 @@ def submit_declaration(
 
 # --- staff review -----------------------------------------------------------
 
-def _load_pending(conn: psycopg.Connection[DictRow], declaration_id: int) -> db.DeclarationRecord:
-    declaration = db.get_declaration(conn, declaration_id)
+def _load_pending(conn: psycopg.Connection[DictRow], declaration_id: int) -> declarations_repository.DeclarationRecord:
+    declaration = declarations_repository.get_declaration(conn, declaration_id)
     if declaration is None:
         raise ValueError("La declaración no existe.")
     if declaration.status != STATUS_PENDING_REVIEW:
@@ -634,7 +634,7 @@ def _resolve_for_approval(
     return existing.id
 
 
-def _card_label(card: db.DeclarationCardRecord) -> str:
+def _card_label(card: declarations_repository.DeclarationCardRecord) -> str:
     return f"tarjeta {card.position + 1} (placa {card.plate_number})"
 
 
@@ -663,7 +663,7 @@ def approve_declaration(
     nothing (the caller owns the transaction anyway).
     """
     declaration = _load_pending(conn, declaration_id)
-    cards = db.list_declaration_cards(conn, declaration_id)
+    cards = declarations_repository.list_declaration_cards(conn, declaration_id)
     if not cards:
         raise ValueError("La declaración no tiene tarjetas de propiedad.")
     unknown = set(reassign_card_ids) - {card.id for card in cards}
@@ -725,8 +725,8 @@ def approve_declaration(
             card_id = lookup.by_transit_license.id
             if lookup.status == customers_repository.CARD_STATUS_OTHER_OWNER:
                 customers_repository.reassign_ownership_card(conn, card_id, owner_id)
-        db.set_declaration_card_links(conn, card.id, customer_id=owner_id, ownership_card_id=card_id)
-    db.set_declaration_review(
+        declarations_repository.set_declaration_card_links(conn, card.id, customer_id=owner_id, ownership_card_id=card_id)
+    declarations_repository.set_declaration_review(
         conn, declaration_id, status=STATUS_APPROVED, reviewed_by=reviewer_user_id, note=note,
         gestor_id=gestor_id,
     )
@@ -740,6 +740,6 @@ def reject_declaration(
     if _blank(note):
         raise ValueError("Escriba una nota explicando el rechazo.")
     _load_pending(conn, declaration_id)
-    db.set_declaration_review(
+    declarations_repository.set_declaration_review(
         conn, declaration_id, status=STATUS_REJECTED, reviewed_by=reviewer_user_id, note=note.strip(),
     )

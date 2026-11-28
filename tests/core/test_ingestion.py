@@ -18,13 +18,13 @@ import pytest
 from psycopg.rows import tuple_row
 
 from app.auth import repository
-from app.core import db
 from app.customers import repository as customers_repository
 from app.inventory import repository as inventory_repository
 from app.orders import repository as orders_repository
 from app.orders.service import find_duplicate_plate_numbers, process_rows, replace_order
 from app.pricing import repository as pricing_repository
 from app.production import repository as production_repository
+from app.shared import db
 from app.shared.models import ExtractedRow
 
 

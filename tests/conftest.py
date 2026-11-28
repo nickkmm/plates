@@ -139,8 +139,7 @@ import pytest  # noqa: E402
 from psycopg.rows import DictRow, tuple_row  # noqa: E402
 
 from app import schema_migrate  # noqa: E402
-from app.core import db  # noqa: E402
-from app.shared import db as shared_db  # noqa: E402
+from app.shared import db  # noqa: E402
 from app.shared.normalize import INVENTORY_CATEGORIES  # noqa: E402
 
 TABLES = (
@@ -247,15 +246,15 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
     tables.
 
     Skips the test if the shared Postgres / `plates_test` isn't reachable,
-    rather than failing outright -- keeps `app/core` pure-logic tests runnable
+    rather than failing outright -- keeps the pure-logic tests runnable
     with zero DB dependency while still exercising real DB code when
     available.
 
     **How the rollback works**: checks out ONE raw connection directly from
     the pool (`app.shared.db._get_pool()`, bypassing `db.get_conn()`'s own
     context manager) and holds it for the WHOLE test. `get_conn` is
-    monkeypatched, on both `app.core.db` (the re-export every call site uses)
-    and `app.shared.db` (where it is defined), to always yield this SAME connection instead of checking
+    monkeypatched on `app.shared.db` (where it is defined and the attribute
+    every call site reads) to always yield this SAME connection instead of checking
     out a (possibly different) one from the pool -- this is what makes every
     `with db.get_conn() as conn:` call anywhere (test code AND, critically,
     every Flask route the test drives through `authenticated_client`/etc.)
@@ -344,7 +343,7 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
             pytest.fail(reason + " and TEST_REQUIRE_DB=1", pytrace=False)
         pytest.skip(reason)
 
-    pool = shared_db._get_pool()
+    pool = db._get_pool()
     conn = pool.getconn()
     real_commit, real_rollback = conn.commit, conn.rollback
     # A STACK of savepoints, not just one: `with db.get_conn() as conn:`
@@ -435,7 +434,6 @@ def clean_db(_db_ready: bool, monkeypatch: pytest.MonkeyPatch):
                 _execute(f"RELEASE SAVEPOINT {name}")
 
         monkeypatch.setattr(db, "get_conn", _shared_get_conn)
-        monkeypatch.setattr(shared_db, "get_conn", _shared_get_conn)
         yield
     finally:
         conn.commit, conn.rollback = real_commit, real_rollback

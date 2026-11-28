@@ -20,9 +20,9 @@ from datetime import date
 import pandas as pd
 from pydantic import ValidationError
 
-from app.core import db
 from app.inventory import repository as inventory_repository
 from app.orders.service import is_alistado, process_rows
+from app.shared import db
 from app.shared.models import ExtractedRow
 from app.shared.normalize import clean_plate
 

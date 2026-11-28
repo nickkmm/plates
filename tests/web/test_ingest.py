@@ -18,11 +18,12 @@ from decimal import Decimal
 import pytest
 from psycopg.rows import tuple_row
 
-from app.core import db
-from app.core import declarations as decl
 from app.customers import repository as customers_repository
+from app.declarations import repository as declarations_repository
+from app.declarations import service as decl
 from app.orders import repository as orders_repository
 from app.pricing import repository as pricing_repository
+from app.shared import db
 from tests.core.test_declarations import (
     TODAY,
     _card,
@@ -845,7 +846,7 @@ def _approved_declaration(db_conn, inp) -> int:
     sale approve it, which creates/links the customers and ownership cards."""
     declaration_id = decl.submit_declaration(db_conn, inp, today=TODAY).declaration_id
     decl.approve_declaration(db_conn, declaration_id, _reviewer_id(db_conn))
-    assert db.get_declaration(db_conn, declaration_id).status == "approved"
+    assert declarations_repository.get_declaration(db_conn, declaration_id).status == "approved"
     return declaration_id
 
 
@@ -867,7 +868,7 @@ def _two_card_declaration(db_conn, *, gestor: bool = False, notarized: bool = Tr
                             for plate, licence, kw in specs])
     declaration_id = _approved_declaration(db_conn, inp)
     if notarized:
-        db.set_declaration_notarized_received(db_conn, declaration_id, received_by=None)
+        declarations_repository.set_declaration_notarized_received(db_conn, declaration_id, received_by=None)
     return declaration_id
 
 
@@ -887,7 +888,7 @@ def _declaration_form(declaration_id: int | None, **overrides) -> dict:
 
 
 def _production_order_id(db_conn, declaration_id: int) -> int | None:
-    declaration = db.get_declaration(db_conn, declaration_id)
+    declaration = declarations_repository.get_declaration(db_conn, declaration_id)
     assert declaration is not None
     return declaration.production_order_id
 
@@ -999,7 +1000,7 @@ class TestIngestFromDeclaration:
         declaration_id = _two_card_declaration(db_conn)
         order_id = _insert_order(db_conn, order_number="5555", order_date=date(2026, 1, 1),
                                  requested_by="MARIA LOPEZ")
-        db.set_declaration_production_order(db_conn, declaration_id, order_id)
+        declarations_repository.set_declaration_production_order(db_conn, declaration_id, order_id)
         html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
         assert f"declaración #{declaration_id} ya fue atendida por la orden 5555" in html
         assert f'href="/records/{order_id}"' in html
@@ -1021,7 +1022,7 @@ class TestIngestFromDeclaration:
         self, authenticated_client, db_conn,
     ):
         declaration_id = _two_card_declaration(db_conn, notarized=False)
-        db.set_declaration_notarized_received(db_conn, declaration_id, received_by=None)
+        declarations_repository.set_declaration_notarized_received(db_conn, declaration_id, received_by=None)
         html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
         assert _hidden(declaration_id) in html
         assert "falta la autenticación notarial" not in html
@@ -1030,7 +1031,7 @@ class TestIngestFromDeclaration:
         self, authenticated_client, db_conn,
     ):
         declaration_id = _two_card_declaration(db_conn)
-        db.set_declaration_notarized_received(db_conn, declaration_id, received_by=None, received=False)
+        declarations_repository.set_declaration_notarized_received(db_conn, declaration_id, received_by=None, received=False)
         html = authenticated_client.get(f"/ingest?declaration_id={declaration_id}").data.decode()
         assert "falta la autenticación notarial" in html and 'name="declaration_id"' not in html
 
@@ -1153,7 +1154,7 @@ class TestIngestFromDeclaration:
             declaration_id = _two_card_declaration(db_conn)
             other = _insert_order(db_conn, order_number="5555", order_date=date(2026, 1, 1),
                                   requested_by="MARIA LOPEZ")
-            db.set_declaration_production_order(db_conn, declaration_id, other)
+            declarations_repository.set_declaration_production_order(db_conn, declaration_id, other)
         else:
             declaration_id = decl.submit_declaration(db_conn, _input(), today=TODAY).declaration_id
             if setup == "rejected":

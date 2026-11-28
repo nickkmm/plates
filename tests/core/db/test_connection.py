@@ -10,10 +10,12 @@ fallback path. No real Postgres connection needed."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from psycopg.rows import dict_row
 
-from app.core import db as core_db
+import app
 from app.shared import db
 
 
@@ -56,8 +58,9 @@ class TestConninfoKwargs:
             db._conninfo_kwargs()
 
 
-class TestGetConnReExport:
-    def test_core_db_get_conn_is_shared_db_get_conn(self):
-        # app.core.db re-exports the pool's get_conn rather than wrapping it,
-        # so a patch or a call through either name reaches the same function.
-        assert core_db.get_conn is db.get_conn
+class TestNoCorePackage:
+    def test_app_core_is_gone(self):
+        # The old core package (and its db re-export of get_conn) was removed
+        # in phase 1: every caller reaches get_conn as an attribute of
+        # app.shared.db, the one place tests/conftest.py patches it.
+        assert not (Path(app.__file__).parent / "core").exists()

@@ -7,7 +7,7 @@ inventory_categories, and returns a Summary.
 
 process_rows/replace_order/find_duplicate_plate_numbers all take `conn` as
 their first parameter (Fase 1d) -- they read/write through an already-open
-connection the CALLER owns, exactly like every function in app/core/db/, and
+connection the CALLER owns, exactly like every repository function, and
 never commit/rollback it themselves. Before Fase 1d each of the three opened
 its OWN `db.get_conn()` internally, which meant a single logical operation
 (e.g. POST /ingest: check duplicates, then insert) actually ran across

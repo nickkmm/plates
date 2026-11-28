@@ -1,4 +1,4 @@
-"""Tests for app.core.declaration_pdf.build_declaration_pdf.
+"""Tests for app.declarations.pdf.build_declaration_pdf.
 
 Pure function (no DB): the records are built in memory. Text is checked by
 extracting it back with pdfplumber, whitespace-normalized because the PDF wraps
@@ -18,9 +18,9 @@ from typing import Any
 
 import pdfplumber
 
-from app.core.db.declarations import DeclarationCardRecord, DeclarationRecord
-from app.core.declaration_pdf import build_declaration_pdf
-from app.core.declarations import (
+from app.declarations.pdf import build_declaration_pdf
+from app.declarations.repository import DeclarationCardRecord, DeclarationRecord
+from app.declarations.service import (
     DATA_POLICY_PARAGRAPH_1,
     DATA_POLICY_PARAGRAPH_2,
     DATA_POLICY_TITLE,
@@ -312,7 +312,7 @@ def test_output_is_deterministic() -> None:
 class _LegalBlockParser(HTMLParser):
     """Collects the text of every h3 / p / li inside <div class="legal">. The
     data-policy block (class "legal data-policy") is skipped: its text is not
-    copied but read from the shared constants in app.core.declarations."""
+    copied but read from the shared constants in app.declarations.service."""
 
     def __init__(self) -> None:
         super().__init__()

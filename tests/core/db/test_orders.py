@@ -110,7 +110,7 @@ class TestInsertOrder:
 
 class TestUpdateOrder:
     """customer_id defaults to a private sentinel (NOT None) -- omitting it
-    must leave the column completely untouched, since app/web/blueprints/
+    must leave the column completely untouched, since app/orders/routes/
     records.py's record_save (Fase 3's job) doesn't pass it yet and must not
     have every existing Registro-detail save silently wipe customer_id."""
 

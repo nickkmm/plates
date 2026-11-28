@@ -5,7 +5,7 @@ through the public form: ONE declarant (the person who signs, once) and one or
 more ownership cards ("tarjetas de propiedad"), each a `declaration_cards` row
 with its own reason, plate quantity, owner and review flags. This module is
 only the data layer; the decision rules (flags, review/approval) live in
-app/core/declarations.py.
+app/declarations/service.py.
 
 Every declaration starts `pending_review` (flags or not). While it is,
 `declarations.gestor_id` and every
@@ -51,7 +51,7 @@ STAGES = (
 REASON_LOSS = "PÉRDIDA"
 REASON_DETERIORATION = "DETERIORO"
 
-# review_flags values (computed by app/core/declarations.py).
+# review_flags values (computed by app/declarations/service.py).
 FLAG_PLATE_MADE_RECENTLY = "plate_made_recently"
 FLAG_CARD_OTHER_OWNER = "card_other_owner"
 FLAG_CARD_DATA_MISMATCH = "card_data_mismatch"
@@ -400,7 +400,7 @@ def set_declaration_review(
     review_note and gestor_id (an approval of a GESTOR declaration fills it in;
     a rejection leaves it NULL). The cards' own links are set with
     set_declaration_card_links. Does NOT check the previous status -- that rule
-    lives in app/core/declarations.py."""
+    lives in app/declarations/service.py."""
     with conn.cursor() as cur:
         cur.execute(
             """

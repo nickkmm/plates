@@ -9,15 +9,16 @@ from dataclasses import dataclass, field
 from flask import Blueprint, abort, current_app, render_template, request, session
 
 from app.auth.decorators import permission_required
-from app.core import db
-from app.core.db.declarations import STATUS_APPROVED, STATUS_PENDING_REVIEW, requires_notarization
-from app.core.declarations import ACTING_AS_GESTOR
 from app.customers import repository as customers_repository
+from app.declarations import repository as declarations_repository
+from app.declarations.repository import STATUS_APPROVED, STATUS_PENDING_REVIEW, requires_notarization
+from app.declarations.service import ACTING_AS_GESTOR
 from app.orders import repository as orders_repository
 from app.orders.pdf_extract import ParsedPedido, PdfExtractError
 from app.orders.pedido_upload import parse_uploaded_pedido
 from app.orders.service import find_duplicate_plate_numbers, process_rows, replace_order
 from app.pricing import repository as pricing_repository
+from app.shared import db
 from app.shared.models import ExtractedRow
 from app.shared.normalize import (
     _CITY_SPECIFIC_TYPES,
@@ -355,8 +356,8 @@ class _DeclarationCheck:
     `attended_order` is the order that attended it so the page can link it.
     """
 
-    declaration: db.DeclarationRecord | None
-    cards: list[db.DeclarationCardRecord] = field(default_factory=list)
+    declaration: declarations_repository.DeclarationRecord | None
+    cards: list[declarations_repository.DeclarationCardRecord] = field(default_factory=list)
     error: str | None = None
     attended_order: dict | None = None
 
@@ -367,7 +368,7 @@ def _check_declaration(conn, declaration_id: int | None) -> _DeclarationCheck:
     is a PÉRDIDA, have its notarized copy received. Used by the
     GET prefill AND, again, by POST /ingest -- the server never trusts the
     hidden input."""
-    declaration = db.get_declaration(conn, declaration_id) if declaration_id else None
+    declaration = declarations_repository.get_declaration(conn, declaration_id) if declaration_id else None
     if declaration is None:
         return _DeclarationCheck(None, error="La declaración indicada no existe.")
     label = f"La declaración #{declaration.id}"
@@ -388,7 +389,7 @@ def _check_declaration(conn, declaration_id: int | None) -> _DeclarationCheck:
             error=f"{label} ya fue atendida por la orden {order_number}.",
             attended_order={"id": declaration.production_order_id, "order_number": order_number},
         )
-    cards = db.list_declaration_cards(conn, declaration.id)
+    cards = declarations_repository.list_declaration_cards(conn, declaration.id)
     if requires_notarization(cards) and declaration.notarized_received_at is None:
         # PÉRDIDA: the client must bring the notarized copy back first.
         return _DeclarationCheck(
@@ -401,8 +402,8 @@ def _check_declaration(conn, declaration_id: int | None) -> _DeclarationCheck:
     return _DeclarationCheck(declaration, cards=cards)
 
 
-def _declaration_customer(conn, declaration: db.DeclarationRecord,
-                          cards: list[db.DeclarationCardRecord]) -> customers_repository.CustomerRecord | None:
+def _declaration_customer(conn, declaration: declarations_repository.DeclarationRecord,
+                          cards: list[declarations_repository.DeclarationCardRecord]) -> customers_repository.CustomerRecord | None:
     """The declarant as a customer record: the gestor when a gestor filled the
     form in, otherwise the customer the cards were linked to on approval (the
     owner / possessor who declared)."""
@@ -415,7 +416,7 @@ def _declaration_customer(conn, declaration: db.DeclarationRecord,
 
 
 def _form_from_declaration(
-    conn, declaration: db.DeclarationRecord, cards: list[db.DeclarationCardRecord],
+    conn, declaration: declarations_repository.DeclarationRecord, cards: list[declarations_repository.DeclarationCardRecord],
     prices: dict[str, str],
 ) -> tuple[dict, list[dict], list[str]]:
     """Turn an approved declaration into (header, lines, notices) for the
@@ -498,13 +499,13 @@ def _mark_declaration_attended(conn, declaration_id: int, order_number: str) -> 
     (the newest one, if the person confirmed saving beside an existing order
     with that number). Runs in the SAME transaction as the save, and refuses
     -- rolling the whole save back -- if someone else attended it meanwhile."""
-    declaration = db.get_declaration(conn, declaration_id)
+    declaration = declarations_repository.get_declaration(conn, declaration_id)
     if declaration is None or declaration.production_order_id is not None:
         raise ValueError(f"La declaración #{declaration_id} ya fue atendida por otra orden.")
     orders = orders_repository.find_orders_by_number(conn, order_number)
     if not orders:
         raise ValueError("No se encontró la orden recién creada para marcar la declaración como atendida.")
-    db.set_declaration_production_order(conn, declaration_id, max(o.id for o in orders))
+    declarations_repository.set_declaration_production_order(conn, declaration_id, max(o.id for o in orders))
 
 
 @bp.get("/ingest")

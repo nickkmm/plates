@@ -22,9 +22,9 @@ from urllib.parse import urlparse
 
 from psycopg.rows import tuple_row
 
-from app.core import db
 from app.inventory import repository as inventory_repository
 from app.orders import repository as orders_repository
+from app.shared import db
 from tests.web._helpers import _insert_order, make_row
 
 

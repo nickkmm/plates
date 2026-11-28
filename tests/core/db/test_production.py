@@ -11,7 +11,7 @@ from datetime import date, datetime
 from psycopg.rows import tuple_row
 
 from app.auth import repository
-from app.core import db
+from app.declarations import repository as declarations_repository
 from app.orders import repository as orders_repository
 from app.production import repository as production_repository
 from tests.conftest import TEST_USERNAME
@@ -197,12 +197,12 @@ class TestListProductionOrders:
         order_id = _order(db_conn, "1")
         ids = []
         for _ in range(2):
-            declaration_id = db.insert_declaration(
+            declaration_id = declarations_repository.insert_declaration(
                 db_conn, acting_as="PROPIETARIO", status="approved", submitted_data={},
             )
-            db.set_declaration_production_order(db_conn, declaration_id, order_id)
+            declarations_repository.set_declaration_production_order(db_conn, declaration_id, order_id)
             ids.append(declaration_id)
-        db.insert_declaration(db_conn, acting_as="PROPIETARIO", status="approved", submitted_data={})
+        declarations_repository.insert_declaration(db_conn, acting_as="PROPIETARIO", status="approved", submitted_data={})
         (summary,) = production_repository.list_production_orders(db_conn, status=None)
         assert summary.declaration_ids == sorted(ids)
 

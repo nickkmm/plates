@@ -53,7 +53,7 @@ import psycopg
 from psycopg.rows import DictRow
 
 from app.auth.decorators import ROLE_ADMIN, load_roles, load_users
-from app.core import db
+from app.shared import db
 from app.shared.normalize import normalize_requested_by
 
 _MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
@@ -105,7 +105,7 @@ def apply_sql_migrations(conn: psycopg.Connection[DictRow]) -> list[str]:
 
     Each file's SQL and its schema_migrations record are committed together
     as one transaction (explicit conn.commit(), same convention as the rest
-    of app/core/db/) -- a file that fails partway through is rolled back
+    of the repository modules) -- a file that fails partway through is rolled back
     whole (conn.close()/the next conn.rollback() discards the uncommitted
     work), never left half-applied-but-marked-done. Returns the list of
     versions newly applied (empty on a no-op re-run).

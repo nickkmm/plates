@@ -29,8 +29,9 @@ from typing import Any
 from flask import Blueprint, abort, current_app, redirect, render_template, request, session, url_for
 
 from app.auth.decorators import has_permission, permission_required
-from app.core import db
-from app.core.db.declarations import REASON_LOSS
+from app.declarations import repository as declarations_repository
+from app.declarations.repository import REASON_LOSS
+from app.declarations.routes import CARD_PHOTO_SIDES, FILE_KINDS
 from app.orders import repository as orders_repository
 from app.production import repository
 from app.production.repository import (
@@ -40,9 +41,9 @@ from app.production.repository import (
     STATUS_READY,
 )
 from app.production.service import advance_order, revert_order
+from app.shared import db
 from app.shared.normalize import inventory_category
 from app.shared.uploads import send_stored_file
-from app.web.blueprints.declarations import CARD_PHOTO_SIDES, FILE_KINDS
 
 bp = Blueprint("production", __name__)
 
@@ -96,9 +97,9 @@ def _render_detail(order_id: int, *, error: str | None = None):
             {
                 "d": declaration,
                 "declarant": declaration.submitted_data.get("declarant") or {},
-                "cards": db.list_declaration_cards(conn, declaration.id),
+                "cards": declarations_repository.list_declaration_cards(conn, declaration.id),
             }
-            for declaration in db.list_declarations_by_production_order(conn, order_id)
+            for declaration in declarations_repository.list_declarations_by_production_order(conn, order_id)
         ]
     page = render_template(
         "production_detail.html", order=order, status=status, events=events,
@@ -137,9 +138,9 @@ def order_detail(order_id: int):
     return _render_detail(order_id)
 
 
-def _linked_declaration(conn, order_id: int, declaration_id: int) -> db.DeclarationRecord:
+def _linked_declaration(conn, order_id: int, declaration_id: int) -> declarations_repository.DeclarationRecord:
     """The declaration, only when it is linked to this order (404 otherwise)."""
-    declaration = db.get_declaration(conn, declaration_id)
+    declaration = declarations_repository.get_declaration(conn, declaration_id)
     if declaration is None or declaration.production_order_id != order_id:
         abort(404)
     return declaration
@@ -167,7 +168,7 @@ def declaration_card_photo(order_id: int, declaration_id: int, card_id: int, sid
         abort(404)
     with db.get_conn() as conn:
         _linked_declaration(conn, order_id, declaration_id)
-        cards = db.list_declaration_cards(conn, declaration_id)
+        cards = declarations_repository.list_declaration_cards(conn, declaration_id)
     card = next((c for c in cards if c.id == card_id), None)
     if card is None:
         abort(404)
