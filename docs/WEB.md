@@ -11,9 +11,10 @@ blueprints (`today_iso`, `_options`, `_padded`, `_validate_order_header`,
 `customer_fields_from_form`, etc.) live in `app/web/helpers.py`. Storing and
 serving uploaded files (`resolve_upload_path`, `send_stored_file`,
 `save_photo`, `save_signature_png`, `UPLOADS_DIR`) lives in
-`app/shared/uploads.py`. The `/login`, `/logout` and `/usuarios` routes, the
-session check and `permission_required` live in the auth domain, `app/auth/`
-(`routes.py`, `admin_routes.py` and `decorators.py`). The `/customers`,
+`app/shared/uploads.py`. The `/login`, `/logout` and `/usuarios` routes and the
+shared sign-in code live in the auth domain, `app/auth/` (`routes.py`,
+`admin_routes.py`, `api.py` and `login.py`); the per-request access check,
+`permission_required`, lives in `app/shared/auth.py`. The `/customers`,
 `/precios`, `/inventory`, `/produccion` and `/cuadre` routes live in their
 domain packages, `app/customers/routes.py`, `app/pricing/routes.py`,
 `app/inventory/routes.py`, `app/production/routes.py` (see
@@ -36,12 +37,14 @@ in `app/web/templates/` as well.
 |---|---|---|---|---|---|---|
 | GET | `/` | `app.py` | Redirects to the first tab of `NAV_ITEMS` the user can open (`landing_url()`); if their role has no permission at all, responds 403 with `no_permissions.html` | — | (redirect) / `no_permissions.html` | `@authenticated` |
 | GET | `/healthz` | `app.py` | Liveness probe | — | — | open |
-| GET/POST | `/login` | `app/auth/routes.py` | Login (queries `users`, Phase 2) | `auth.authenticate` | `login.html` | open |
-| POST | `/logout` | `app/auth/routes.py` | Closes the session (POST only: a GET responds 405 and closes nothing) | — | (redirect) | open |
-| POST | `/api/auth/login` | `app/auth/api.py` | JSON login: sets the `access_token` and `refresh_token` cookies (see "JSON API (`/api`)") | `auth.authenticate`, `refresh_tokens.issue`, `issue_access_token` | (JSON) | open |
+| GET/POST | `/login` | `app/auth/routes.py` | Login (queries `users`): on success sets the same `access_token` and `refresh_token` cookies as `/api/auth/login` and redirects to the safe `next` or `landing_url()`; a valid token on GET redirects to `landing_url()` | `login.sign_in`, `login.set_token_cookies` | `login.html` | open |
+| POST | `/logout` | `app/auth/routes.py` | Clears the `access_token` cookie and the session, then redirects to `/api/auth/logout/continue` (POST only: a GET responds 405 and closes nothing) | `login.clear_access_cookie` | (redirect) | open |
+| POST | `/api/auth/login` | `app/auth/api.py` | JSON login: sets the `access_token` and `refresh_token` cookies (see "JSON API (`/api`)") | `login.sign_in`, `login.set_token_cookies` | (JSON) | open |
 | POST | `/api/auth/refresh` | `app/auth/api.py` | Rotates the refresh token and reissues both cookies with the user's current permissions | `refresh_tokens.rotate`, `repository.get_user_by_id` | (JSON) | open (refresh cookie) |
 | POST | `/api/auth/logout` | `app/auth/api.py` | Revokes the refresh token and clears both cookies; 204 | `refresh_tokens.revoke` | — | open |
-| GET | `/api/auth/me` | `app/auth/api.py` | The user and permissions of the access token, without reading the database | `decode_access_token` | (JSON) | access cookie (401 without it) |
+| GET | `/api/auth/me` | `app/auth/api.py` | The user and permissions of the access token, without reading the database | `current_user` | (JSON) | access cookie (401 without it) |
+| GET | `/api/auth/refresh/continue` | `app/auth/api.py` | Jinja only: rotates the tokens and redirects to the safe `next` (or `/`); without a refresh cookie, or when the refresh fails, clears both cookies and redirects to `/login` | `login.refresh` | (redirect) | open (refresh cookie) |
+| GET | `/api/auth/logout/continue` | `app/auth/api.py` | Jinja only: revokes the refresh cookie's token, clears both cookies and redirects to `/login` | `login.sign_out` | (redirect) | open |
 | GET/POST | `/declaracion` | `app/declarations/public_routes.py` | Public sworn-declaration form (QR at the counter), only for people who declare for themselves (PROPIETARIO / POSEEDOR; a `GESTOR` sent by hand is rejected with 400; the endpoint for gestores is planned). POST: honeypot, signed token, Turnstile, per-IP limit (20/hour; customers share the shop's wifi IP), reads 1 to 30 ownership cards (`card_<i>_*`) with a single declarant and a single signature, saves the signature and the **mandatory photos** (the declarant's ID card and the ownership card, front and back of each, and the photo of the used plate(s) of each card, for both deterioration and loss, unless the customer ticks «Perdí mis placas» ("I lost my plates") on that card (`card_<i>_plates_lost`; then that photo is neither requested nor saved and the declaration detail says so); JPG/PNG/WebP detected by content, max. 5 MB each, the browser shrinks them before sending; the body of this POST allows up to 40 MB) in `UPLOADS_DIR`, validates and saves the declaration always as `pending_review` («Por revisar», "To review") **without creating anything** (customer and ownership cards are created when the point of sale approves it). Responds **503** (`declaration_unavailable.html`) while `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (or `TURNSTILE_BYPASS`) are not set. The declarant's name cannot contain digits (same rule as "Solicitado por" ("Requested by") in `/ingest`, so staff can create the order afterwards): the browser warns (`pattern`) and the server rejects it with 400. The success page is identical for every declaration (with or without alerts): it never reveals status, alerts or the previous owner | `declarations.validate_declaration`, `submit_declaration`, `declarations_repository.count_recent_by_ip` | `declaration.html`, `declaration_received.html`, `declaration_unavailable.html` | **no login** (the only public route that writes) |
 | GET | `/ingest` | `ingest.py` | "Registrar" ("Register") form — full capture of a POS order (Phase 3). With `?declaration_id=N` (the button in `/declaraciones`) it arrives **pre-filled from an approved declaration not yet attended** (`production_order_id` NULL), just like the PDF: **it saves nothing**. Header: today's date, order no. and payment method empty (staff decide those), customer = the declarant (the gestor if a gestor acted; otherwise, the customer linked to the cards) with all their data. One `placa` line per ownership card, in order: the card's plate type (empty if not recognized), plate, quantity, reason, brand and value = current rate for the type (empty if none); the city is the card's «matriculado en» ("registered in") (uppercased); if the card does not have it, it stays empty and a notice asks for it for `CARRO PARTICULAR`/`CARRO PÚBLICO` lines. Nonexistent or malformed id → 404; pending, rejected, already attended or **approved with some `PÉRDIDA` card whose notarial authentication has not yet been marked as received** → the normal form with a Spanish error (if already attended, it says with which order and links to its detail; `DETERIORO`-only declarations are never blocked this way) | `orders_repository.distinct_requested_by/cities`, `pricing_repository.current_prices`, `customers_repository.list_customers`, `declarations_repository.get_declaration`, `declarations_repository.list_declaration_cards`, `customers_repository.get_customer` | `ingest.html` | `@permission_required("orders.capture")` |
 | POST | `/ingest` | `ingest.py` | Saves order+plates (resolves/creates customer, snapshots prices); handles the duplicate order/plate notices and the opt-in "Reemplazar" ("Replace"). **The city is mandatory on every line** (except "Orden anulada" ("Voided order")): the browser requires it (`required`) and the server rejects a line without a city with "Línea N: elegí la ciudad…" ("Line N: choose the city…") and saves nothing. Only `CARRO PARTICULAR` / `CARRO PÚBLICO` depend on a city (left blank so it is chosen); for the other types the form suggests `COLOMBIA` (editable). If it carries the hidden field `declaration_id`, the server **re-validates** the declaration (exists, approved, not attended and, if it has a `PÉRDIDA` card, with the notarial authentication received; otherwise it saves nothing and returns the form as is with the error); the plates of its cards are **not blocked** as "already exists" (the case is replacing a lost or deteriorated plate; typing the same plate twice in the submission still blocks) and, in the **same transaction** as the save (normal path and "Reemplazar"), the declaration is marked attended by the created order (`declarations_repository.set_declaration_production_order`). The hidden field travels in all re-renders (duplicate order/plate notices, errors). Without `declaration_id` the behavior does not change | `service.process_rows`, `service.replace_order`, `service.find_duplicate_plate_numbers`, `customers_repository.resolve_or_create_customer`, `orders_repository.find_orders_by_number`, `declarations_repository.set_declaration_production_order` | `ingest.html` | `@permission_required("orders.capture")` |
@@ -89,7 +92,7 @@ A plate replaced from a declaration does end up with `is_possible_duplicate`
 every plate that already existed), so it appears in `/review` and in the summary
 ("Posibles duplicados" ("Possible duplicates")) for staff to confirm it.
 
-## Roles and permissions (`app/auth/decorators.py`)
+## Roles and permissions (`app/shared/auth.py`)
 
 - **Permission catalog**: `app/auth/permissions.py::PERMISSIONS` — every
   action that can be granted to a role, with an English code
@@ -118,35 +121,68 @@ every plate that already existed), so it appears in `/review` and in the summary
     production codes.
   - `production`: `records.view` (read-only) and the production
     codes.
-- **Check on every request**: `current_user()` reads the user (`users`),
-  their roles (`user_roles`) and the effective permissions of all of them
-  (`role_permissions`, with `db.get_user_permissions`) in a single
-  connection, the first time it is requested in the request, and stores them in
-  `flask.g` (later calls in the same request do not query again).
-  - `@permission_required("<code>")` protects each route: incomplete
-    session, nonexistent or **deactivated** user → clears the session and
-    redirects to `/login`; if none of their roles has the code → 403. Each route
-    asks for a single code, and **no route that writes accepts
-    `records.view`**.
+- **Check on every request**: `current_user()` decodes the `access_token`
+  cookie (the JWT of `app/shared/tokens.py`) once per request, caches its
+  claims (`user_id`, `username`, `perms`) in `flask.g` and returns them, or
+  `None` for a missing, invalid or expired token. The permissions come from
+  the token claims, computed at login and at every refresh: **no database
+  read**.
+  - `@permission_required("<code>")` protects each route; if the token's
+    permissions don't hold the code → 403. Each route asks for a single code,
+    and **no route that writes accepts `records.view`**. The wrapper exposes
+    its codes as `required_permissions`.
+  - Without a valid token: an `/api` request gets the JSON 401; a genuine
+    but **expired** token redirects (302) to
+    `/api/auth/refresh/continue?next=<path>`, which rotates the tokens and
+    comes back; anything else (no cookie, a forged or malformed token)
+    redirects to `/login?next=<path>`. `next` is the requested path for
+    GET and HEAD and `/` for any other method, because the redirect turns
+    into a GET and a POST-only URL would answer 405.
   - `@authenticated` does the same checks without asking for a permission; only
     `/` uses it.
-  - `has_permission(code)` returns `True` only if there is an active user
-    with some role that has the code; without a session it returns `False` (never fails).
+  - `has_permission(code)` returns `True` only if the token's permissions
+    hold the code; without a valid token it returns `False` (never fails).
     Templates use it as `can('...')`.
-  - That is why **deactivating a user kicks them out on their next request**, and
-    **assigning or removing a role applies on the next request**: roles
-    are read from the database, never from the session.
-- **Login via the `users` table (Phase 2)** — `app/auth/decorators.py::authenticate`
-  queries `users` (via `app/auth/repository/users.py`) on every login, and no longer reads
-  `AUTH_USERS`/`AUTH_ROLES`. Those two environment variables and the
-  `load_users()`/`load_roles()` functions that parse them **are kept**, but
-  only as the code that did the historical backfill (`app.schema_migrate`)
-  — live login does not touch them. The session stores only `user` and, since
-  Phase 2, `user_id` (`users.id`) → `production_orders.created_by`; it **does not
-  store the role**. A pre-Phase 2 session (without `user_id`) is treated
-  as stale and forces a new login, not an error. A cookie issued before
-  migration `0018`, which still carries `role`, remains valid: that
-  value is ignored and access comes from the roles in the database.
+  - **Behavior change**: a deactivated user, a role change or a role's new
+    permissions take effect **within 5 minutes** (the access token's
+    lifetime), at the next refresh, instead of on the next request. A role
+    change, a deactivation or a password reset in `/usuarios` also revokes
+    the user's refresh tokens, so that refresh sends them to `/login`.
+  - Arriving from an external link (for example WhatsApp) shows `/login`
+    even for a signed-in user: `SameSite=Strict` cookies aren't sent on a
+    cross-site navigation.
+- **Login** — `app/auth/login.py` holds the sign-in code that the Jinja
+  `/login` and `/logout` and the JSON `/api/auth/*` share: `authenticate`
+  queries `users` (via `app/auth/repository/users.py`) on every login;
+  `sign_in` also computes the effective permissions and issues a refresh
+  token; `refresh` and `sign_out` rotate and revoke one; and
+  `set_token_cookies`/`clear_token_cookies` set and clear the two cookies.
+  Jinja `POST /login` sets the same cookies as `/api/auth/login`. Jinja
+  `POST /logout` clears the access cookie and the session and ends at
+  `GET /api/auth/logout/continue`, which revokes the refresh token (the
+  browser only sends the refresh cookie to `/api/auth`). The two
+  `continue` endpoints exist only while Jinja pages do (phase 6 of
+  [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) removes them). The user id
+  in the access token → `production_orders.created_by`. `AUTH_USERS`/
+  `AUTH_ROLES` and the `load_users()`/`load_roles()` functions that parse
+  them **are kept** in `login.py`, but only as the code that did the
+  historical backfill (`app.schema_migrate`) — live login does not touch
+  them.
+- **The Flask session only holds the CSRF token** (Flask-WTF); it stores no
+  user. An old session cookie that still carries `user`, `user_id` or
+  `role` signs nobody in: without an access token the page redirects to
+  `/login`, and the stale session is cleared.
+- **Token freshness on pages that post**: `_nav.html` exposes the seconds
+  left on the access token (`data-token-seconds`, from
+  `current_user().expires_at`) and defines `window.platesEnsureFreshToken()`:
+  with fewer than 30 seconds left it calls `POST /api/auth/refresh`
+  (`X-Requested-With: XMLHttpRequest`, `credentials: "same-origin"`) and,
+  on 200, resets the deadline to 300 seconds; it always resolves. A
+  `submit` listener on the document waits for it before sending any
+  `form[method=post]` of the page (except the logout form), and the XHR of
+  `ingest_pdf.html` awaits it before sending, so a form filled in over more
+  than 5 minutes is not lost. If the refresh fails the submission goes ahead
+  and the server's redirect to `/login` applies.
 - **User administration**: administrators (permission
   `users.manage`) create users, assign them roles, activate or
   deactivate them and change their password in `/usuarios`. The rules live in
@@ -167,8 +203,8 @@ every plate that already existed), so it appears in `/review` and in the summary
   Producción) do not change, but the permissions of Punto de venta and Producción
   do. Only custom roles that have no users
   (active or not) can be deleted. The rules live in `app/auth/service.py`
-  (`validate_role`, `validate_role_delete`), each change applies on the
-  next request of the users with the role, and creating, editing or deleting
+  (`validate_role`, `validate_role_delete`), each change applies within
+  5 minutes, at the next refresh of the users with the role, and creating, editing or deleting
   a role leaves a line in the log (who and the internal role name).
 - **Navigation**: `app/web/navigation.py::NAV_ITEMS` is the ordered list of
   tabs (endpoint, label, permission, active endpoints). The `app.py` context
@@ -182,7 +218,7 @@ every plate that already existed), so it appears in `/review` and in the summary
   the Salir ("Log out") button), with no redirect loop.
 - Session signed with `SECRET_KEY` (mandatory, no default), cookie
   `HTTPONLY` + `SAMESITE=Lax` + `SECURE` conditioned on `COOKIE_SECURE`,
-  12 hours long.
+  lasting the browser session; it only carries the CSRF token.
 - CSRF protection across the whole app (Flask-WTF `CSRFProtect`): every POST carries
   the session token; without it the response is 400 with `csrf_error.html`. See
   "CSRF protection".
@@ -218,8 +254,8 @@ route runs, so nothing changes.
   global 12 MB limit, and would reject valid declarations between 12 and 40 MB.
   Its `form_token`, Turnstile, per-IP limit and the friendly 413 stay the same.
 - `WTF_CSRF_TIME_LIMIT=None`: the token has no expiry of its own, it lasts
-  as long as the session (12 hours for staff, the browser session
-  for anonymous visitors).
+  as long as the session, which is the browser session for staff and
+  anonymous visitors alike.
 - `/logout` is POST only: no route changes data with a GET.
 - The JSON API blueprint (`app/auth/api.py`) is exempt from the token
   (`csrf.exempt(auth_api_bp)` in `app.py`): every POST, PUT, PATCH or DELETE
@@ -240,7 +276,9 @@ The JSON API lives under `/api`. Its shared plumbing is `app/shared/api.py`
 `app/auth/schemas.py`. It uses the JWT access tokens of
 `app/shared/tokens.py` and the refresh tokens of `app/auth/refresh_tokens.py`
 (see [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md), "Decisions"). It never touches
-the Flask session: the Jinja pages still log in through `/login`.
+the Flask session. The Jinja pages share the same cookies: `/login` sets
+them through the same code (`app/auth/login.py`), and every page reads the
+access token (see "Roles and permissions").
 
 | Method | Path | Body | Answers |
 |---|---|---|---|
@@ -248,6 +286,8 @@ the Flask session: the Jinja pages still log in through `/login`.
 | POST | `/api/auth/refresh` | — (reads the `refresh_token` cookie) | **200** with the login body, built from the user's **current** roles and permissions, and both cookies reissued (the refresh token is rotated); **401** `not_authenticated` and both cookies cleared for a missing cookie, an unknown, expired or reused token (reuse revokes the whole family) or a user who no longer exists or is inactive (all their refresh tokens are revoked) |
 | POST | `/api/auth/logout` | — | **204**, empty body: revokes the `refresh_token` cookie's token if there is one (an unknown one is a no-op) and clears both cookies. Needs no access token |
 | GET | `/api/auth/me` | — (reads the `access_token` cookie) | **200** `{"user": {"id", "username"}, "permissions": [...]}` from the token's claims, with no database read (so no roles: the token carries none); **401** `not_authenticated` for a missing, invalid or expired token |
+| GET | `/api/auth/refresh/continue?next=<path>` | — (reads the `refresh_token` cookie) | Jinja only. **302** to `next` (or to `/` when `next` fails `is_safe_next`) with both cookies reissued; without a refresh cookie, or when the refresh fails, **302** to `/login?next=<next>` (the `next` only when it is safe) with both cookies cleared. Never redirects off-site |
+| GET | `/api/auth/logout/continue` | — (reads the `refresh_token` cookie) | Jinja only. **302** to `/login`: revokes the refresh cookie's token if there is one and clears both cookies |
 
 Every `/api/auth` response carries `Cache-Control: no-store`.
 
@@ -256,7 +296,7 @@ right away with the same name, path and attributes):
 
 | Cookie | Value | Attributes |
 |---|---|---|
-| `access_token` | the JWT (`issue_access_token`, claims `sub`, `username`, `perms`, `iat`, `exp`) | `HttpOnly`, `SameSite=Strict`, `Max-Age=300` (`ACCESS_TOKEN_LIFETIME`), `Path=/` |
+| `access_token` | the JWT (`issue_access_token`, claims `sub`, `username`, `perms`, `iat`, `exp`); the JWT itself expires after `ACCESS_TOKEN_LIFETIME` (5 minutes, its `exp`) | `HttpOnly`, `SameSite=Strict`, `Max-Age=2592000` (`REFRESH_TOKEN_LIFETIME`, so a page still receives an expired token and can tell a refresh may work), `Path=/` |
 | `refresh_token` | the raw opaque refresh token (only its hash is stored) | `HttpOnly`, `SameSite=Strict`, `Max-Age=2592000` (`REFRESH_TOKEN_LIFETIME`), `Path=/api/auth` (logout must receive it to revoke it) |
 
 Both carry `Secure` when `COOKIE_SECURE` is on, the same flag as the session
@@ -295,10 +335,12 @@ exemption).
 
 ## Public routes
 
-Only these routes respond without a session: `/login`, `/logout`, `/healthz`,
-`/declaracion` (plus `/static`) and the JSON auth routes `/api/auth/login`,
+Only these routes respond without an access token: `/login`, `/logout`, `/healthz`,
+`/declaracion` (plus `/static`), the JSON auth routes `/api/auth/login`,
 `/api/auth/refresh` and `/api/auth/logout` (`/api/auth/me` answers 401
-without an access token). `tests/web/test_public_routes.py` walks
+without an access token), and the Jinja-only `/api/auth/refresh/continue`
+and `/api/auth/logout/continue` (without a refresh cookie they only clear
+the cookies and redirect to `/login`). `tests/web/test_public_routes.py` walks
 `app.url_map` and fails if any other route answers 200 to an
 anonymous request; adding a public route requires editing its list on purpose.
 
@@ -486,4 +528,4 @@ in the same transaction — so a new customer ends up with its complete
 attributes (`app/orders/service.py` internally calls the same function again
 with only the name, which no longer does anything because the customer was just
 created). `process_rows`/`replace_order` also receive
-`created_by=session.get("user_id")`.
+`created_by`, the access token's user id.

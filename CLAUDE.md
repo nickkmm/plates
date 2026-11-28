@@ -80,9 +80,9 @@ plates is the internal plate-production and point-of-sale app for INGSE
 
 - `app/web/`: Flask app, one blueprint per domain in `app/web/blueprints/`,
   Jinja templates.
-- `app/auth/`: login, session check and `permission_required`, users and
-  roles admin, the permission catalog and their repository
-  (`app/auth/repository/`).
+- `app/auth/`: login (`login.py`, shared by the Jinja `/login` and
+  `/api/auth`), the users and roles admin, the permission catalog and their
+  repository (`app/auth/repository/`).
 - `app/customers/`, `app/pricing/`, `app/inventory/`, `app/production/`,
   `app/cash_summary/`: each domain's routes (`routes.py`) and SQL
   (`repository`); `app/production/` and `app/cash_summary/` also hold a
@@ -98,7 +98,8 @@ plates is the internal plate-production and point-of-sale app for INGSE
   token and must send `X-Requested-With: XMLHttpRequest` instead; see
   `docs/WEB.md`, "JSON API (`/api`)".
 - `app/shared/`: code every domain needs (connection pool, normalize,
-  timezones, models, uploads); depends on no domain package.
+  timezones, models, uploads, and `auth.py`: `permission_required` from the
+  access-token cookie); depends on no domain package.
 - `app/declarations/`: the sworn declarations: staff screens (`routes.py`),
   public form (`public_routes.py`) and its anti-spam (`antispam.py`), the
   submission and review rules (`service.py`), the PDF (`pdf.py`) and the SQL

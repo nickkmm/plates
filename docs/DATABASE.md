@@ -11,7 +11,7 @@
 > already in production** (Phases 1-5b, see
 > `ARCHITECTURE_AND_POS_PLAN.md` at the repo root for the full history):
 > `/ingest` captures all the POS fields, `/precios` manages
-> `plate_type_prices`, `/cuadre` aggregates the totals, and `app/auth/decorators.py`
+> `plate_type_prices`, `/cuadre` aggregates the totals, and `app/auth/login.py`
 > queries `users` on every login. This document reflects that final state.
 >
 > **Historical note (Phase 1c)**: the original Phase 1 named `clientes`/
@@ -338,15 +338,15 @@ customer is left for a future customer administration screen.
 
 *Added in Phase 1 (as `usuarios`; renamed to `users` in **Phase 1c**),
 populated by backfill from `AUTH_USERS`/`AUTH_ROLES`.* Since **Phase 2**,
-`app/auth/decorators.py::authenticate` queries this table on every login (via
+`app/auth/login.py::authenticate` queries this table on every login (via
 `app/auth/repository/users.py`) — the same hashes the backfill already brought over,
-nobody had to reset a password. `load_users()`/`load_roles()` in `decorators.py`
+nobody had to reset a password. `load_users()`/`load_roles()` in `login.py`
 are kept, but **only** as the historical code that did the original backfill;
 the live login no longer calls them.
 
 | Column | Type | Constraint/Default | Note |
 |---|---|---|---|
-| `id` | SERIAL | PK | Since Phase 2, it is stored in `session["user_id"]` on login — it is what makes `production_orders.created_by` possible without querying again by username. |
+| `id` | SERIAL | PK | It is the `sub` claim of the access token issued at login — it is what makes `production_orders.created_by` possible without querying again by username. |
 | `username` | TEXT | UNIQUE NOT NULL | |
 | `password_hash` | TEXT | NOT NULL | Same werkzeug (pbkdf2) format that `AUTH_USERS` carried — the backfill copied the hash as is, it never reset passwords. |
 | `active` | BOOLEAN | DEFAULT true | Before Phase 1c, this column was called `activo`. |
@@ -413,8 +413,8 @@ revoked. Expired and revoked rows are not purged yet.
 *Added in migration `0015` (`app/migrations/0015_roles_and_permissions.sql`).*
 The roles a user can belong to. Created in `init.sql` before `users` and
 `user_roles`, so that `user_roles.role` references it directly.
-`app/auth/decorators.py` decides access on every request with the permissions of the
-user's roles; this table is also the basis for a role management screen.
+`app/shared/auth.py` decides access on every request with the permissions of the
+user's roles, carried in the access token (computed at login and refresh); this table is also the basis for a role management screen.
 
 | Column | Type | Constraint/Default | Note |
 |---|---|---|---|
